@@ -44,6 +44,7 @@ def main():
     p.add_argument("--latent_dim", type=int, default=64)
     p.add_argument("--hidden_dim", type=int, default=256)
     p.add_argument("--conv_layers", type=int, default=2)
+    p.add_argument("--conv_kernel", type=int, default=3)
     p.add_argument("--action_scale", type=float, default=0.2)
     p.add_argument("--min_range_per_dim", type=float, default=0.1)
     p.add_argument("--steps", type=int, default=20000)
@@ -75,7 +76,7 @@ def main():
 
     ae = ActionAutoencoder(action_dim=action_dim, chunk_length=args.chunk_length,
                            latent_dim=args.latent_dim, hidden_dim=args.hidden_dim,
-                           conv_layers=args.conv_layers).to(args.device)
+                           conv_layers=args.conv_layers, conv_kernel=args.conv_kernel).to(args.device)
     opt = torch.optim.AdamW(ae.parameters(), lr=args.lr)
 
     def to_flat(sample):
@@ -114,14 +115,20 @@ def main():
     out_dir = os.path.dirname(args.out)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+
+    def _to_list(x):
+        return x.tolist() if hasattr(x, "tolist") else list(x)
+
     # 注:M2 的训练脚本会直接从 dataset stats 重建 ActionScaler(单一真源);
-    # 这里保存仅为复现/核对用,结构可直接喂 ActionScaler.from_dataset_stats(**...)。
+    # 这里保存仅为复现/核对用。stats 转成纯 list,确保整个 ckpt 对 torch.load(weights_only=True) 安全。
     torch.save({
         "state_dict": ae.state_dict(),
         "ae_config": {"action_dim": action_dim, "chunk_length": args.chunk_length,
                       "latent_dim": args.latent_dim, "hidden_dim": args.hidden_dim,
-                      "conv_layers": args.conv_layers},
-        "action_scaler": {"action_stats": {"min": action_stats["min"], "max": action_stats["max"]},
+                      "conv_layers": args.conv_layers, "conv_kernel": args.conv_kernel,
+                      "use_layer_norm": True},
+        "action_scaler": {"action_stats": {"min": _to_list(action_stats["min"]),
+                                           "max": _to_list(action_stats["max"])},
                           "action_scale": args.action_scale,
                           "min_range_per_dim": args.min_range_per_dim},
     }, args.out)
