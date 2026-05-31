@@ -15,6 +15,7 @@ x 轴用"环境步"(每 chunk 计 chunk_length 步),与单步基线可比。
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 
 import torch
@@ -65,8 +66,33 @@ def add_chunk_transition(*, obs, next_obs, combined_action, reward, done, info,
 
 
 def _maybe_inject_flow_actor(args, agent, repr_dim, patch_repr_dim, prop_dim, action_dim):
-    """M1: no-op。M2.2 在此把 agent.actor 替换为 residual_flow actor 并重建 actor_opt。"""
-    return
+    """M2:把 agent.actor 替换为 residual_flow actor(用 M0 冻结 AE),并重建 actor_opt。
+    --actor raw 时为 no-op。纯注入,不改 QAgent 源码。"""
+    if args.actor != "flow":
+        return
+    assert args.ae_ckpt is not None, "--actor flow 需要 --ae_ckpt 指向 M0 训好的 AE"
+    from resfit.rl_finetuning.chunk_residual.action_autoencoder import ActionAutoencoder
+    from resfit.rl_finetuning.chunk_residual.residual_flow_actor import ResidualFlowActor
+
+    ckpt = torch.load(args.ae_ckpt, map_location=args.device, weights_only=True)
+    ae_cfg = ckpt["ae_config"]
+    ae = ActionAutoencoder(**ae_cfg)
+    ae.load_state_dict(ckpt["state_dict"])
+    ae = ae.to(args.device).eval()
+
+    flow_actor = ResidualFlowActor(
+        repr_dim=repr_dim, patch_repr_dim=patch_repr_dim, prop_dim=prop_dim,
+        action_dim=action_dim, chunk_length=args.chunk_length,
+        action_dim_per_step=ae_cfg["action_dim"], frozen_ae=ae,
+        feature_dim=agent.cfg.actor.feature_dim, hidden_dim=512, num_layers=3,
+        latent_delta_scale=0.05, action_delta_clip=args.action_scale,  # 对齐 chunk-raw 残差幅度
+    ).to(args.device)
+
+    agent.actor = flow_actor
+    agent.actor_target = copy.deepcopy(flow_actor)
+    agent.actor_target.train(True)   # 显式置 train(deepcopy 已继承 train,QAgent.update 断言其为 True)
+    agent.actor_opt = torch.optim.AdamW(flow_actor.trainable_parameters(), lr=args.actor_lr)
+    print("[inject] residual_flow actor 已注入,actor_opt 仅含 velocity 网络参数")
 
 
 def build_base_policy(wandb_id: str, device: str, wt_type: str = "best", wt_version: str = "latest"):
