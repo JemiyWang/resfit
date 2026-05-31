@@ -15,7 +15,6 @@ x 轴用"环境步"(每 chunk 计 chunk_length 步),与单步基线可比。
 from __future__ import annotations
 
 import argparse
-import copy
 import os
 
 import torch
@@ -33,6 +32,7 @@ from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
 from resfit.rl_finetuning.utils.normalization import ActionScaler, StateStandardizer
 from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualEnvWrapper
+from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 
 
 def to_uint8(obs: dict, image_keys):
@@ -178,7 +178,7 @@ def main():
             for i in range(args.utd):
                 batch = online_rb.sample()
                 update_actor = ((i + 1) % args.utd == 0)
-                agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=agent)
+                agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=None)
 
         if env_steps >= next_eval:
             with torch.no_grad():
@@ -188,7 +188,11 @@ def main():
                                          save_q_plots=False, run_name=f"chunk_{args.actor}",
                                          output_dir="outputs_chunk")
             sr = m["eval/success_rate"]
-            best_sr = max(best_sr, sr)
+            if sr > best_sr:
+                best_sr = sr
+                os.makedirs("outputs_chunk", exist_ok=True)
+                save_checkpoint(agent, "outputs_chunk/best.pt", global_step=env_steps,
+                                config=args, success_rate=sr)
             print(f"[env_steps {env_steps}] eval success_rate={sr:.3f} (best {best_sr:.3f})")
             next_eval += args.eval_every_env_steps
         if args.smoke:

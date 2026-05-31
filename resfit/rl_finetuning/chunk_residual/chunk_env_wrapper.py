@@ -24,6 +24,7 @@ class ChunkResidualEnvWrapper:
         self.chunk_length = chunk_length
         assert chunk_length >= 1, "chunk_length must be >= 1"
         self.action_dim = vec_env.action_space.shape[-1]
+        self.num_envs = getattr(vec_env, "num_envs", 1)
         self.flat_dim = chunk_length * self.action_dim
         self._last_base_flat = None
         # 取整段 chunk 的入口(测试可在构造后直接 monkeypatch self._get_chunk)
