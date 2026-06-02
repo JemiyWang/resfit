@@ -32,7 +32,10 @@ from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
 from resfit.rl_finetuning.utils.normalization import ActionScaler, StateStandardizer
-from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualEnvWrapper
+from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
+    ChunkResidualEnvWrapper, resolve_shaping_mode)
+from resfit.rl_finetuning.chunk_residual.stage_replay import sample_stage_balanced
+from resfit.rl_finetuning.chunk_residual.stage_diag import flatten_stage_diagnostics, stage_diagnostics
 from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 
 
@@ -55,11 +58,13 @@ def add_chunk_transition(*, obs, next_obs, combined_action, reward, done, info,
     nxt = {k: next_obs[k][0].detach().cpu() for k in keys}
     to_uint8(curr, image_keys)
     to_uint8(nxt, image_keys)
+    max_stage = float(info.get("max_stage_in_chunk", 0))
     td = TensorDict({
         "obs": TensorDict(curr, batch_size=[]),
         "next": TensorDict({"obs": TensorDict(nxt, batch_size=[]),
                             "done": done[0].cpu(), "reward": reward[0].cpu()}, batch_size=[]),
         "action": combined_action[0].detach().cpu(),
+        "max_stage": torch.tensor(max_stage, dtype=torch.float32),
         "_priority": torch.tensor(10.0, dtype=torch.float32),
     }, batch_size=[]).unsqueeze(0)
     online_rb.add(td)
@@ -96,8 +101,17 @@ def _maybe_inject_flow_actor(args, agent, repr_dim, patch_repr_dim, prop_dim, ac
 
 
 def build_base_policy(wandb_id: str, device: str, wt_type: str = "best", wt_version: str = "latest"):
-    """复用 ResFiT 的加载路径,从 wandb artifact 拉冻结 ACT 基座(eval 模式)。"""
-    policy_dir, _ = download_policy_from_wandb(wandb_id, step=wt_type, artifact_version=wt_version)
+    """加载冻结 ACT 基座(eval 模式)。
+
+    wandb_id 若是本地目录则直接 load(免 wandb);否则按 wandb artifact 拉。
+    本地目录可指向 run 根下的 step 目录(自动取其 policy/ 子目录)或直接 policy 目录。
+    """
+    if os.path.isdir(wandb_id):
+        from pathlib import Path
+        cand = Path(wandb_id) / "policy"
+        policy_dir = cand if cand.is_dir() else Path(wandb_id)
+    else:
+        policy_dir, _ = download_policy_from_wandb(wandb_id, step=wt_type, artifact_version=wt_version)
     base_policy = load_policy(policy_dir)
     base_policy.to(device)
     base_policy.eval()
@@ -128,10 +142,22 @@ def main():
     p.add_argument("--eval_num_envs", type=int, default=8)
     p.add_argument("--eval_num_episodes", type=int, default=50)
     p.add_argument("--smoke", action="store_true", help="少量步数冒烟")
+    p.add_argument("--stage_balanced", action="store_true", help="按 stage 配额采样(stage-balanced replay)")
+    p.add_argument("--reward_shaping", choices=["none", "staged", "potential"], default=None,
+                   help="奖励整形模式(canonical):none|staged(净加)|potential(PBS,不改最优策略)")
+    p.add_argument("--staged_reward", action="store_true",
+                   help="[别名] 等价 --reward_shaping staged;canonical flag 优先")
+    p.add_argument("--stage_reward_bonus", type=float, default=1.0,
+                   help="stage 整形幅度旋钮(staged/potential 共用;仅在 shaping≠none 时生效)")
+    p.add_argument("--output_dir", default="outputs_chunk",
+                   help="ckpt / eval 产物目录(并行 run 用不同目录避免抢 best.pt)")
+    p.add_argument("--base_action_mode", choices=["replan", "queue"], default="replan",
+                   help="基座动作来源:replan(每边界重跑模型取前chunk步)|queue(ACT原生action queue,仅cl=1,复刻原版step级)")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
     torch.manual_seed(args.seed)
+    sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 
     # --- 归一化器(从 dataset stats 建,与 AE / RL 同款)---
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -143,18 +169,32 @@ def main():
         meta.stats["observation.state"], device=args.device)
 
     # --- 基座 + env ---
+    if args.base_action_mode == "queue":
+        assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
     base_policy = build_base_policy(args.base_wandb_id, args.device)
     vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device)
+    shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
+    print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
+    print(f"[base-action] mode={args.base_action_mode}")
     env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
-                                  chunk_length=args.chunk_length)
+                                  chunk_length=args.chunk_length,
+                                  stage_reward_bonus=args.stage_reward_bonus,
+                                  reward_shaping_mode=shaping_mode, gamma=args.gamma,
+                                  base_action_mode=args.base_action_mode)
     eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
                                      device=args.device)
-    eval_env = ChunkResidualEnvWrapper(eval_vec, base_policy, action_scaler, state_standardizer,
-                                       chunk_length=args.chunk_length)
+    # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
+    # 会互踩 queue。queue 模式给 eval 单独的 base_policy 实例(对齐原版 train_residual_td3 双实例)。
+    eval_base_policy = (build_base_policy(args.base_wandb_id, args.device)
+                        if args.base_action_mode == "queue" else base_policy)
+    eval_env = ChunkResidualEnvWrapper(eval_vec, eval_base_policy, action_scaler, state_standardizer,
+                                       chunk_length=args.chunk_length,
+                                       reward_shaping_mode="none",   # eval 不加 shaping,指标纯净
+                                       base_action_mode=args.base_action_mode)
 
     # --- 维度 ---
     image_keys = list(base_policy.config.image_features.keys())
-    lowdim_keys = ["observation.state", "observation.base_action"]
+    lowdim_keys = ["observation.state", "observation.base_action", "observation.stage_id"]
     obs0, _ = env.reset()
     img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
     state_dim = obs0["observation.state"].shape[1]
@@ -188,6 +228,7 @@ def main():
     env_steps = 0
     next_eval = 0
     best_sr = 0.0
+    last_diag = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
     while env_steps <= total:
         with torch.no_grad(), utils.eval_mode(agent):
@@ -202,9 +243,20 @@ def main():
 
         if env_steps >= args.learning_starts and len(online_rb) > args.batch_size:
             for i in range(args.utd):
-                batch = online_rb.sample()
+                if args.stage_balanced:
+                    batch = sample_stage_balanced(online_rb, args.batch_size, generator=sample_gen)
+                else:
+                    batch = online_rb.sample()
+                batch = batch.to(args.device, non_blocking=True)   # 与 train_residual_td3 一致:喂 GPU 前搬设备
                 update_actor = ((i + 1) % args.utd == 0)
-                agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=None)
+                m_upd = agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=None)
+                # stage-aware 诊断:按 stage 看残差幅度/价值(用 update 已暴露的 _actions/_target_q)
+                if update_actor and "_actions" in m_upd:
+                    st = batch["obs"]["observation.stage_id"].flatten().cpu()
+                    vals = {"residual_norm": m_upd["_actions"].norm(dim=-1)}
+                    if "_target_q" in m_upd:
+                        vals["target_q"] = m_upd["_target_q"]
+                    last_diag = flatten_stage_diagnostics(stage_diagnostics(st, vals))
 
         if env_steps >= next_eval:
             with torch.no_grad():
@@ -212,14 +264,17 @@ def main():
                                          num_episodes=args.eval_num_episodes, device=args.device,
                                          global_step=env_steps, save_video=False,
                                          save_q_plots=False, run_name=f"chunk_{args.actor}",
-                                         output_dir="outputs_chunk")
+                                         output_dir=args.output_dir)
             sr = m["eval/success_rate"]
             if sr > best_sr:
                 best_sr = sr
-                os.makedirs("outputs_chunk", exist_ok=True)
-                save_checkpoint(agent, "outputs_chunk/best.pt", global_step=env_steps,
+                os.makedirs(args.output_dir, exist_ok=True)
+                save_checkpoint(agent, os.path.join(args.output_dir, "best.pt"),
+                                global_step=env_steps,
                                 config=args, success_rate=sr)
             print(f"[env_steps {env_steps}] eval success_rate={sr:.3f} (best {best_sr:.3f})")
+            if last_diag is not None:
+                print("[stage-diag] " + "  ".join(f"{k}={v:.3f}" for k, v in sorted(last_diag.items())))
             next_eval += args.eval_every_env_steps
         if args.smoke:
             break

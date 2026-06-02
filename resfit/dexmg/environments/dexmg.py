@@ -134,6 +134,10 @@ class RobosuiteGymWrapper:
             "Threading": 500,
             "TwoArmTransport": 800,
             "TwoArmBoxCleanup": 300,
+            # DrawerCleanup 比 BoxCleanup 多"开/关抽屉"子任务,演示更长,故取 500(与 ThreePiece 一致,
+            # 远高于 BoxClean 的 300)。原本不在表里会按 dexmimicgen 默认 1000 跑,eval 偏慢。
+            # 跑完 BC 看日志里的真实 demo 长度后可再调小以加速。
+            "TwoArmDrawerCleanup": 500,
             "TwoArmCoffee": 400,
             "TwoArmLiftTray": 650,
             "TwoArmPouring": 400,
@@ -316,6 +320,17 @@ class RobosuiteGymWrapper:
         success = reward == 1.0
         terminated_scalar = bool(success)
         truncated_scalar = bool(done)  # Robosuite returns done when timeout
+
+        # 特权 stage 标签(训练时算,策略不可见;只有在 worker 内才够得到 self.env)。
+        # 经 info 跨 spawn 边界透出,由 AsyncVectorEnv 自动 batch。详见 chunk_residual/stage_detectors.py。
+        if not hasattr(self, "_stage_det"):
+            from resfit.rl_finetuning.chunk_residual.stage_detectors import get_stage_detector
+            self._stage_det = get_stage_detector(self.env_name)
+        if self._stage_det is not None:
+            try:
+                info = {**info, "stage_id": int(self._stage_det(self.env))}
+            except Exception:
+                info = {**info, "stage_id": 0}
 
         if terminated_scalar or truncated_scalar:
             info = {

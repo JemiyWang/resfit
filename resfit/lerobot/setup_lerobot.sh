@@ -7,7 +7,7 @@ DEPS_DIR="$REPO_ROOT/deps"
 mkdir -p "$DEPS_DIR"
 
 # Git clone lerobot into deps directory
-git clone https://github.com/huggingface/lerobot.git "$DEPS_DIR/lerobot"
+git clone /data2/lerobot-smolvla "$DEPS_DIR/lerobot"
 git -C "$DEPS_DIR/lerobot" checkout 69901b9b6a2300914ca3de0ea14b6fa6e0203bd4
 
 # Install lerobot

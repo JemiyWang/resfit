@@ -27,13 +27,23 @@ from resfit.rl_finetuning.chunk_residual.action_autoencoder import (
 
 
 def build_chunk_dataset(repo_id: str, chunk_length: int):
-    """构造带 delta_timestamps 的 LeRobotDataset,使 sample['action'] 为 [chunk_length, D]。"""
+    """构造带 delta_timestamps 的 LeRobotDataset,使 sample['action'] 为 [chunk_length, D]。
+
+    AE 只用动作、不用图像。但 LeRobotDataset.__getitem__ 只要 meta.video_keys 非空,就会
+    给每个样本解码全部相机视频(与用不用得上无关),既浪费,又会撞上个别 dexmg 数据集的
+    坏视频帧(torchcodec 'Could not push packet to decoder',如 drawer 的坏 episode)。
+    构造后清空 video 类特征 → video_keys 为空 → __getitem__ 跳过整段视频解码,只取动作。
+    """
     policy_cfg = ACTConfig()
     policy_cfg.chunk_size = chunk_length
     policy_cfg.n_action_steps = chunk_length
     meta = LeRobotDataset(repo_id).meta            # 先拿 meta 解析 delta_timestamps
     delta_timestamps = resolve_delta_timestamps(policy_cfg, meta)
     ds = LeRobotDataset(repo_id, delta_timestamps=delta_timestamps, download_videos=False)
+    # AE 不需要图像:屏蔽视频键,使 __getitem__ 完全跳过视频解码(见 lerobot_dataset.py:714)。
+    ds.meta.info["features"] = {
+        k: v for k, v in ds.meta.info["features"].items() if v.get("dtype") != "video"
+    }
     return ds
 
 

@@ -44,7 +44,7 @@ git -C "$DEPS_DIR/mimicgen" checkout main
 python -m pip install -e "$DEPS_DIR/mimicgen"
 
 
-micromamba install -n residual -c conda-forge "ffmpeg>=6,<8" -y
+conda install -n residual -c conda-forge "ffmpeg>=6,<8" -y
 
 # Upgrade to a Numba that supports NumPy 2.x (and its llvmlite)
 pip install --upgrade --no-cache-dir "numba>=0.60" "llvmlite>=0.44"

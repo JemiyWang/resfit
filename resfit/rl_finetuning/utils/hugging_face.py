@@ -12,6 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import torch
 from huggingface_hub import HfApi, hf_hub_download
 
 from resfit.rl_finetuning.config.performance import PERF_CONFIG
@@ -100,6 +101,30 @@ def _extract_archive_fast(local_archive: str, target_parent: Path) -> None:
             tar.extractall(path=target_parent)
 
 
+def _sanitize_prioritized_sampler_for_dump(replay_buffer):
+    """Make a PrioritizedSampler's ``_max_priority`` JSON-serializable for dumps().
+
+    torchrl 0.8 stores ``_max_priority`` as a tuple ``(max_priority, index)`` of
+    scalar tensors. ``PrioritizedSampler.dumps()`` json-dumps that tuple directly,
+    which raises ``TypeError: Object of type Tensor is not JSON serializable``.
+    Convert the tensors to plain Python scalars (loads() round-trips fine) and
+    return a callable that restores the original in-memory tensor state so that
+    continued training is unaffected.
+    """
+    sampler = getattr(replay_buffer, "sampler", None)
+    raw = getattr(sampler, "__dict__", {}).get("_max_priority")
+    if isinstance(raw, (tuple, list)) and any(torch.is_tensor(x) for x in raw):
+        sampler.__dict__["_max_priority"] = tuple(
+            x.item() if torch.is_tensor(x) else x for x in raw
+        )
+
+        def _restore():
+            sampler.__dict__["_max_priority"] = raw
+
+        return _restore
+    return lambda: None
+
+
 def optimized_replay_buffer_dumps(replay_buffer, cache_dir: Path) -> None:
     """Optimized ReplayBuffer dumps with performance monitoring."""
     print(f"[HF] Starting optimized ReplayBuffer dumps to {cache_dir}")
@@ -108,8 +133,14 @@ def optimized_replay_buffer_dumps(replay_buffer, cache_dir: Path) -> None:
     # Ensure cache directory exists
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use the standard dumps method but with timing
-    replay_buffer.dumps(cache_dir)
+    # Work around torchrl 0.8 PrioritizedSampler.dumps() not being able to
+    # json-serialize its tensor-valued `_max_priority`.
+    restore_sampler = _sanitize_prioritized_sampler_for_dump(replay_buffer)
+    try:
+        # Use the standard dumps method but with timing
+        replay_buffer.dumps(cache_dir)
+    finally:
+        restore_sampler()
 
     end_time = time.time()
     print(f"[HF] ReplayBuffer dumps completed in {end_time - start_time:.2f} seconds")

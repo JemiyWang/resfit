@@ -21,7 +21,6 @@ import json
 import logging
 import pprint
 import random
-import shutil
 import time
 from collections import defaultdict
 from contextlib import contextmanager
@@ -48,6 +47,7 @@ from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_po
 from resfit.rl_finetuning.config.residual_td3 import ResidualTD3DexmgConfig
 from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 from resfit.rl_finetuning.utils.dtype import to_uint8
 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
 from resfit.rl_finetuning.utils.hugging_face import (
@@ -59,6 +59,45 @@ from resfit.rl_finetuning.utils.hugging_face import (
 from resfit.rl_finetuning.utils.normalization import ActionScaler, StateStandardizer
 from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.wrappers.residual_env_wrapper import BasePolicyVecEnvWrapper
+
+
+class _SkipBadVideoDataset(torch.utils.data.Dataset):
+    """Wrap a LeRobotDataset so a sample whose video frame fails to decode
+    (e.g. a source-corrupt AV1 mp4) is replaced by another random valid sample
+    instead of crashing the DataLoader that fills the offline buffer.
+
+    Mirrors the wrapper in resfit/lerobot/scripts/train_bc_dexmg.py — keep the
+    two in sync. A handful of ankile dexmg datasets ship a few corrupt AV1 videos
+    (libdav1d/libaom both report "Corrupt frame"); they are <0.3% of episodes.
+    Unlike BC (random sampling), the offline-buffer fill iterates the dataset
+    sequentially, so it WILL hit every bad episode — hence the RL path needs
+    this wrapper too (piece {540,709,825,862} / drawer {505} crashed without it).
+    """
+
+    def __init__(self, base, max_retries: int = 20):
+        self.base = base
+        self.max_retries = max_retries
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        import random as _random
+
+        last_err = None
+        for _ in range(self.max_retries):
+            try:
+                return self.base[idx]
+            except Exception as e:  # noqa: BLE001 - corrupt video frame -> resample
+                last_err = e
+                idx = _random.randrange(len(self.base))
+        raise last_err
+
+    def __getattr__(self, name):
+        # Delegate everything else (meta, fps, num_frames, hf_dataset, ...) to base.
+        if name == "base":
+            raise AttributeError(name)
+        return getattr(self.base, name)
 
 
 # -----------------------------------------------------------------------------
@@ -240,7 +279,10 @@ def main(cfg: ResidualTD3DexmgConfig):
 
     # Load dataset and get normalization functions early
     print("Loading dataset and setting up normalization...")
-    dataset = LeRobotDataset(cfg.offline_data.name)
+    # Wrap so source-corrupt AV1 frames are resampled instead of crashing the
+    # offline-buffer fill (see _SkipBadVideoDataset). RL reads the dataset
+    # sequentially, so it hits every bad episode unless wrapped.
+    dataset = _SkipBadVideoDataset(LeRobotDataset(cfg.offline_data.name))
 
     # Create action scaler from dataset statistics
     action_scaler = ActionScaler.from_dataset_stats(
@@ -1014,6 +1056,13 @@ def main(cfg: ResidualTD3DexmgConfig):
                 if current_success_rate > best_eval_success_rate:
                     print(f"🎉 New best success rate: {current_success_rate:.4f} (prev: {best_eval_success_rate:.4f})")
                     best_eval_success_rate = current_success_rate
+                    save_checkpoint(
+                        agent,
+                        model_save_dir / "best.pt",
+                        global_step=global_step,
+                        config=cfg,
+                        success_rate=current_success_rate,
+                    )
 
         global_step += cfg.num_envs
 
@@ -1179,11 +1228,12 @@ def main(cfg: ResidualTD3DexmgConfig):
 
     print(f"Training finished in {time.time() - train_start_time:.2f} seconds.")
 
-    # Clean up entire run directory after successful completion (videos/logs are saved to wandb)
-    if run_cache_dir.exists():
-        print(f"Cleaning up run directory: {run_cache_dir}")
-        shutil.rmtree(run_cache_dir)
-        print("Run directory cleaned up successfully.")
+    # Keep the run directory: it holds the trained residual policy (models/best.pt)
+    # and the eval videos / Q-plots under outputs/.
+    print(f"Results saved under: {run_cache_dir}")
+    best_ckpt = model_save_dir / "best.pt"
+    if best_ckpt.exists():
+        print(f"Best residual policy: {best_ckpt}")
 
 
 # -----------------------------------------------------------------------------

@@ -6,3 +6,9 @@ offline_buffer_cache/
 online_buffer_cache/
 bc_run_*
 deps/
+# 训练产物 / checkpoint / 日志(不入库)
+run_2026-*/
+outputs_chunk/
+resfit/rl_finetuning/chunk_residual/ckpt/
+coffee_base58_proof/
+*.log

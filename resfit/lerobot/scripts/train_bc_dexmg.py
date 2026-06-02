@@ -67,6 +67,43 @@ except RuntimeError:
     # Start method already set, which is fine
     pass
 
+
+class _SkipBadVideoDataset(torch.utils.data.Dataset):
+    """Wrap a LeRobotDataset so a sample whose video frame fails to decode
+    (e.g. a source-corrupt AV1 mp4) is replaced by another random valid sample
+    instead of crashing the whole DataLoader worker.
+
+    A handful of ankile dexmg datasets ship a few corrupt AV1 videos
+    (libdav1d/libaom both report "Corrupt frame"); they are <0.3% of episodes,
+    so dropping them on the fly is harmless for BC. This avoids lerobot's
+    non-contiguous ``episodes=`` subsetting bug (episode_index is not remapped).
+    """
+
+    def __init__(self, base, max_retries: int = 20):
+        self.base = base
+        self.max_retries = max_retries
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        import random as _random
+
+        last_err = None
+        for _ in range(self.max_retries):
+            try:
+                return self.base[idx]
+            except Exception as e:  # noqa: BLE001 - corrupt video frame -> resample
+                last_err = e
+                idx = _random.randrange(len(self.base))
+        raise last_err
+
+    def __getattr__(self, name):
+        # Delegate everything else (meta, fps, num_frames, hf_dataset, ...) to base.
+        if name == "base":
+            raise AttributeError(name)
+        return getattr(self.base, name)
+
 # -----------------------------------------------------------------------------
 # Caching configuration ------------------------------------------------------
 # -----------------------------------------------------------------------------
@@ -550,6 +587,10 @@ def main(cfg: argparse.Namespace):
         download_videos=True,
         image_transforms=image_transforms,
     )
+    # A few ankile dexmg datasets ship source-corrupt AV1 videos; wrap so a frame
+    # that fails to decode is replaced by another random valid sample instead of
+    # killing the DataLoader worker. (Full dataset -> avoids lerobot's episodes= bug.)
+    dataset = _SkipBadVideoDataset(dataset)
 
     # ---------------------------------------------------------------------
     # Dataloader

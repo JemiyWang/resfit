@@ -137,7 +137,7 @@ class ResidualTD3CanConfig(ResidualTD3DexmgConfig):
 
     base_policy: BasePolicyConfig = field(
         default_factory=lambda: BasePolicyConfig(
-            wandb_id="robomimic-can-bc/sdo8cku7",
+            wandb_id="robomimic-can-bc/dvg09ifx",
         )
     )
 
@@ -157,7 +157,7 @@ class ResidualTD3SquareConfig(ResidualTD3DexmgConfig):
 
     base_policy: BasePolicyConfig = field(
         default_factory=lambda: BasePolicyConfig(
-            wandb_id="robomimic-square-bc/dzbkdpwp",
+            wandb_id="robomimic-square-bc/4dw5df0t",
         )
     )
 
@@ -192,7 +192,7 @@ class ResidualTD3BoxCleanConfig(ResidualTD3DexmgConfig):
     )
     base_policy: BasePolicyConfig = field(
         default_factory=lambda: BasePolicyConfig(
-            wandb_id="TODO",
+            wandb_id="dexmg-boxcleanup-bc/d59wny58",
             wt_type="best",
             wt_version="latest",
         )
@@ -229,7 +229,7 @@ class ResidualTD3CoffeeConfig(ResidualTD3BoxCleanConfig):
     )
     base_policy: BasePolicyConfig = field(
         default_factory=lambda: BasePolicyConfig(
-            wandb_id="TODO",
+            wandb_id="dexmg-coffee-bc/gbiv6udg",
             wt_type="best",
             wt_version="latest",
         )
@@ -257,7 +257,108 @@ class ResidualTD3TwoArmCanSortConfig(ResidualTD3BoxCleanConfig):
     )
     base_policy: BasePolicyConfig = field(
         default_factory=lambda: BasePolicyConfig(
-            wandb_id="TODO",
+            wandb_id="dexmg-cansorting-bc/0lxbiap5",
+            wt_type="best",
+            wt_version="latest",
+        )
+    )
+
+
+@dataclass
+class ResidualTD3DrawerCleanupConfig(ResidualTD3BoxCleanConfig):
+    task: str = "TwoArmDrawerCleanup"
+    # 与 BoxCleanup 同型(PandaDexRH/LH 双臂)。相机继承 BoxClean:
+    #   agentview + robot0_eye_in_hand + robot1_eye_in_hand —— 与该数据集相机集一致。
+
+    wandb: WandBConfig = field(default_factory=lambda: WandBConfig(project="dexmg-drawercleanup-residual-td3"))
+
+    offline_data: OfflineDataConfig = field(
+        default_factory=lambda: OfflineDataConfig(
+            name="ankile/dexmg-two-arm-drawer-cleanup",
+            num_episodes=1_000,  # 加载器会取 min(请求, 实际可用),数据集不足 1000 时自动用全部
+        )
+    )
+    base_policy: BasePolicyConfig = field(
+        default_factory=lambda: BasePolicyConfig(
+            wandb_id="dexmg-drawercleanup-bc/7xzxn8b1",  # BC best (2026-05-31, step15000+)
+            wt_type="best",
+            wt_version="latest",
+        )
+    )
+
+
+@dataclass
+class ResidualTD3ThreePieceAssemblyConfig(ResidualTD3BoxCleanConfig):
+    task: str = "TwoArmThreePieceAssembly"
+    # 双臂 Panda。相机继承 BoxClean(agentview + robot0/1_eye_in_hand),与该数据集一致。
+
+    wandb: WandBConfig = field(default_factory=lambda: WandBConfig(project="dexmg-threepiece-residual-td3"))
+
+    offline_data: OfflineDataConfig = field(
+        default_factory=lambda: OfflineDataConfig(
+            name="ankile/dexmg-two-arm-three-piece-assembly",
+            num_episodes=1_000,  # 同上,加载器自动 min()
+        )
+    )
+    base_policy: BasePolicyConfig = field(
+        default_factory=lambda: BasePolicyConfig(
+            wandb_id="dexmg-threepiece-bc/7zklm69g",  # BC best (2026-05-31, step20000+)
+            wt_type="best",
+            wt_version="latest",
+        )
+    )
+
+
+@dataclass
+class ResidualTD3TwoArmThreadingConfig(ResidualTD3BoxCleanConfig):
+    task: str = "TwoArmThreading"
+    # 双臂 Panda。相机继承 BoxClean(agentview + robot0/1_eye_in_hand),与该数据集一致。
+
+    wandb: WandBConfig = field(default_factory=lambda: WandBConfig(project="dexmg-twoarmthreading-residual-td3"))
+
+    offline_data: OfflineDataConfig = field(
+        default_factory=lambda: OfflineDataConfig(
+            name="ankile/dexmg-two-arm-threading",
+            num_episodes=1_000,  # 加载器自动 min(请求, 实际可用)
+        )
+    )
+    base_policy: BasePolicyConfig = field(
+        default_factory=lambda: BasePolicyConfig(
+            wandb_id="dexmg-twoarmthreading-bc/cbv7mqw3",  # BC best (2026-05-31, step30000+)
+            wt_type="best",
+            wt_version="latest",
+        )
+    )
+
+
+@dataclass
+class ResidualTD3TwoArmTransportConfig(ResidualTD3BoxCleanConfig):
+    task: str = "TwoArmTransport"
+    # 双臂 opposed 构型(env_configuration="opposed" 已在 dexmg.py 里按 env 名自动处理)。
+    # 注意:相机是 shouldercamera0/1,不是 agentview,必须覆盖 rl_camera。
+    # 数据集用 dexmg-two-arm-transport(1029 集,比 robomimic-mh 多)。该数据集含 5 个相机,
+    # 但 Transport env 只产出 shouldercamera0/1,故 BC 用 --policy_cameras 过滤到这俩、
+    # RL 的 rl_camera 也只取这俩(state 18 维两边一致)。
+    # horizon=800 长任务,gamma 在 paper_runs 脚本里给 0.998。
+
+    rl_camera: list[str] = field(
+        default_factory=lambda: [
+            "observation.images.shouldercamera0",
+            "observation.images.shouldercamera1",
+        ]
+    )
+
+    wandb: WandBConfig = field(default_factory=lambda: WandBConfig(project="dexmg-transport-residual-td3"))
+
+    offline_data: OfflineDataConfig = field(
+        default_factory=lambda: OfflineDataConfig(
+            name="ankile/dexmg-two-arm-transport",
+            num_episodes=1_000,  # 数据集 1029 集,加载器自动 min()
+        )
+    )
+    base_policy: BasePolicyConfig = field(
+        default_factory=lambda: BasePolicyConfig(
+            wandb_id="dexmg-transport-bc/TODO_FILL_BC_RUN_ID",  # ← BC 训完填 项目/run_id
             wt_type="best",
             wt_version="latest",
         )
@@ -274,3 +375,7 @@ cs.store(name="residual_td3_square_config", node=ResidualTD3SquareConfig)
 cs.store(name="residual_td3_box_clean_config", node=ResidualTD3BoxCleanConfig)
 cs.store(name="residual_td3_coffee_config", node=ResidualTD3CoffeeConfig)
 cs.store(name="residual_td3_two_arm_cansort_config", node=ResidualTD3TwoArmCanSortConfig)
+cs.store(name="residual_td3_drawer_cleanup_config", node=ResidualTD3DrawerCleanupConfig)
+cs.store(name="residual_td3_three_piece_assembly_config", node=ResidualTD3ThreePieceAssemblyConfig)
+cs.store(name="residual_td3_two_arm_threading_config", node=ResidualTD3TwoArmThreadingConfig)
+cs.store(name="residual_td3_two_arm_transport_config", node=ResidualTD3TwoArmTransportConfig)
