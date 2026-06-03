@@ -25,13 +25,25 @@ def parse_stage_purity_line(line: str) -> dict[int, float]:
 
 
 def load_reach_sidecar(path: str) -> dict | None:
-    """读 <log>_reach.json;不存在返回 None。reach 的 key 还原成 int。"""
+    """读 <log>_reach.json;不存在或内容损坏/不完整时返回 None。
+
+    返回 None 的情况:
+      - 文件不存在
+      - JSON 解析失败(截断写、损坏)
+      - 缺少 "reach" 或 "step" 键
+      - 值类型无法转换
+
+    正常返回: {"step": int, "reach": {int: float}}
+    """
     if not os.path.exists(path):
         return None
-    with open(path) as f:
-        data = json.load(f)
-    reach = {int(k): float(v) for k, v in data["reach"].items()}
-    return {"step": int(data["step"]), "reach": reach}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        reach = {int(k): float(v) for k, v in data["reach"].items()}
+        return {"step": int(data["step"]), "reach": reach}
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
 
 
 def fold_episode_max_stage(prev_max: int, max_stage_in_chunk: int,

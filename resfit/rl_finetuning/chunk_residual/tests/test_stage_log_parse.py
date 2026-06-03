@@ -55,3 +55,20 @@ def test_fold_success_jumps_to_top():
 
 def test_fold_no_success_no_jump():
     assert fold_episode_max_stage(0, 0, reward=0.5, top_stage=4) == 0
+
+
+def test_fold_reward_just_below_one_no_jump():
+    assert fold_episode_max_stage(0, 0, reward=0.99, top_stage=4) == 0
+
+
+# --- load_reach_sidecar: malformed / partial JSON -------------------------
+def test_load_reach_sidecar_malformed_returns_none(tmp_path):
+    p = tmp_path / "bad_reach.json"
+    p.write_text("{not json")
+    assert load_reach_sidecar(str(p)) is None
+
+
+def test_load_reach_sidecar_missing_reach_key_returns_none(tmp_path):
+    p = tmp_path / "partial_reach.json"
+    p.write_text(json.dumps({"step": 1}))
+    assert load_reach_sidecar(str(p)) is None
