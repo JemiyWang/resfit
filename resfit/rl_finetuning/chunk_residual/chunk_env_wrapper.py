@@ -76,7 +76,14 @@ class ChunkResidualEnvWrapper:
         # 取整段 chunk 的入口(测试可在构造后直接 monkeypatch self._get_chunk)
         self._get_chunk = getattr(base_policy, "get_action_chunk", None)
         # stage 由 worker 经 info["stage_id"] 透出(见 dexmg.py);这里做 episode 内 max-so-far 闩锁
-        self._stage = 0
+        self._stage = 0          # 闩锁(max-so-far):供 staged/potential reward(防刷分)
+        self._stage_now = 0      # 瞬时:供 obs.stage_id(解耦,handoff §2,避免 stage 桶被退化样本污染)
+        # 轻量诊断(跨 episode 累计):闩锁桶纯度。瞬时阶段 s < 闩锁 L = 掉件/回退,
+        # 该步样本会被标成 stage L 却已退化 → 量化 stage 桶有多脏。不影响训练逻辑。
+        self._stage_total_steps = 0
+        self._stage_regress_steps = 0
+        self._steps_by_latch: dict[int, int] = {}
+        self._regress_by_latch: dict[int, int] = {}
 
     # ---- 取基座动作并归一化到 [-1,1] 展平 ----
     def _base_chunk_flat(self, raw_obs):
@@ -97,13 +104,14 @@ class ChunkResidualEnvWrapper:
         aug["observation.base_action"] = base_flat
         aug["observation.state"] = self.state_standardizer.standardize(raw_obs["observation.state"])
         b = base_flat.shape[0]
-        aug["observation.stage_id"] = torch.full((b, 1), float(self._stage))   # 当前 max-so-far
+        aug["observation.stage_id"] = torch.full((b, 1), float(self._stage_now))  # 瞬时(解耦)
         return aug
 
     def reset(self, **kwargs):
         raw_obs, info = self.vec_env.reset(**kwargs)
         self.base_policy.reset()
         self._stage = 0
+        self._stage_now = 0
         base_flat = self._base_chunk_flat(raw_obs)
         self._last_base_flat = base_flat
         return self._augment(raw_obs, base_flat), info
@@ -141,7 +149,14 @@ class ChunkResidualEnvWrapper:
             if "stage_id" in info:                       # worker 经 info 透出的特权阶段
                 s = int(info["stage_id"][0])             # env 0(训练 num_envs==1)
                 self._stage = max(self._stage, s)        # episode 内单调闩锁
+                self._stage_now = s                      # 瞬时(可回退),供 stage_id
                 max_in_chunk = max(max_in_chunk, s)
+                L = self._stage                          # 该步样本将被标的闩锁阶段
+                self._stage_total_steps += 1
+                self._steps_by_latch[L] = self._steps_by_latch.get(L, 0) + 1
+                if s < L:                                # 瞬时退回 → 掉件/回退,桶变脏
+                    self._stage_regress_steps += 1
+                    self._regress_by_latch[L] = self._regress_by_latch.get(L, 0) + 1
             if bool((term | trunc).any()):
                 break
 
@@ -153,6 +168,7 @@ class ChunkResidualEnvWrapper:
         if bool((terminated | truncated).any()):
             self.base_policy.reset()
             self._stage = 0                              # autoreset 后新 episode 归零
+            self._stage_now = 0
         base_flat = self._base_chunk_flat(raw_obs)
         self._last_base_flat = base_flat
 
@@ -161,6 +177,18 @@ class ChunkResidualEnvWrapper:
         info["scaled_action"] = combined_flat
         info["max_stage_in_chunk"] = max_in_chunk        # 给 stage-balanced replay
         return aug_obs, total_reward, terminated, truncated, info
+
+    def stage_purity_summary(self) -> str:
+        """闩锁桶纯度的可读汇总:总回退率 + 各 stage 桶内退化样本占比。"""
+        tot = self._stage_total_steps
+        if tot == 0:
+            return "no stage steps"
+        parts = [f"regress {self._stage_regress_steps}/{tot}={self._stage_regress_steps / tot:.1%}"]
+        for L in sorted(self._steps_by_latch):
+            n = self._steps_by_latch[L]
+            r = self._regress_by_latch.get(L, 0)
+            parts.append(f"stage{L}:{r}/{n}={r / n:.0%}")
+        return "  ".join(parts)
 
     def render(self):
         return self.vec_env.render()

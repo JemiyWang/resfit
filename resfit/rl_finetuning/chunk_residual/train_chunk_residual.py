@@ -153,8 +153,21 @@ def main():
                    help="ckpt / eval 产物目录(并行 run 用不同目录避免抢 best.pt)")
     p.add_argument("--base_action_mode", choices=["replan", "queue"], default="replan",
                    help="基座动作来源:replan(每边界重跑模型取前chunk步)|queue(ACT原生action queue,仅cl=1,复刻原版step级)")
+    p.add_argument("--base_n_action_steps", type=int, default=None,
+                   help="覆盖基座 ACT 的 n_action_steps(每多少步重规划;默认用 checkpoint 的 20)。"
+                        "≤chunk_size;设 10 即基座预测20步但只执行前10就重推理")
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=0)
+    # --- offline demo buffer(锚;方案 A:从源 dexmimicgen HDF5 灌装,GT-as-base)---
+    p.add_argument("--offline_dataset_path", default=None,
+                   help="源 dexmimicgen HDF5 路径;设了且 offline_fraction>0 才灌 offline 锚 buffer")
+    p.add_argument("--offline_fraction", type=float, default=0.0,
+                   help="每个 batch 中 offline demo 占比(RLPD 默认 0.5);0=纯在线(行为同改造前)")
+    p.add_argument("--offline_num_demos", type=int, default=None,
+                   help="灌装的 demo 条数(默认全部 ~1000)")
+    p.add_argument("--offline_stage_cache", default=None,
+                   help="stage 缓存 npz 路径;命中则秒级读、不 replay。"
+                        "缺失会 replay 并落盘到此路径(见 precompute_stage_cache)")
     args = p.parse_args()
     torch.manual_seed(args.seed)
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
@@ -187,6 +200,14 @@ def main():
     # 会互踩 queue。queue 模式给 eval 单独的 base_policy 实例(对齐原版 train_residual_td3 双实例)。
     eval_base_policy = (build_base_policy(args.base_wandb_id, args.device)
                         if args.base_action_mode == "queue" else base_policy)
+    # 可选:覆盖基座 n_action_steps(每多少步重规划)。在任何 reset 前设置,reset() 会按此建队列
+    if args.base_n_action_steps is not None:
+        assert args.base_n_action_steps <= base_policy.config.chunk_size, \
+            f"n_action_steps({args.base_n_action_steps}) 不能超过 chunk_size({base_policy.config.chunk_size})"
+        base_policy.config.n_action_steps = args.base_n_action_steps
+        eval_base_policy.config.n_action_steps = args.base_n_action_steps
+        print(f"[base-action] 覆盖 n_action_steps={args.base_n_action_steps} "
+              f"(基座每{args.base_n_action_steps}步重规划;chunk_size={base_policy.config.chunk_size})")
     eval_env = ChunkResidualEnvWrapper(eval_vec, eval_base_policy, action_scaler, state_standardizer,
                                        chunk_length=args.chunk_length,
                                        reward_shaping_mode="none",   # eval 不加 shaping,指标纯净
@@ -223,6 +244,33 @@ def main():
         transform=MultiStepTransform(n_steps=args.n_step, gamma=args.gamma),
         pin_memory=True, prefetch=4, batch_size=args.batch_size)
 
+    # --- offline demo 锚 buffer(方案 A;offline_fraction=0 时整段跳过,行为同改造前)---
+    online_batch_size = int(args.batch_size * (1 - args.offline_fraction))
+    offline_batch_size = int(args.batch_size * args.offline_fraction)
+    offline_rb = None
+    if args.offline_fraction > 0.0:
+        assert args.offline_dataset_path is not None, \
+            "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
+        from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import concat_mixed_batch
+        from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
+            build_offline_buffer, count_offline_transitions)
+        # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
+        offline_cap = count_offline_transitions(args.offline_dataset_path,
+                                                num_demos=args.offline_num_demos)
+        offline_rb = TensorDictPrioritizedReplayBuffer(
+            storage=LazyTensorStorage(max_size=offline_cap, device="cpu"),
+            alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority",
+            transform=MultiStepTransform(n_steps=args.n_step, gamma=args.gamma),
+            pin_memory=True, prefetch=4, batch_size=max(offline_batch_size, 1))
+        n_off = build_offline_buffer(
+            offline_rb, args.offline_dataset_path,
+            action_scaler=action_scaler, state_standardizer=state_standardizer,
+            image_keys=image_keys, bonus=args.stage_reward_bonus,
+            mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
+            stage_cache=args.offline_stage_cache)
+        print(f"[offline] 灌装 {n_off} 条 demo transition;混采 online_bs={online_batch_size} "
+              f"offline_bs={offline_batch_size}(fraction={args.offline_fraction})")
+
     # --- 训练循环(x 轴=环境步;每 chunk 计入 chunk_length 步)---
     obs, _ = env.reset()
     env_steps = 0
@@ -241,13 +289,18 @@ def main():
         obs = next_obs
         env_steps += args.chunk_length
 
-        if env_steps >= args.learning_starts and len(online_rb) > args.batch_size:
+        if env_steps >= args.learning_starts and len(online_rb) > online_batch_size:
             for i in range(args.utd):
                 if args.stage_balanced:
-                    batch = sample_stage_balanced(online_rb, args.batch_size, generator=sample_gen)
+                    online_batch = sample_stage_balanced(online_rb, online_batch_size, generator=sample_gen)
                 else:
-                    batch = online_rb.sample()
-                batch = batch.to(args.device, non_blocking=True)   # 与 train_residual_td3 一致:喂 GPU 前搬设备
+                    online_batch = online_rb.sample(online_batch_size)
+                online_batch = online_batch.to(args.device, non_blocking=True)  # 喂 GPU 前搬设备
+                if offline_rb is not None:                          # RLPD 混采:online + offline demo 锚
+                    offline_batch = offline_rb.sample(offline_batch_size).to(args.device, non_blocking=True)
+                    batch = concat_mixed_batch(online_batch, offline_batch)   # 取公共 key,容忍 _weight 不一致
+                else:
+                    batch = online_batch
                 update_actor = ((i + 1) % args.utd == 0)
                 m_upd = agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=None)
                 # stage-aware 诊断:按 stage 看残差幅度/价值(用 update 已暴露的 _actions/_target_q)
@@ -275,6 +328,7 @@ def main():
             print(f"[env_steps {env_steps}] eval success_rate={sr:.3f} (best {best_sr:.3f})")
             if last_diag is not None:
                 print("[stage-diag] " + "  ".join(f"{k}={v:.3f}" for k, v in sorted(last_diag.items())))
+            print("[stage-purity] " + env.stage_purity_summary())
             next_eval += args.eval_every_env_steps
         if args.smoke:
             break

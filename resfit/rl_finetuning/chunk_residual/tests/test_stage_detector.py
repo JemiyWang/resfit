@@ -201,13 +201,14 @@ def _mk_wrapper(env, bonus=0.0):
 
 
 def test_wrapper_latches_max_stage_within_chunk():
-    # stage 升到 2 后回落到 1,0 → 闩锁应停在 2,不随回落
+    # stage 升到 2 后回落到 1,0 → 闩锁停在 2(供 reward);stage_id 解耦=瞬时(随回落)
     env = _StageVecEnv([0, 1, 2, 1, 0])
     w = _mk_wrapper(env)
     w.reset()
     obs, _, _, _, info = w.step(torch.zeros(1, L * D))
-    assert info["max_stage_in_chunk"] == 2
-    assert int(obs["observation.stage_id"][0, 0]) == 2
+    assert info["max_stage_in_chunk"] == 2                # 闩锁:chunk 内最高
+    assert w._stage == 2                                  # 闩锁保持,不随回落(reward 用)
+    assert int(obs["observation.stage_id"][0, 0]) == 0    # stage_id 解耦=瞬时(chunk 末已回落到 0)
 
 
 def test_wrapper_resets_stage_on_done():

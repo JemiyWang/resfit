@@ -272,3 +272,36 @@ def test_replan_mode_still_clamps_combined():
     w.reset()
     w.step(torch.full((1, L * D), 0.8))
     assert torch.allclose(env.last_actions[0], torch.full((1, D), 1.0), atol=1e-5)
+
+
+# --- stage_id 解耦(handoff §2):stage_id 用瞬时,reward/闩锁不动 ---
+
+class _StageScriptEnv(_FakeVecEnvNoTerm):
+    """每步经 info 透出脚本化瞬时 stage,用于测 stage_id 解耦。"""
+    def __init__(self, stage_seq):
+        super().__init__()
+        self._seq = stage_seq
+        self._i = 0
+
+    def reset(self, **kw):
+        self._i = 0
+        return super().reset(**kw)
+
+    def step(self, action):
+        obs, r, term, trunc, _ = super().step(action)
+        s = self._seq[min(self._i, len(self._seq) - 1)]
+        self._i += 1
+        return obs, r, term, trunc, {"stage_id": np.array([s])}
+
+
+def test_emitted_stage_id_is_instantaneous_not_latch():
+    # 瞬时先到 3(闩锁=3),再掉回 2(闩锁仍 3)。stage_id 应跟瞬时,闩锁另存供 reward。
+    env = _StageScriptEnv([3, 2])
+    w = ChunkResidualEnvWrapper(env, _FakeBase(), _IdentityScaler(), _IdentityStd(),
+                                chunk_length=1)
+    w.reset()
+    obs1, *_ = w.step(torch.zeros(1, D))
+    assert obs1["observation.stage_id"].item() == 3.0      # 瞬时 3
+    obs2, *_ = w.step(torch.zeros(1, D))
+    assert obs2["observation.stage_id"].item() == 2.0      # 解耦:用瞬时 2,而非闩锁 3
+    assert w._stage == 3                                    # 闩锁保持(reward 用)
