@@ -69,3 +69,20 @@ def build_eval_log_dict(eval_metrics, last_diag, purity_summary):
         log_dict.update(last_diag)
     log_dict.update(_parse_purity(purity_summary))
     return log_dict
+
+
+def init_wandb(args):
+    """按 args 启 wandb run。--smoke 时强制 mode='disabled'(不产生真 run)。
+
+    name 缺省回落为 output_dir 的 basename。返回 wandb run(disabled 下为 no-op run,
+    调用方无需判空)。
+    """
+    name = args.wandb_name or os.path.basename(args.output_dir.rstrip("/"))
+    mode = "disabled" if args.smoke else args.wandb_mode
+    return wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=name,
+        mode=mode,
+        config=vars(args),
+    )

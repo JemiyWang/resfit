@@ -88,3 +88,39 @@ def test_eval_log_diag_none():
     assert out["eval/success_rate"] == 0.3
     assert not any(k.startswith("diag/") for k in out)
     assert out["purity/raw"] == "no stage steps"
+
+
+import argparse
+from resfit.rl_finetuning.chunk_residual.wandb_logging import init_wandb
+
+
+def test_init_wandb_smoke_forces_disabled(monkeypatch):
+    captured = {}
+
+    def fake_init(**kw):
+        captured.update(kw)
+        return "RUN"
+
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.chunk_residual.wandb_logging.wandb.init", fake_init)
+    args = argparse.Namespace(
+        smoke=True, wandb_mode="online", wandb_project="P",
+        wandb_entity=None, wandb_name="N", output_dir="outputs_chunk/x")
+    run = init_wandb(args)
+    assert run == "RUN"
+    assert captured["mode"] == "disabled"
+    assert captured["project"] == "P"
+    assert captured["name"] == "N"
+
+
+def test_init_wandb_name_falls_back_to_output_dir(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.chunk_residual.wandb_logging.wandb.init",
+        lambda **kw: captured.update(kw))
+    args = argparse.Namespace(
+        smoke=False, wandb_mode="disabled", wandb_project="P",
+        wandb_entity=None, wandb_name=None, output_dir="outputs_chunk/cl1_stageON/")
+    init_wandb(args)
+    assert captured["name"] == "cl1_stageON"
+    assert captured["mode"] == "disabled"
