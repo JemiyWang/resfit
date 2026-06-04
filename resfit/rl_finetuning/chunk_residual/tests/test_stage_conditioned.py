@@ -1,6 +1,8 @@
 import torch
-from resfit.rl_finetuning.config.rlpd import ActorConfig
+from resfit.rl_finetuning.config.rlpd import ActorConfig, CriticConfig
 from resfit.rl_finetuning.off_policy.rl.actor import Actor
+from resfit.rl_finetuning.off_policy.rl.critic import Critic
+from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage
 
 REPR, PATCH, PROP, FLAT = 32, 16, 3, 20
 B, NUM_STAGES = 6, 5
@@ -48,3 +50,25 @@ def test_actor_on_is_sensitive_to_stage():
     m0 = actor.forward(o0, std=0.0).mean
     m3 = actor.forward(o3, std=0.0).mean
     assert not torch.allclose(m0, m3)
+
+
+def _critic(prop_dim):
+    cfg = CriticConfig()
+    cfg.loss.type = "mse"            # 标量 Q，断言简单
+    return Critic(repr_dim=REPR, patch_repr_dim=PATCH, prop_dim=prop_dim,
+                  action_dim=FLAT, cfg=cfg).eval()
+
+
+def test_critic_q_sensitive_to_stage_in_prop():
+    torch.manual_seed(0)
+    critic = _critic(prop_dim=PROP + NUM_STAGES)   # prop 已加宽
+    feat = torch.randn(B, REPR // PATCH, PATCH)
+    prop = torch.randn(B, PROP)
+    act = torch.tanh(torch.randn(B, FLAT))
+    sid0 = torch.zeros(B, 1)
+    sid3 = torch.full((B, 1), 3.0)
+    # 用 forward：mse 下确定返回 [num_q, B, 1]，shape 可预测
+    q0 = critic.forward(feat, append_stage(prop, sid0, NUM_STAGES), act)
+    q3 = critic.forward(feat, append_stage(prop, sid3, NUM_STAGES), act)
+    assert q0.shape[-2] == B and q0.shape[-1] == 1
+    assert not torch.allclose(q0, q3)
