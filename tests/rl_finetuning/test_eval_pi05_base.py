@@ -112,7 +112,9 @@ def test_format_report_runs():
     report = {"episodes": [3, 3], "infer_times": [0.01, 0.02], "action_min": -0.1, "action_max": 0.1}
     text = format_report(report)
     assert "episodes" in text.lower()
-    assert "3" in text
+    assert "total_steps=6" in text
+    assert "15.0ms" in text                  # (0.01+0.02)/2*1000
+    assert "[-0.100, 0.100]" in text
 
 
 def test_main_wires_env_and_policy(monkeypatch):
@@ -134,3 +136,4 @@ def test_main_wires_env_and_policy(monkeypatch):
 
     assert captured["host"] == "1.2.3.4"
     assert captured["port"] == 9999
+    assert captured["env_device"] == ("cuda" if torch.cuda.is_available() else "cpu")

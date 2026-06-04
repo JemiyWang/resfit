@@ -131,7 +131,12 @@ def main(argv=None):
         ) from exc
 
     env = build_smoke_env(device)
-    report = run_smoke(env, base_policy, args.n_episodes, args.max_steps, ACTION_DIM)
+    try:
+        report = run_smoke(env, base_policy, args.n_episodes, args.max_steps, ACTION_DIM)
+    finally:
+        close = getattr(env, "close", None)
+        if close is not None:
+            close()
     print(format_report(report))
     print("[smoke] PASS: cross-process link ran without crashing.")
 
