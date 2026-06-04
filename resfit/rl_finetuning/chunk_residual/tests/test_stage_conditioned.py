@@ -175,3 +175,41 @@ def test_actor_forward_with_stage_id_on_cpu_feat_on_cuda():
     dist = actor.forward(obs, std=0.0)                # 修复前：RuntimeError(device mismatch)
     assert dist.mean.shape == (B, FLAT)
     assert dist.mean.device.type == "cuda"
+
+
+# ---------------------------------------------------------------------------
+# Bug 回归：eval 诊断路径的 critic 调用也必须拼 stage(evaluate_dexmg.py)。
+# 实验崩在第一次 eval：Q 诊断用裸 observation.state 喂 critic，stage_conditioned 下
+# critic prop_dim 含 stage(+5)，维度不匹配(280 vs 275)。修复=用 agent._critic_prop。
+# manual(依赖 VitEncoder)；维度问题 CPU 即可复现。
+# ---------------------------------------------------------------------------
+@pytest.mark.manual
+def test_eval_style_q_diag_must_use_critic_prop():
+    torch.manual_seed(0)
+    C, H, W = 3, 84, 84
+    cam = "observation.images.agentview"
+    state_dim, flat, ns = 5, 12, 5
+    cfg = QAgentConfig()
+    cfg.device = "cpu"
+    cfg.critic.loss.type = "mse"
+    agent = QAgent(obs_shape=(C, H, W), prop_shape=(state_dim,), action_dim=flat,
+                   rl_cameras=[cam], cfg=cfg, residual_actor=True,
+                   stage_conditioned=True, num_stages=ns)
+    agent.train(False)
+    bs = 2
+    obs = {
+        cam: torch.rand(bs, C, H, W),
+        "observation.state": torch.randn(bs, state_dim),
+        "observation.base_action": torch.tanh(torch.randn(bs, flat)),
+        "observation.stage_id": torch.randint(0, ns, (bs, 1)).float(),
+    }
+    with torch.no_grad():
+        obs_q = dict(obs)
+        obs_q["feat"] = agent._encode(obs_q, augment=False)
+        q_actions = torch.clamp(obs["observation.base_action"], -1.0, 1.0)
+        # 裸 state 漏拼 stage -> 维度崩(复现 evaluate_dexmg 原 bug)
+        with pytest.raises(RuntimeError):
+            agent.critic.q_value(obs_q["feat"], obs_q["observation.state"], q_actions)
+        # 用 _critic_prop 拼 stage -> 正确(修复方式)
+        q = agent.critic.q_value(obs_q["feat"], agent._critic_prop(obs_q), q_actions)
+    assert torch.isfinite(q).all()

@@ -183,8 +183,10 @@ def run_dexmg_evaluation(
             if agent.residual_actor:
                 q_actions = torch.clamp(obs["observation.base_action"] + actions, -1.0, 1.0)
 
+            # 用 agent._critic_prop 而非裸 observation.state：stage_conditioned 时
+            # critic 的 prop_dim 含 stage one-hot(+num_stages)，裸 state 会维度不匹配。
             q_pred = (
-                agent.critic.q_value(obs_q["feat"], obs_q["observation.state"], q_actions).detach().cpu().squeeze(-1)
+                agent.critic.q_value(obs_q["feat"], agent._critic_prop(obs_q), q_actions).detach().cpu().squeeze(-1)
             )
 
         # --------------------------------------------------------------
