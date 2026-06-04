@@ -14,6 +14,12 @@
 **开关代码骨架已全部完成、测试绿、review 通过；但 pi05 在 robomimic 上的实际效果尚未验证**——
 剩下的微调 + serve + eval + 端到端（Task 8-11）需要 robomimic 数据、GPU 与人工决策，未做。
 
+**2026-06-04 跨进程链路冒烟（eval_pi05_base.py 第一版，three-piece）**：
+- 做法：本地已有 pi05_base/params(12G)，仅缺 norm stats；从 openpi-assets 公开 bucket 单独 curl 下 trossen/norm_stats.json(3.4KB) 补全 -> serve 本地 pi05_base(config=pi05_aloha)，绕过 pi0_aloha_sim 的 11GB / ~300KB·s / 5h 下载。
+- 结果：**整条新增跨进程链路跑通**（serve 监听 / websocket / Pi05PolicyAdapter / obs 编码发送 / server 接收 / 进入 input_transform）。在 server 端 aloha input transform 的 state 维度处**按预期崩**：`aloha_policy._decode_state: _joint_flip_mask()*state`，`ValueError broadcast (14,) (18,)`(aloha 14 维 vs three-piece 18 维；且 _joint_flip_mask 等是 aloha 硬件专属变换，本就不适配 robomimic)。
+- 结论：**websocket 跨进程环节(最高风险新增部分)验证通过**；用任何官方 aloha 基座(含 pi0_aloha_sim)都只能验证到此。**完整 env 冒烟需 Task 9 的 three-piece 适配 data config + 微调 ckpt(带 18 维 norm stats)**。
+- 产物：`resfit/rl_finetuning/scripts/eval_pi05_base.py` + 12 单测(分支 chunk-residual-validation)；设计/计划见 `docs/superpowers/specs/2026-06-04-pi0-base-smoke-eval-design.md`、`docs/superpowers/plans/2026-06-04-pi0-base-smoke-eval.md`。
+
 ---
 
 ## 2. 已完成（Task 1-7 + cleanup）
