@@ -18,6 +18,7 @@ import argparse
 import copy
 import os
 
+import wandb
 import torch
 from tensordict import TensorDict
 from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer
@@ -38,6 +39,9 @@ from resfit.rl_finetuning.chunk_residual.stage_replay import sample_stage_balanc
 from resfit.rl_finetuning.chunk_residual.stage_diag import flatten_stage_diagnostics, stage_diagnostics
 from resfit.rl_finetuning.chunk_residual.stage_detectors import NUM_STAGES
 from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
+from resfit.rl_finetuning.chunk_residual.wandb_logging import (
+    init_wandb, build_train_log_dict, build_eval_log_dict,
+)
 
 
 def to_uint8(obs: dict, image_keys):
@@ -295,9 +299,12 @@ def main():
               f"offline_bs={offline_batch_size}(fraction={args.offline_fraction})")
 
     # --- 训练循环(x 轴=环境步;每 chunk 计入 chunk_length 步)---
+    run = init_wandb(args)
+
     obs, _ = env.reset()
     env_steps = 0
     next_eval = 0
+    next_log = args.learning_starts
     best_sr = 0.0
     last_diag = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
@@ -334,6 +341,15 @@ def main():
                         vals["target_q"] = m_upd["_target_q"]
                     last_diag = flatten_stage_diagnostics(stage_diagnostics(st, vals))
 
+            if env_steps >= next_log:
+                lrs = {"actor": agent.actor_opt.param_groups[0]["lr"],
+                       "critic": agent.critic_opt.param_groups[0]["lr"],
+                       "encoder": agent.encoder_opt.param_groups[0]["lr"]}
+                buf_sizes = {"online": len(online_rb),
+                             "offline": len(offline_rb) if offline_rb else 0}
+                wandb.log(build_train_log_dict(m_upd, lrs, buf_sizes), step=env_steps)
+                next_log += args.log_freq
+
         if env_steps >= next_eval:
             with torch.no_grad():
                 m = run_dexmg_evaluation(env=eval_env, agent=agent,
@@ -352,11 +368,14 @@ def main():
             if last_diag is not None:
                 print("[stage-diag] " + "  ".join(f"{k}={v:.3f}" for k, v in sorted(last_diag.items())))
             print("[stage-purity] " + env.stage_purity_summary())
+            wandb.log(build_eval_log_dict(m, last_diag, env.stage_purity_summary()),
+                      step=env_steps)
             next_eval += args.eval_every_env_steps
         if args.smoke:
             break
 
     print(f"done. best success_rate={best_sr:.3f}")
+    wandb.finish()
 
 
 if __name__ == "__main__":
