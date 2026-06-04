@@ -4,51 +4,77 @@
 
 **Goal:** 让 `residual-offpolicy-rl` 的冻结基座策略可在 ACT 与 pi05 之间用配置开关切换（step 级路径），并打通 robomimic 上微调 pi05 基座的链路。
 
-**Architecture:** 方案 A——在两处硬编码 ACT 的地方（`load_policy` 加载、`train_residual_td3` 的 actor_name 判断）插一个由 `base_policy.type` 驱动的分发层；pi05 复用 kai0 的 `Pi05PolicyAdapter`（补一个可配置视角映射），它已实现 step 级路径所需的 `select_action / reset / config.image_features`。RL 训练栈、残差组合、Q 网络一律不改。ACT 默认行为字节级不变。
+**Architecture:** 方案 A——在 `train_residual_td3` 的基座加载处插一个由 `base_policy.type` 驱动的分发层；pi05 走 **websocket 跨进程**：GPU 端在 kai0 uv 环境起 pi05 server，residual 端用轻量 `openpi-client` 的 `WebsocketClientPolicy` + `Pi05PolicyAdapter.from_policy(client)`（补一个可配置视角映射），它已实现 step 级路径所需的 `select_action / reset / config.image_features`。RL 训练栈、残差组合、Q 网络一律不改。ACT 默认行为字节级不变。
+
+**为何 websocket（2026-06-04 gate 结论）:** `residual` 环境纯 torch 2.7.1 无 flax，openpi 顶层硬 import flax，同进程不可行；无现成统一环境。详见 spec §11。
 
 **Tech Stack:** Python, PyTorch, Hydra dataclass config, openpi/pi05 (JAX+PyTorch 推理, 在 /data2/kai0), LeRobot 数据格式, robomimic, pytest。
 
 **关键约定（可配置，第一版默认值）:**
 - 目标任务：robomimic 单臂 **Lift**（可换 Can 等）。
 - action 维度：`action_dim = 7`（robomimic 单臂 OSC：末端位姿 + 夹爪）。
-- robomimic 视角 → pi05 槽位映射：`observation.images.agentview` → `base`(adapter 内部名 `top_head`)，`observation.images.robot0_eye_in_hand` → 左手腕(`hand_left`)，右手腕槽位缺省（由 openpi transform 补零图 + mask）。
+- robomimic 视角 → pi05 槽位映射：`observation.images.agentview` → `base`，`observation.images.robot0_eye_in_hand` → 左手腕，右手腕槽位缺省（由 openpi transform 补零图 + mask）。
 - prompt：`"pick up the cube"`（微调与推理必须用同一句）。
-- pi05 训练 config 名：`pi05_robomimic_lift`。
+- pi05 训练 config 名（GPU serve 端用）：`pi05_robomimic_lift`。
+- pi05 websocket：`host=127.0.0.1`、`port=8000`。
 
-**跨仓/环境前提:** pi05 推理需要 openpi（在 /data2/kai0），残差 RL 跑在 conda env `residual`。Task 1 先验证二者能在同一环境共存并 import，否则后续 step 级同进程方案需改走 websocket（本计划不含该退路，触发则回到 brainstorming）。
+**跨进程拓扑:** GPU 端在 kai0 uv 环境跑 `scripts/serve_policy.py` 起 pi05 websocket server（加载微调 ckpt）；residual 端纯 torch，pip 装轻量 `openpi-client`，用 `WebsocketClientPolicy` + `Pi05PolicyAdapter.from_policy`。residual 端不装/不 import flax/openpi。serve 端口与 config 由 Phase 3 / serve 任务管理。
 
 ---
 
 ## File Structure
 
+**residual 端依赖:**
+- 在 conda env `residual` 安装轻量 `openpi-client`（`/data2/kai0/packages/openpi-client`，无 flax/torch）。
+
 **修改（residual-offpolicy-rl）:**
-- `resfit/rl_finetuning/config/residual_td3.py` — `BasePolicyConfig` 加 `type` 与 pi05 字段。
-- `resfit/lerobot/utils/load_policy.py` — 不变（仍只管 ACT 从目录加载）；pi05 走新工厂。
+- `resfit/rl_finetuning/config/residual_td3.py` — `BasePolicyConfig` 加 `type` 与 pi05 字段（host/port 等）。
 - `resfit/rl_finetuning/scripts/train_residual_td3.py` — 按 `type` 分发加载基座 + 设 `actor_name`。
 - `resfit/rl_finetuning/wrappers/residual_env_wrapper.py` — 放宽 `base_policy` 类型注解。
+- 注：`resfit/lerobot/utils/load_policy.py` **不改**（pi05 不走它，走新工厂）。
 
 **新建（residual-offpolicy-rl）:**
 - `resfit/lerobot/policies/pi05/__init__.py`
-- `resfit/lerobot/policies/pi05/load_pi05.py` — pi05 加载工厂 `load_pi05_base_policy(cfg, device)`，封装跨仓 import + 视角映射。
-- `tests/policies/pi05/test_load_pi05.py` — 工厂分发与视角映射单测（mock pi05 policy）。
-- `tests/rl_finetuning/test_base_policy_switch.py` — 开关分发与 ACT 回归测试。
+- `resfit/lerobot/policies/pi05/load_pi05.py` — pi05 加载工厂 `load_pi05_base_policy(cfg, device)`：连 websocket server + `Pi05PolicyAdapter.from_policy`。
+- `resfit/rl_finetuning/scripts/eval_pi05_base.py` — Phase 1 gate 的纯基座 eval（连 server）。
+- `tests/policies/pi05/test_import_smoke.py` — websocket 路径 import 验证（无 flax）。
+- `tests/policies/pi05/test_load_pi05.py` — 工厂分发单测（mock client + adapter）。
+- `tests/rl_finetuning/test_base_policy_switch.py` — 开关分发、视角映射、ACT 回归测试。
 
 **修改（kai0）:**
-- `/data2/kai0/resfit_pi05/pi05_policy_adapter.py` — 视角映射 `_IMAGE_KEYS` 改为可配置实例参数（默认值向后兼容 dsrl_pi05）。
+- `/data2/kai0/resfit_pi05/pi05_policy_adapter.py` — 视角映射 `_IMAGE_KEYS` 改为可配置实例参数（默认值向后兼容 dsrl_pi05）；如 Task 1 发现顶层连带 import flax，则把 openpi import 惰性化。
 - `/data2/kai0/resfit_pi05/tests/test_pi05_policy_adapter_image_map.py` — 视角映射可配置单测。
 
-**微调链路（Phase 0/1，含外部脚本与 openpi config）:**
+**微调 + serve 链路（Phase 0/1，含外部脚本与 openpi config）:**
 - 复用 `resfit/lerobot/dataset/convert_robomimic_to_lerobot.py`（不改，命令调用）。
 - `/data2/kai0/src/openpi/training/config.py` — 新增 `Pi05RobomimicDataConfig` + `TrainConfig(name="pi05_robomimic_lift")`。
+- 复用 `/data2/kai0/scripts/serve_policy.py`（不改，GPU 端起 websocket server）。
 
 ---
 
-## Task 1: 环境与跨仓 import 验证（前置 gate）
+## Task 1: residual 端装 openpi-client + websocket 路径 import 验证（前置 gate）
+
+> 背景：同进程方案已被 2026-06-04 gate 否决（residual 无 flax，openpi 顶层 import flax）。
+> 本任务验证 **websocket 路径** 的前提：residual 端能装轻量 openpi-client、能 import
+> WebsocketClientPolicy 与 Pi05PolicyAdapter（走 from_policy，不触发 flax）。
 
 **Files:**
 - Test: `tests/policies/pi05/test_import_smoke.py`（residual-offpolicy-rl）
 
-- [ ] **Step 1: 写一个 import smoke 测试**
+- [ ] **Step 1: 在 residual 装 openpi-client（轻量，无 flax/torch）**
+
+先记录现有 numpy 版本（openpi-client 要求 numpy<2.0，避免降级破坏 residual）：
+Run: `conda run -n residual python -c "import numpy; print(numpy.__version__)"`
+
+安装（editable）：
+Run: `conda run -n residual pip install -e /data2/kai0/packages/openpi-client`
+Expected: 成功安装 openpi-client 及 dm-tree/msgpack/websockets/pillow/tree。
+
+安装后复查 numpy 未被意外降级到不兼容版本：
+Run: `conda run -n residual python -c "import numpy, torch; print('numpy', numpy.__version__, 'torch', torch.__version__)"`
+若 numpy 被降级且导致 torch 报错：改用 `pip install -e /data2/kai0/packages/openpi-client --no-deps`，再单独 `pip install "msgpack>=1.0.5" "websockets>=11.0" dm-tree tree pillow`，并把此偏差记入报告。
+
+- [ ] **Step 2: 写 import smoke 测试（验证 websocket 路径不碰 flax）**
 
 ```python
 # tests/policies/pi05/test_import_smoke.py
@@ -56,41 +82,39 @@ import importlib
 import sys
 from pathlib import Path
 
-import pytest
-
-KAI0_SRC = Path("/data2/kai0/src")
-KAI0_RESFIT_PI05 = Path("/data2/kai0")
+KAI0_ROOT = Path("/data2/kai0")  # 为 import resfit_pi05.* 提供包根
 
 
-def test_can_import_openpi_and_adapter():
-    """pi05 step 级同进程方案的前提：residual 环境里能 import openpi + Pi05PolicyAdapter。"""
-    for p in (str(KAI0_SRC), str(KAI0_RESFIT_PI05)):
-        if p not in sys.path:
-            sys.path.insert(0, p)
-    # openpi 推理依赖
-    importlib.import_module("openpi.training.config")
-    importlib.import_module("openpi.policies.policy_config")
-    # kai0 的 pi05 adapter
+def test_websocket_path_imports_without_flax():
+    """websocket 跨进程方案前提：residual 端能 import client + adapter，且不触发 flax。"""
+    if str(KAI0_ROOT) not in sys.path:
+        sys.path.insert(0, str(KAI0_ROOT))
+
+    # 轻量 client（pip 安装后可直接 import，依赖里无 flax/torch）
+    from openpi_client.websocket_client_policy import WebsocketClientPolicy  # noqa: F401
+
+    # adapter 顶层 import 干净；走 from_policy 路径不会 import openpi.training.config
     mod = importlib.import_module("resfit_pi05.pi05_policy_adapter")
     assert hasattr(mod, "Pi05PolicyAdapter")
+
+    # 关键断言：import adapter 不应连带把 flax 拉进来
+    assert "flax" not in sys.modules, "import adapter 触发了 flax，from_policy 路径不该如此"
 ```
 
-- [ ] **Step 2: 在 residual 环境运行**
+- [ ] **Step 3: 运行**
 
 Run: `conda run -n residual python -m pytest tests/policies/pi05/test_import_smoke.py -v`
 Expected: PASS。
 
-若 FAIL（依赖冲突，例如 JAX/torch 版本不兼容）：**停止本计划**，把失败原文带回 brainstorming 决定是否改走 websocket policy server 跨进程方案。不要在此处硬凑。
-
-- [ ] **Step 3: 记录可用的 import 路径**
-
-把通过的 `sys.path` 注入路径（`/data2/kai0/src` 与 `/data2/kai0`）记下来，Task 3 的工厂会复用。
+若 `assert "flax" not in sys.modules` 失败（说明 adapter 顶层确实连带 import 了 openpi）：
+在 Task 2 里把 `pi05_policy_adapter.py` 中对 openpi 的 import 移进 `from_checkpoint` 函数体（惰性化），
+使 from_policy 路径不碰 flax；然后回到本步重跑。其它 import 失败按错误原文排查依赖安装。
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add tests/policies/pi05/test_import_smoke.py
-git commit -m "test: pi05 cross-repo import smoke test"
+git commit -m "test: pi05 websocket-path import smoke (no flax in residual)"
 ```
 
 ---
@@ -289,32 +313,37 @@ git commit -m "feat(pi05-adapter): make camera-view mapping configurable"
 
 ---
 
-## Task 3: residual 侧 pi05 加载工厂
+## Task 3: residual 侧 pi05 加载工厂（websocket 客户端）
 
-封装跨仓 import + 视角映射，产出一个"长得像 ACTPolicy"的基座对象。
+连 pi05 websocket server，包成"长得像 ACTPolicy"的 step 级基座对象。
 
 **Files:**
 - Create: `resfit/lerobot/policies/pi05/__init__.py`
 - Create: `resfit/lerobot/policies/pi05/load_pi05.py`
 - Test: `tests/policies/pi05/test_load_pi05.py`
 
-- [ ] **Step 1: 写失败测试（用 monkeypatch 注入假 adapter，避免依赖真 checkpoint）**
+- [ ] **Step 1: 写失败测试（monkeypatch 注入假 client + 假 adapter，不依赖真 server）**
 
 ```python
 # tests/policies/pi05/test_load_pi05.py
 import types
-import numpy as np
-import pytest
 
 from resfit.lerobot.policies.pi05 import load_pi05
+
+
+class _FakeClient:
+    created_with = None
+
+    def __init__(self, host, port):
+        type(self).created_with = {"host": host, "port": port}
 
 
 class _FakeAdapter:
     created_with = None
 
     @classmethod
-    def from_checkpoint(cls, **kwargs):
-        cls.created_with = kwargs
+    def from_policy(cls, policy, **kwargs):
+        cls.created_with = {"policy": policy, **kwargs}
         inst = cls()
         inst.config = types.SimpleNamespace(
             image_features=dict.fromkeys(kwargs["image_key_map"])
@@ -322,13 +351,14 @@ class _FakeAdapter:
         return inst
 
 
-def test_load_pi05_passes_config_fields(monkeypatch):
+def test_load_pi05_builds_ws_client_and_adapter(monkeypatch):
+    monkeypatch.setattr(load_pi05, "_import_ws_client", lambda: _FakeClient)
     monkeypatch.setattr(load_pi05, "_import_pi05_adapter", lambda: _FakeAdapter)
 
     cfg = types.SimpleNamespace(
         type="pi05",
-        config_name="pi05_robomimic_lift",
-        checkpoint_dir="/tmp/ckpt",
+        host="127.0.0.1",
+        port=8000,
         prompt="pick up the cube",
         action_dim=7,
         execute_horizon=30,
@@ -336,11 +366,12 @@ def test_load_pi05_passes_config_fields(monkeypatch):
             "observation.images.agentview": "base",
             "observation.images.robot0_eye_in_hand": "left_wrist",
         },
-        kai0_paths=["/data2/kai0/src", "/data2/kai0"],
+        kai0_paths=["/data2/kai0"],
     )
     policy = load_pi05.load_pi05_base_policy(cfg, device="cpu")
 
-    assert _FakeAdapter.created_with["config_name"] == "pi05_robomimic_lift"
+    assert _FakeClient.created_with == {"host": "127.0.0.1", "port": 8000}
+    assert isinstance(_FakeAdapter.created_with["policy"], _FakeClient)
     assert _FakeAdapter.created_with["action_dim"] == 7
     assert _FakeAdapter.created_with["prompt"] == "pick up the cube"
     assert _FakeAdapter.created_with["image_key_map"] == cfg.image_key_map
@@ -363,33 +394,40 @@ __all__ = ["load_pi05_base_policy"]
 
 ```python
 # resfit/lerobot/policies/pi05/load_pi05.py
-"""加载 pi05 基座策略（复用 kai0 的 Pi05PolicyAdapter），封装跨仓 import 与视角映射。"""
+"""加载 pi05 基座策略：连 pi05 websocket server，用 Pi05PolicyAdapter.from_policy 包成 step 级基座。"""
 from __future__ import annotations
 
 import sys
 
 
+def _import_ws_client():
+    """openpi-client 的 WebsocketClientPolicy（独立函数便于测试 monkeypatch）。"""
+    from openpi_client.websocket_client_policy import WebsocketClientPolicy  # noqa: WPS433
+    return WebsocketClientPolicy
+
+
 def _import_pi05_adapter():
-    """从 kai0 import Pi05PolicyAdapter（独立函数便于测试时 monkeypatch）。"""
+    """从 kai0 import Pi05PolicyAdapter（独立函数便于测试 monkeypatch）。"""
     from resfit_pi05.pi05_policy_adapter import Pi05PolicyAdapter  # noqa: WPS433
     return Pi05PolicyAdapter
 
 
 def load_pi05_base_policy(cfg, device):
-    """按 base_policy 配置加载 pi05 adapter。
+    """连 pi05 websocket server 并包成 step 级 base_policy。
 
-    cfg 需含字段：config_name, checkpoint_dir, prompt, action_dim,
-    execute_horizon, image_key_map, kai0_paths。
+    cfg 需含字段：host, port, prompt, action_dim, execute_horizon, image_key_map, kai0_paths。
     返回对象提供 select_action / reset / config.image_features（step 级路径所需）。
     """
     for p in getattr(cfg, "kai0_paths", []):
         if p not in sys.path:
             sys.path.insert(0, p)
 
+    WebsocketClientPolicy = _import_ws_client()
     Pi05PolicyAdapter = _import_pi05_adapter()
-    return Pi05PolicyAdapter.from_checkpoint(
-        config_name=cfg.config_name,
-        checkpoint_dir=cfg.checkpoint_dir,
+
+    client = WebsocketClientPolicy(host=cfg.host, port=cfg.port)
+    return Pi05PolicyAdapter.from_policy(
+        client,
         prompt=cfg.prompt,
         action_dim=cfg.action_dim,
         device=str(device),
@@ -407,7 +445,7 @@ Expected: PASS。
 
 ```bash
 git add resfit/lerobot/policies/pi05/__init__.py resfit/lerobot/policies/pi05/load_pi05.py tests/policies/pi05/test_load_pi05.py
-git commit -m "feat: pi05 base-policy load factory"
+git commit -m "feat: pi05 websocket-client base-policy load factory"
 ```
 
 ---
@@ -433,13 +471,13 @@ def test_default_type_is_act():
 def test_pi05_fields_exist_with_defaults():
     cfg = BasePolicyConfig(type="pi05")
     assert cfg.type == "pi05"
-    assert cfg.config_name is None
-    assert cfg.checkpoint_dir is None
+    assert cfg.host == "127.0.0.1"
+    assert cfg.port == 8000
     assert cfg.action_dim == 7
     assert cfg.execute_horizon == 30
     assert cfg.prompt == "pick up the cube"
     assert "observation.images.agentview" in cfg.image_key_map
-    assert cfg.kai0_paths == ["/data2/kai0/src", "/data2/kai0"]
+    assert cfg.kai0_paths == ["/data2/kai0"]
 ```
 
 - [ ] **Step 2: 运行验证失败**
@@ -464,17 +502,18 @@ class BasePolicyConfig:
     wt_type: str = "best"
     wt_version: str = "latest"
 
-    # --- pi05 路径（type == "pi05" 时使用）---
-    config_name: str | None = None        # openpi TrainConfig 名，如 "pi05_robomimic_lift"
-    checkpoint_dir: str | None = None      # 微调产出的 checkpoint 目录
-    prompt: str = "pick up the cube"       # 与微调时一致
-    action_dim: int = 7                    # robomimic 单臂动作维度
-    execute_horizon: int = 30              # 每次推理实际执行步数（截断 50 步 chunk）
+    # --- pi05 路径（type == "pi05" 时使用，websocket 客户端）---
+    host: str = "127.0.0.1"                 # pi05 websocket server 地址（GPU serve 端）
+    port: int = 8000                        # pi05 websocket server 端口
+    prompt: str = "pick up the cube"        # 与微调时一致
+    action_dim: int = 7                     # robomimic 单臂动作维度
+    execute_horizon: int = 30               # 每次推理实际执行步数（截断 50 步 chunk）
     image_key_map: dict = field(default_factory=lambda: {
         "observation.images.agentview": "base",
         "observation.images.robot0_eye_in_hand": "left_wrist",
     })
-    kai0_paths: list = field(default_factory=lambda: ["/data2/kai0/src", "/data2/kai0"])
+    kai0_paths: list = field(default_factory=lambda: ["/data2/kai0"])
+    # 注：pi05 的 config_name/checkpoint_dir 属于 GPU serve 端（见 Task 9b），不在此配置
 ```
 
 - [ ] **Step 4: 运行验证通过**
@@ -520,8 +559,8 @@ def build_base_policy(cfg, device):
 
     if btype == "pi05":
         from resfit.lerobot.policies.pi05 import load_pi05_base_policy
-        assert bp.checkpoint_dir is not None, "pi05 base policy requires checkpoint_dir"
-        assert bp.config_name is not None, "pi05 base policy requires config_name"
+        assert bp.host and bp.port, "pi05 base policy requires host/port (websocket server)"
+        # 连 pi05 websocket server（需 GPU 端先按 Task 9b 起好 server）
         policy = load_pi05_base_policy(bp, device)
         # 残差 actor 只吃 observation.base_action 向量，与基座类型解耦，复用 residual_act
         return policy, "residual_act"
@@ -640,8 +679,12 @@ git commit -m "refactor: loosen base_policy type to structural protocol"
 
 ```python
 # tests/rl_finetuning/test_base_policy_switch.py 追加
+import sys
 import numpy as np
-from resfit_pi05.pi05_policy_adapter import Pi05PolicyAdapter  # 经 Task 1 路径可 import
+
+if "/data2/kai0" not in sys.path:  # 为 import resfit_pi05.* 提供包根
+    sys.path.insert(0, "/data2/kai0")
+from resfit_pi05.pi05_policy_adapter import Pi05PolicyAdapter
 
 
 class _FakePi05Policy:
@@ -772,16 +815,16 @@ TrainConfig(
 )
 ```
 
-- [ ] **Step 3: 计算归一化统计**
+- [ ] **Step 3: 计算归一化统计（kai0 uv 环境，非 residual）**
 
-Run: `cd /data2/kai0 && conda run -n residual python scripts/compute_norm_stats.py pi05_robomimic_lift`
-（脚本名以仓内实际为准，参照探查到的 `compute_norm_states`/`compute_norm_stats`。）
+Run: `cd /data2/kai0 && uv run scripts/compute_norm_states_fast.py --config-name pi05_robomimic_lift`
+（脚本名见 kai0 CLAUDE.md；kai0 用 uv 环境跑训练，不是 conda residual。）
 Expected: 生成 norm stats assets，无报错。
 
-- [ ] **Step 4: 跑微调（小步先验证能起训）**
+- [ ] **Step 4: 跑微调（kai0 uv 环境，小步先验证能起训）**
 
-Run: `cd /data2/kai0 && conda run -n residual python scripts/train.py pi05_robomimic_lift --exp_name=pi05_lift_v1`
-Expected: 训练正常迭代、loss 下降、按 save_interval 落 checkpoint。
+Run: `cd /data2/kai0 && uv run scripts/train.py pi05_robomimic_lift --exp_name=pi05_lift_v1`
+Expected: 训练正常迭代、loss 下降、按 save_interval 落 checkpoint。记下产出的 checkpoint 目录（供 Task 9b serve 用）。
 
 - [ ] **Step 5: Commit（kai0 仓）**
 
@@ -790,6 +833,45 @@ cd /data2/kai0
 git add src/openpi/training/config.py
 git commit -m "feat(openpi): add pi05_robomimic_lift train config"
 ```
+
+---
+
+## Task 9b (serve): GPU 端起 pi05 websocket server
+
+residual 端连 pi05 前（Task 10/11 都需要），GPU 端用 kai0 现成 serve 脚本起 server 加载微调 ckpt。这是运维步骤，不产代码、不 commit。
+
+**Files:**
+- 复用: `/data2/kai0/scripts/serve_policy.py`（不改，命令调用）
+
+- [ ] **Step 1: 确认 serve 参数**
+
+Run: `cd /data2/kai0 && uv run scripts/serve_policy.py --help`
+Expected: 看到 policy config / checkpoint dir / port 等参数的真实名称（下面命令按此对齐）。
+
+- [ ] **Step 2: 起 server（kai0 uv 环境，常驻进程）**
+
+Run:
+```bash
+cd /data2/kai0 && uv run scripts/serve_policy.py \
+  --policy.config pi05_robomimic_lift \
+  --policy.dir <PI05_CKPT> \
+  --default-prompt "pick up the cube" \
+  --port 8000
+```
+Expected: 打印 pi05 加载完成并监听 `:8000`。保持常驻（后台或独立终端）。
+
+- [ ] **Step 3: residual 端连通性自检**
+
+在 residual 端另一终端：
+```bash
+conda run -n residual python -c "
+import sys; sys.path.insert(0, '/data2/kai0')
+from openpi_client.websocket_client_policy import WebsocketClientPolicy
+c = WebsocketClientPolicy(host='127.0.0.1', port=8000)
+print('connected OK')
+"
+```
+Expected: 打印 `connected OK`（构造时会与 server 握手取 metadata）。失败则检查 server 是否在跑、端口是否一致。
 
 ---
 
@@ -802,16 +884,14 @@ git commit -m "feat(openpi): add pi05_robomimic_lift train config"
 
 - [ ] **Step 1: 写一个最小 eval 脚本**
 
-加载 `Pi05PolicyAdapter`（用 `load_pi05_base_policy` + 微调 checkpoint），在 robomimic Lift 跑 N 个 episode，纯基座（无残差），统计成功率。脚本复用仓内现有 robomimic 评估环境构造（参照 `train_residual_td3.py` 的 env 创建段）。
+在 residual 端，用 `load_pi05_base_policy`（连 Task 9b 起好的 websocket server）得到 base_policy，在 robomimic Lift 跑 N 个 episode，纯基座（无残差），统计成功率。脚本复用仓内现有 robomimic 评估环境构造（参照 `train_residual_td3.py` 的 env 创建段）。脚本接收 `--host/--port/--n_episodes`，构造一个 `BasePolicyConfig(type="pi05", host=..., port=...)` 传给 `load_pi05_base_policy`。
 
-- [ ] **Step 2: 跑 eval**
+- [ ] **Step 2: 跑 eval（需 Task 9b 的 server 在跑）**
 
 Run:
 ```bash
 conda run -n residual python resfit/rl_finetuning/scripts/eval_pi05_base.py \
-  --config_name pi05_robomimic_lift \
-  --checkpoint_dir <PI05_CKPT> \
-  --n_episodes 50
+  --host 127.0.0.1 --port 8000 --n_episodes 50
 ```
 Expected: 打印成功率。
 
@@ -834,14 +914,18 @@ git commit -m "feat: standalone pi05 base-policy eval (phase-1 gate)"
 **Files:**
 - Create: 一个 pi05 实验配置/启动脚本（参照仓内现有 ACT 残差启动方式）。
 
+- [ ] **Step 0: 确认 pi05 server 在跑**
+
+Task 9b 的 websocket server 必须常驻（GPU 端 kai0 uv）。residual 端连通性自检通过后再继续。
+
 - [ ] **Step 1: 配置切到 pi05**
 
-设 `base_policy.type=pi05`、`config_name=pi05_robomimic_lift`、`checkpoint_dir=<PI05_CKPT>`、`action_dim=7`、`image_key_map` 与 Task 8 结论一致、`prompt` 与微调一致。
+设 `base_policy.type=pi05`、`host=127.0.0.1`、`port=8000`、`action_dim=7`、`image_key_map` 与 Task 8 结论一致、`prompt` 与微调一致。
 
 - [ ] **Step 2: 短跑冒烟（少量 env step）**
 
-Run: 用很小的 `total_steps` 跑一次，确认：加载分发走 pi05、rollout 不崩、残差组合维度对、能落 checkpoint。
-Expected: 正常迭代，无维度/设备错误。
+Run: 用很小的 `total_steps` 跑一次，确认：加载分发走 pi05、能连上 server、rollout 不崩、残差组合维度对、能落 checkpoint。
+Expected: 正常迭代，无维度/设备/连接错误。
 
 - [ ] **Step 3: 正式训练**
 
@@ -864,6 +948,10 @@ git commit -m "feat: pi05 base policy + residual RL end-to-end config"
 
 ## Self-Review 备注
 
-- **Spec 覆盖**：§5.1 开关→Task 4/5/6；§5.2 微调链路→Task 8/9/10；§5.3 视角映射→Task 2/3（step 级，已确认无需补 model/normalize）；§7 测试→Task 2/3/7；§8 分阶段→Task 8/9/10/11；§9 风险（环境/算力/gate）→Task 1（环境）/Task 10（gate）。
-- **已知非精确处**：Task 9 的 openpi data config 字段名、Task 9 Step 3 的 norm-stats 脚本名，需在实现时对照 kai0 源码现成例子确认（已在任务内显式标注"先读现成例子"）——这是依赖外部库 API 的必要核实，非占位。
-- **类型一致**：`build_base_policy` 返回 `(policy, actor_name)`，pi05 复用 `"residual_act"`（残差 actor 与基座解耦，仅吃 `observation.base_action`）。
+- **架构**：pi05 走 websocket 跨进程（spec §11）。GPU 端 kai0 uv 起 server（Task 9b），residual 端轻量 openpi-client + `Pi05PolicyAdapter.from_policy` 当 step 级基座。
+- **Spec 覆盖**：§5.1 开关→Task 4/5/6；§5.2 微调链路→Task 8/9；§5.3 视角映射→Task 2/3（step 级，已确认无需补 model/normalize）；§7 测试→Task 1/2/3/7；§8 分阶段→Task 8/9/9b/10/11；§9 风险（环境/吞吐/server 生命周期/gate）→Task 1（环境）/Task 9b（server）/Task 10（gate）；§11 跨进程→Task 1/3/9b。
+- **已知非精确处**（依赖外部库 API 的必要核实，非占位，均在任务内标注"先读 --help/现成例子"）：
+  - Task 9 的 openpi data config 字段名（对照 `LeRobotLiberoDataConfig`）。
+  - Task 9b 的 `serve_policy.py` 参数名（先 `--help`）。
+  - `WebsocketClientPolicy(host, port)` 构造签名（探查确认，实现时复核）。
+- **类型一致**：`build_base_policy` 返回 `(policy, actor_name)`，pi05 复用 `"residual_act"`（残差 actor 与基座解耦，仅吃 `observation.base_action`）。pi05 config 字段统一为 `host/port/prompt/action_dim/execute_horizon/image_key_map/kai0_paths`（不含 config_name/checkpoint_dir）。

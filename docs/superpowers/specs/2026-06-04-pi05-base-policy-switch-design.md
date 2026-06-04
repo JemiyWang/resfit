@@ -26,6 +26,9 @@
   保证旧实验行为字节级不变。
 - **基座模型选型 = pi05**（接口与 pi0 几乎一致；pi05 语言条件更强、单任务微调更易）。
 - **基座需先微调**：当前没有 robomimic 上微调好的 pi05 checkpoint，微调是本期工作量大头。
+- **pi05 推理 = websocket 跨进程**（2026-06-04 gate 后定）：`residual` 环境无 flax、openpi 顶层硬 import flax，
+  同进程不可行；无现成统一环境。改为 GPU 端在 kai0 uv 环境起 pi05 websocket server，
+  residual 端用轻量 `openpi-client` + `Pi05PolicyAdapter.from_policy(client)` 调用。见 §11。
 
 ## 3. 现状盘点（复用基础）
 
@@ -57,12 +60,14 @@
 只在两处硬编码 ACT 的地方插分发层，RL 循环不碰：
 
 1. **配置开关**：base policy 配置新增 `type: "act" | "pi05"`（默认 `"act"`）。
-   pi05 额外字段：`config_name`（如 `pi05_robomimic_xxx`）、`checkpoint_dir`、`prompt`、
-   `action_dim`、`execute_horizon`、视角映射表（见 5.3）。
+   pi05 额外字段（websocket 客户端）：`host`、`port`、`prompt`、`action_dim`、
+   `execute_horizon`、视角映射表（见 5.3）。pi05 的 `config_name`/`checkpoint_dir`
+   属于 **GPU serve 端**（见 §11），不在 residual 侧配置里。
 
-2. **加载分发**：`resfit/lerobot/utils/load_policy.py` 的 `load_policy()` 按 `type` 分发：
-   - `"act"` → 原 `ACTPolicy.from_pretrained`（不改）。
-   - `"pi05"` → `Pi05PolicyAdapter.from_checkpoint(...)`。
+2. **加载分发**：基座加载按 `type` 分发（在 `train_residual_td3` 的 `build_base_policy`）：
+   - `"act"` → 原 `download_policy_from_wandb` + `ACTPolicy`（不改）。
+   - `"pi05"` → `WebsocketClientPolicy(host, port)` + `Pi05PolicyAdapter.from_policy(client, image_key_map=...)`。
+     residual 端只依赖轻量 `openpi-client`，不碰 flax/openpi。
 
 3. **actor 类型判断分发**：`scripts/train_residual_td3.py` 现用 `isinstance(base_cfg, ACTConfig)`
    定 `actor_name`，扩展为同时认 pi05 配置类型，设到对应 residual actor 名。
@@ -126,10 +131,45 @@
 - **算力**：pi05 约 3B 参数 VLA，微调需较大 GPU。
 - **domain gap**：pi05 为真机/aloha 大图设计，在 robomimic 仿真小图上微调效果有不确定性 → 小步先验证。
 - **基座质量门槛**：残差 RL 强依赖基座本身可用；Phase 1 gate 不过则不应进入 Phase 3。
-- **接口对接点未完全确认**：见 §6，writing-plans 开头先消除。
+- **接口对接点**：已核实（§6），step 级，无需补 model/normalize。
+- **推理吞吐**：websocket 跨进程 + pi05 ~100ms/次，RL 海量 env step 下吞吐比 ACT 同进程慢
+  （step 级 chunk 队列每 `execute_horizon`≈30 步才真推理一次，可缓解但仍是成本）。
+- **server 生命周期**：Phase 3 需先在 GPU 起 server 再跑 RL；server 挂掉则 RL 阻塞（需健康检查/重连考量）。
 
 ## 10. 可配置项（默认值）
 
 - 目标任务：可配置，第一版默认单臂任务（Lift 或 Can）。
 - 视角映射表、action 维度、prompt：随任务配置。
 - `base_policy.type` 默认 `"act"`。
+- pi05 websocket：`host`/`port`（默认 `127.0.0.1:8000`）。
+
+## 11. 跨进程架构（websocket，2026-06-04 定）
+
+**为何**：`residual` conda 环境纯 torch 2.7.1 无 flax；openpi `src/openpi/training/config.py` 顶层
+`import flax.nnx`，在 residual 内 import openpi 必然失败；无现成同时支持 robosuite/torchrl 栈与 flax/jax
+的统一环境（base/kai0_convert 有 flax 但 torch 2.10，与 residual 栈不符）。强装 flax/jax 与 torch 2.7.1
+大概率 CUDA 冲突。故 pi05 推理走跨进程。
+
+**拓扑**：
+```
+[GPU 端 · kai0 uv 环境(JAX/torch)]
+  scripts/serve_policy.py --policy.config pi05_robomimic_lift --policy.dir <ckpt> --port 8000
+    → WebsocketPolicyServer 加载 pi05，监听 127.0.0.1:8000
+          ↕  本地 websocket (msgpack_numpy)
+[residual 端 · conda residual(纯 torch)]
+  openpi_client.WebsocketClientPolicy(host, port)         # 轻量包，无 flax
+    → Pi05PolicyAdapter.from_policy(client, prompt, action_dim, execute_horizon, image_key_map)
+    → 作为 base_policy 喂给 BasePolicyVecEnvWrapper（select_action/reset/config.image_features）
+```
+
+**关键事实**：
+- `Pi05PolicyAdapter.from_policy(policy, ...)` 接受任何有 `.infer(obs)->{"actions":...}` 方法的对象；
+  `WebsocketClientPolicy` 正好提供该接口 → step 级开关设计无需改，只换"加载方式"。
+- `Pi05PolicyAdapter` 模块顶层 import 干净（仅 numpy/torch）；openpi import 只在 `from_checkpoint` 内，
+  走 `from_policy` 路径不触发 flax。
+- `openpi-client` 依赖仅 `dm-tree/msgpack/numpy<2.0/pillow/tree/websockets`，可 pip 装进 residual。
+- 相关文件：server `/data2/kai0/src/openpi/serving/websocket_policy_server.py`；
+  client `/data2/kai0/packages/openpi-client/src/openpi_client/websocket_client_policy.py`；
+  serve 脚本 `/data2/kai0/scripts/serve_policy.py`。
+
+**注意 numpy 版本**：openpi-client 要求 numpy<2.0；安装到 residual 前确认不破坏现有 numpy 依赖。
