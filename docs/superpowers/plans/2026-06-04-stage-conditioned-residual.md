@@ -6,7 +6,7 @@
 
 **Architecture:** 新增 `off_policy/rl/stage_utils.py`（stage one-hot 工具，纯函数易测）。Actor 自己从 obs 取 stage_id 在 forward 内 append（因为 Actor.forward 接 obs dict）。Critic 的 forward 不接 obs，拿不到 stage_id，故由 QAgent 把 stage one-hot 拼进 `prop` 再传给 critic（critic 源码不改，只是 prop_dim 加宽）。两个独立 config 开关 `--stage_conditioned`（生效）与 `--stage_budget_mode`（仅占位）。
 
-**Tech Stack:** PyTorch；pytest（`uv run pytest`，排除 `-m "not manual"`）；torchrl TensorDict（仅 manual 烟雾用）。
+**Tech Stack:** PyTorch；pytest（`conda run -n residual python -m pytest`，排除 `-m "not manual"`）；torchrl TensorDict（仅 manual 烟雾用）。
 
 **关联：** 设计文档 `docs/superpowers/specs/2026-06-04-stage-conditioned-residual-design.md`。
 
@@ -76,7 +76,7 @@ def test_append_stage_widens_prop():
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_utils.py -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_utils.py -v`
 Expected: FAIL，`ModuleNotFoundError: ... stage_utils`。
 
 - [ ] **Step 3: 写实现**
@@ -114,7 +114,7 @@ def append_stage(prop: torch.Tensor, stage_id: torch.Tensor, num_stages: int) ->
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_utils.py -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_utils.py -v`
 Expected: 4 passed。
 
 - [ ] **Step 5: 提交**
@@ -192,7 +192,7 @@ def test_actor_on_is_sensitive_to_stage():
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py -v`
 Expected: FAIL，`Actor.__init__() got an unexpected keyword argument 'stage_conditioned'`。
 
 - [ ] **Step 3: 改 Actor 构造**
@@ -245,12 +245,12 @@ In `resfit/rl_finetuning/off_policy/rl/actor.py`, replace the `all_input` block 
 
 - [ ] **Step 5: 运行测试确认通过**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py -v`
 Expected: 3 passed。
 
 - [ ] **Step 6: 跑现有 actor 相关测试确认无回归**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_residual_flow_actor.py -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_residual_flow_actor.py -v`
 Expected: 全 passed（flow actor 不传新参数，默认关闭，行为不变）。
 
 - [ ] **Step 7: 提交**
@@ -306,7 +306,7 @@ def test_critic_q_sensitive_to_stage_in_prop():
 
 - [ ] **Step 2: 运行测试确认通过**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py::test_critic_q_sensitive_to_stage_in_prop -v`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py::test_critic_q_sensitive_to_stage_in_prop -v`
 Expected: PASS（critic 已能消化加宽 prop 且对 stage 敏感，无需改 critic 源码）。
 
 若该测试因 `CriticConfig.loss.type` 字段名不符而出错，先 Read `resfit/rl_finetuning/config/rlpd.py` 顶部的 `CriticLossCfg` 定义，按真实字段名设置 mse 模式，再跑。
@@ -430,7 +430,7 @@ Line 447 (actor loss q_value_for_policy):
 
 - [ ] **Step 5: 跑回归测试（关闭 stage 时行为不变）**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/ -v -m "not manual"`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/ -v -m "not manual"`
 Expected: 全 passed。关闭 stage 时 `_critic_prop` 原样返回 state、`critic_prop_dim==prop_dim`、Actor 不传新行为，等价改前。
 
 - [ ] **Step 6: 提交**
@@ -483,10 +483,10 @@ In `resfit/rl_finetuning/chunk_residual/train_chunk_residual.py`, replace the QA
 
 - [ ] **Step 4: 冒烟 import / argparse（不真训）**
 
-Run: `uv run python -c "import resfit.rl_finetuning.chunk_residual.train_chunk_residual as m; print('import ok')"`
+Run: `conda run -n residual python -c "import resfit.rl_finetuning.chunk_residual.train_chunk_residual as m; print('import ok')"`
 Expected: 打印 `import ok`，无 import 错误。
 
-Run: `uv run python -m resfit.rl_finetuning.chunk_residual.train_chunk_residual --help 2>&1 | grep -E "stage_conditioned|stage_budget_mode"`
+Run: `conda run -n residual python -m resfit.rl_finetuning.chunk_residual.train_chunk_residual --help 2>&1 | grep -E "stage_conditioned|stage_budget_mode"`
 Expected: 两个新开关出现在 help 里。
 
 - [ ] **Step 5: 提交**
@@ -560,7 +560,7 @@ def test_qagent_update_smoke_stage_on():
 
 - [ ] **Step 2: 手动跑该烟雾（可选，需要时）**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py::test_qagent_update_smoke_stage_on -v -m manual`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_stage_conditioned.py::test_qagent_update_smoke_stage_on -v -m manual`
 Expected: PASS，critic/actor loss 均 finite。
 
 - [ ] **Step 3: 提交**
@@ -576,7 +576,7 @@ git commit -m "test(stage): QAgent.update 端到端烟雾（manual）"
 
 - [ ] **全量默认测试通过**
 
-Run: `uv run pytest resfit/rl_finetuning/chunk_residual/tests/ -v -m "not manual"`
+Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/ -v -m "not manual"`
 Expected: 全 passed，含 Task 1-4 新测与所有现有测（关闭 stage 时无回归）。
 
 - [ ] **lint**
