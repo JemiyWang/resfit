@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 import torch
 
-from resfit.rl_finetuning.scripts.eval_pi05_base import check_action, run_smoke
+import resfit.rl_finetuning.scripts.eval_pi05_base as evalmod
+from resfit.rl_finetuning.scripts.eval_pi05_base import check_action, format_report, run_smoke
 
 
 def test_check_action_accepts_valid():
@@ -105,3 +106,31 @@ def test_run_smoke_stops_at_max_steps():
     env = _FakeEnv(done_after=1000)                # never done
     report = run_smoke(env, pol, n_episodes=1, max_steps=5, action_dim=14)
     assert report["episodes"] == [5]
+
+
+def test_format_report_runs():
+    report = {"episodes": [3, 3], "infer_times": [0.01, 0.02], "action_min": -0.1, "action_max": 0.1}
+    text = format_report(report)
+    assert "episodes" in text.lower()
+    assert "3" in text
+
+
+def test_main_wires_env_and_policy(monkeypatch):
+    captured = {}
+
+    def fake_build_env(device, camera_size=84):
+        captured["env_device"] = device
+        return _FakeEnv(done_after=2)
+
+    def fake_build_policy(host, port, device):
+        captured["host"] = host
+        captured["port"] = port
+        return _FakePolicy(torch.zeros((1, 14)))
+
+    monkeypatch.setattr(evalmod, "build_smoke_env", fake_build_env)
+    monkeypatch.setattr(evalmod, "build_pi0_base_policy", fake_build_policy)
+
+    evalmod.main(["--host", "1.2.3.4", "--port", "9999", "--n_episodes", "2", "--max_steps", "5"])
+
+    assert captured["host"] == "1.2.3.4"
+    assert captured["port"] == 9999
