@@ -31,3 +31,41 @@ def build_train_log_dict(m_upd, lrs, buf_sizes, with_histograms=True,
         if "_target_q" in m_upd:
             log_dict["histograms/critic_qt"] = hist_fn(m_upd["_target_q"].numpy().reshape(-1))
     return log_dict
+
+
+def _parse_purity(summary):
+    """把 stage_purity_summary() 字符串解析成 {purity/regress_frac, purity/stageN}。
+    解析不了就回落 {purity/raw: 原串}(不抛异常)。"""
+    if not summary or summary == "no stage steps":
+        return {"purity/raw": summary}
+    out = {}
+    try:
+        tokens = summary.split()
+        for i, tok in enumerate(tokens):
+            if tok == "regress":
+                a, b = tokens[i + 1].split("=")[0].split("/")
+                out["purity/regress_frac"] = float(a) / float(b)
+            elif tok.startswith("stage") and ":" in tok:
+                label, rest = tok.split(":", 1)
+                stage_idx = int(label[len("stage"):])
+                r, n = rest.split("=")[0].split("/")
+                out[f"purity/stage{stage_idx}"] = float(r) / float(n)
+    except Exception:
+        return {"purity/raw": summary}
+    if not out:
+        return {"purity/raw": summary}
+    return out
+
+
+def build_eval_log_dict(eval_metrics, last_diag, purity_summary):
+    """组装 eval + stage 诊断 log_dict。
+
+    eval_metrics: run_dexmg_evaluation 返回的 dict(含 eval/* 键)。
+    last_diag: flatten_stage_diagnostics 的扁平输出(键已带 diag/ 前缀),可能为 None。
+    purity_summary: env.stage_purity_summary() 字符串。
+    """
+    log_dict = {k: v for k, v in eval_metrics.items() if k.startswith("eval/")}
+    if last_diag:
+        log_dict.update(last_diag)
+    log_dict.update(_parse_purity(purity_summary))
+    return log_dict

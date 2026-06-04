@@ -48,3 +48,43 @@ def test_train_log_histograms_use_hist_fn():
     out = build_train_log_dict(_fake_m_upd(), _LRS, _BUF, hist_fn=_STUB)
     assert out["histograms/actions"] == ("H", 48)    # 4*12
     assert out["histograms/critic_qt"] == ("H", 40)  # 10*4
+
+
+from resfit.rl_finetuning.chunk_residual.wandb_logging import (
+    _parse_purity, build_eval_log_dict,
+)
+
+
+def test_parse_purity_normal():
+    s = "regress 11410/29939=38.1%  stage0:0/9289=0%  stage1:2184/5916=37%"
+    out = _parse_purity(s)
+    assert abs(out["purity/regress_frac"] - 11410 / 29939) < 1e-9
+    assert out["purity/stage0"] == 0.0
+    assert abs(out["purity/stage1"] - 2184 / 5916) < 1e-9
+
+
+def test_parse_purity_no_stage_steps():
+    assert _parse_purity("no stage steps") == {"purity/raw": "no stage steps"}
+
+
+def test_parse_purity_unparseable_falls_back():
+    assert _parse_purity("garbage data here") == {"purity/raw": "garbage data here"}
+
+
+def test_eval_log_with_diag():
+    em = {"eval/success_rate": 0.12, "eval/other": 1.0}
+    diag = {"diag/residual_norm/stage0": 0.13, "diag/target_q/stage0": 0.8}
+    out = build_eval_log_dict(em, diag, "regress 1/2=50%  stage0:1/2=50%")
+    assert out["eval/success_rate"] == 0.12
+    assert out["eval/other"] == 1.0
+    assert out["diag/residual_norm/stage0"] == 0.13
+    assert out["diag/target_q/stage0"] == 0.8
+    assert out["purity/regress_frac"] == 0.5
+    assert out["purity/stage0"] == 0.5
+
+
+def test_eval_log_diag_none():
+    out = build_eval_log_dict({"eval/success_rate": 0.3}, None, "no stage steps")
+    assert out["eval/success_rate"] == 0.3
+    assert not any(k.startswith("diag/") for k in out)
+    assert out["purity/raw"] == "no stage steps"
