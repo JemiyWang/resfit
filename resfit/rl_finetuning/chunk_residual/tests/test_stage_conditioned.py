@@ -72,3 +72,74 @@ def test_critic_q_sensitive_to_stage_in_prop():
     q3 = critic.forward(feat, append_stage(prop, sid3, NUM_STAGES), act)
     assert q0.shape[-2] == B and q0.shape[-1] == 1
     assert not torch.allclose(q0, q3)
+
+
+# ---------------------------------------------------------------------------
+# Task 6: 端到端烟雾（manual — 依赖 VitEncoder，不进默认 CI）
+# ---------------------------------------------------------------------------
+import math
+import pytest
+from tensordict import TensorDict
+from resfit.rl_finetuning.config.rlpd import QAgentConfig
+from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+
+
+@pytest.mark.manual
+def test_qagent_update_smoke_stage_on():
+    """QAgent(stage_conditioned=True) の update() 端到端烟雾：
+    critic + actor 各跑一步，loss 有限、不 NaN。
+    覆盖 QAgent 内部 _critic_prop / _encode / update_critic / update_actor
+    的维度对齐（Task 6 盲区验证）。
+
+    VitEncoder 用 embed2: conv(k=8,s=4)+conv(k=3,s=2)，84×84 → 9×9=81 patches。
+    """
+    torch.manual_seed(0)
+    # C,H,W = 3,84,84 ← embed2 公式: floor((84-8)/4+1)=20 → floor((20-3)/2+1)=9 → 81 patches
+    C, H, W = 3, 84, 84
+    cam = "observation.images.agentview"
+    state_dim, flat = 5, 12
+    bs, ns = 4, 5
+
+    cfg = QAgentConfig()
+    cfg.device = "cpu"
+    cfg.critic.loss.type = "mse"
+    agent = QAgent(
+        obs_shape=(C, H, W),
+        prop_shape=(state_dim,),
+        action_dim=flat,
+        rl_cameras=[cam],
+        cfg=cfg,
+        residual_actor=True,
+        stage_conditioned=True,
+        num_stages=ns,
+    )
+    agent.train(True)
+    agent.actor_target.train(True)
+
+    def _obs():
+        return {
+            cam: torch.rand(bs, C, H, W),
+            "observation.state": torch.randn(bs, state_dim),
+            "observation.base_action": torch.tanh(torch.randn(bs, flat)),
+            "observation.stage_id": torch.randint(0, ns, (bs, 1)).float(),
+        }
+
+    batch = TensorDict(
+        {
+            "obs": TensorDict(_obs(), batch_size=[bs]),
+            "action": torch.tanh(torch.randn(bs, flat)),
+            ("next", "reward"): torch.zeros(bs),
+            "gamma": torch.full((bs,), 0.99),
+            "nonterminal": torch.ones(bs),
+            ("next", "obs"): TensorDict(_obs(), batch_size=[bs]),
+        },
+        batch_size=[bs],
+    )
+
+    metrics = agent.update(batch, stddev=0.05, update_actor=True)
+    assert math.isfinite(metrics["train/critic_loss"]), (
+        f"critic_loss is not finite: {metrics['train/critic_loss']}"
+    )
+    assert math.isfinite(metrics["train/actor_loss_total"]), (
+        f"actor_loss_total is not finite: {metrics['train/actor_loss_total']}"
+    )
