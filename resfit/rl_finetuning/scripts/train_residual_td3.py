@@ -61,6 +61,31 @@ from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.wrappers.residual_env_wrapper import BasePolicyVecEnvWrapper
 
 
+def build_base_policy(cfg, device):
+    """Dispatch base-policy loading by cfg.base_policy.type; returns (policy, actor_name)."""
+    bp = cfg.base_policy
+    btype = getattr(bp, "type", "act")
+
+    if btype == "act":
+        policy_dir, _ = download_policy_from_wandb(
+            bp.wandb_id, step=bp.wt_type, artifact_version=bp.wt_version,
+        )
+        policy = load_policy(policy_dir)
+        policy.to(device)
+        policy.eval()
+        return policy, "residual_act"
+
+    if btype == "pi05":
+        from resfit.lerobot.policies.pi05 import load_pi05_base_policy
+        assert bp.host and bp.port, "pi05 base policy requires host/port (websocket server)"
+        # connect to pi05 websocket server (GPU side must be serving first)
+        policy = load_pi05_base_policy(bp, device)
+        # residual actor only consumes observation.base_action; reuse "residual_act"
+        return policy, "residual_act"
+
+    raise ValueError(f"Unknown base_policy.type: {btype}")
+
+
 class _SkipBadVideoDataset(torch.utils.data.Dataset):
     """Wrap a LeRobotDataset so a sample whose video frame fails to decode
     (e.g. a source-corrupt AV1 mp4) is replaced by another random valid sample
@@ -256,26 +281,10 @@ def main(cfg: ResidualTD3DexmgConfig):
     # for residual learning.
     # ---------------------------------------------------------------------
     assert "base_policy" in cfg, "Base policy configuration is required"
-    policy_dir, _ = download_policy_from_wandb(
-        cfg.base_policy.wandb_id,
-        step=cfg.base_policy.wt_type,
-        artifact_version=cfg.base_policy.wt_version,
-    )
+    base_policy, inferred_actor_name = build_base_policy(cfg, device)
+    eval_base_policy, _ = build_base_policy(cfg, device)
 
-    base_policy: ACTPolicy = load_policy(policy_dir)
-    base_policy.to(device)
-    base_policy.eval()
-    eval_base_policy: ACTPolicy = load_policy(policy_dir)
-    eval_base_policy.to(device)
-    eval_base_policy.eval()
-
-    # Extract the configuration from base policy
-    base_cfg = base_policy.config
-
-    if isinstance(base_cfg, ACTConfig):
-        cfg.actor_name = "residual_act"
-    else:
-        raise ValueError(f"Unknown base policy type: {type(base_cfg)}")
+    cfg.actor_name = inferred_actor_name
 
     # Load dataset and get normalization functions early
     print("Loading dataset and setting up normalization...")
