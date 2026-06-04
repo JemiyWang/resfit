@@ -16,6 +16,7 @@ from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.off_policy.networks.encoder import VitEncoder
 from resfit.rl_finetuning.off_policy.rl.actor import Actor
 from resfit.rl_finetuning.off_policy.rl.critic import Critic
+from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage
 
 
 class QAgent(nn.Module):
@@ -27,6 +28,8 @@ class QAgent(nn.Module):
         rl_cameras: list[str] | str,
         cfg: QAgentConfig,
         residual_actor: bool = False,
+        stage_conditioned: bool = False,
+        num_stages: int = 0,
     ):
         """Initialize the Q-agent.
 
@@ -56,6 +59,8 @@ class QAgent(nn.Module):
         self.rl_cameras = rl_cameras
         self.cfg = cfg
         self.residual_actor = residual_actor
+        self.stage_conditioned = stage_conditioned
+        self.num_stages = num_stages
 
         # Build the per-camera encoders *after* `self.rl_cameras` is defined so
         # that the helper function can iterate over them.
@@ -76,14 +81,18 @@ class QAgent(nn.Module):
         prop_dim = prop_shape[0] if cfg.use_prop else 0
 
         # create critics & actor
+        # stage-conditioned 时把 stage one-hot 作为额外 prop 维度喂给 critic
+        critic_prop_dim = prop_dim + (self.num_stages if self.stage_conditioned else 0)
         self.critic = Critic(
             repr_dim=repr_dim,
             patch_repr_dim=patch_repr_dim,
-            prop_dim=prop_dim,
+            prop_dim=critic_prop_dim,
             action_dim=action_dim,
             cfg=self.cfg.critic,
         )
-        self.actor = Actor(repr_dim, patch_repr_dim, prop_dim, action_dim, cfg.actor, residual_actor=residual_actor)
+        self.actor = Actor(repr_dim, patch_repr_dim, prop_dim, action_dim, cfg.actor,
+                           residual_actor=residual_actor,
+                           stage_conditioned=self.stage_conditioned, num_stages=self.num_stages)
 
         self.critic_target = copy.deepcopy(self.critic)
         self.actor_target = copy.deepcopy(self.actor)
@@ -248,6 +257,14 @@ class QAgent(nn.Module):
                 obs[k] = v.unsqueeze(0)
         return should_unsqueeze
 
+    def _critic_prop(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """critic 用的 prop 向量。stage-conditioned 时把 stage one-hot 拼到末尾，
+        与构造时加宽的 critic prop_dim 对齐。关闭时原样返回 observation.state。"""
+        prop = obs["observation.state"]
+        if self.stage_conditioned:
+            prop = append_stage(prop, obs["observation.stage_id"], self.num_stages)
+        return prop
+
     def act(self, obs: dict[str, torch.Tensor], *, eval_mode=False, stddev=0.0, cpu=True) -> torch.Tensor:
         """This function takes tensor and returns actions in tensor"""
         assert not self.training
@@ -331,7 +348,7 @@ class QAgent(nn.Module):
                 next_action = next_residual_action
 
             # Compute target Q using min over a random subset of 2 heads
-            target_all = self.critic_target.q_value(next_obs["feat"], next_obs["observation.state"], next_action)
+            target_all = self.critic_target.q_value(next_obs["feat"], self._critic_prop(next_obs), next_action)
             target_q_min = target_all.squeeze(-1)  # [B]
             target_q = (reward + (discount * target_q_min)).detach()
 
@@ -342,18 +359,18 @@ class QAgent(nn.Module):
 
         if self.critic.loss_cfg.type == "hl_gauss":
             # Compute logits for current Q heads and average HL-Gauss loss across heads
-            q_per_head, logits_per_head = self.critic(obs["feat"], obs["observation.state"], action, return_logits=True)
+            q_per_head, logits_per_head = self.critic(obs["feat"], self._critic_prop(obs), action, return_logits=True)
             K = logits_per_head.shape[0]
             losses = [self.critic.hl_loss(logits_per_head[i], target_q) for i in range(K)]
             critic_loss = torch.stack(losses).mean()
         elif self.critic.loss_cfg.type == "c51":
             # Compute logits for current Q heads and C51 distributional loss
-            q_per_head, logits_per_head = self.critic(obs["feat"], obs["observation.state"], action, return_logits=True)
+            q_per_head, logits_per_head = self.critic(obs["feat"], self._critic_prop(obs), action, return_logits=True)
 
             # Get next state distribution for C51 target computation
             with torch.no_grad():
                 _, next_logits = self.critic_target(
-                    next_obs["feat"], next_obs["observation.state"], next_action, return_logits=True
+                    next_obs["feat"], self._critic_prop(next_obs), next_action, return_logits=True
                 )
                 # Take min over random subset of heads for next distribution (configurable via min_q_heads)
                 num_heads = min(self.critic.cfg.min_q_heads, next_logits.shape[0])
@@ -374,7 +391,7 @@ class QAgent(nn.Module):
             losses = [self.critic.c51_loss(logits_per_head[i], target_distribution) for i in range(K)]
             critic_loss = torch.stack(losses).mean()
         else:
-            q_all = self.critic(obs["feat"], obs["observation.state"], action).squeeze(-1)  # [K,B]
+            q_all = self.critic(obs["feat"], self._critic_prop(obs), action).squeeze(-1)  # [K,B]
             # Compute TD errors for prioritized experience replay (before taking mean)
             td_errors = torch.abs(q_all - target_q.unsqueeze(0)).mean(dim=0)  # [B] - mean across heads
 
@@ -444,7 +461,7 @@ class QAgent(nn.Module):
         else:
             combined_action = action_pred
 
-        q = self.critic.q_value_for_policy(obs["feat"], obs["observation.state"], combined_action)
+        q = self.critic.q_value_for_policy(obs["feat"], self._critic_prop(obs), combined_action)
         actor_loss_base = -q.mean()
 
         actor_loss_total = actor_loss_base + action_l2_penalty
