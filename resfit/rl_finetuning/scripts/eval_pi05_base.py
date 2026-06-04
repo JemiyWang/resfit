@@ -8,15 +8,15 @@ from __future__ import annotations
 import numpy as np
 
 
-def check_action(arr, action_dim, abs_limit=5.0):
+def check_action(arr, action_dim: int, abs_limit: float = 5.0) -> None:
     """Assert a base-policy action chunk-step is sane; raise ValueError otherwise."""
-    if hasattr(arr, "detach"):
+    if hasattr(arr, "detach"):  # handles both CPU and CUDA torch tensors
         arr = arr.detach().cpu().numpy()
     a = np.asarray(arr)
     if a.ndim != 2:
         raise ValueError(f"action must be 2-D [B, dim], got shape {a.shape}")
-    if a.shape[-1] != action_dim:
-        raise ValueError(f"action last dim must be {action_dim}, got {a.shape[-1]}")
+    if a.shape[1] != action_dim:
+        raise ValueError(f"action last dim must be {action_dim}, got {a.shape[1]}")
     if not np.issubdtype(a.dtype, np.floating):
         raise ValueError(f"action must be floating dtype, got {a.dtype}")
     if not np.isfinite(a).all():

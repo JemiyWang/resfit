@@ -28,6 +28,13 @@ def test_check_action_rejects_nan():
         check_action(a, action_dim=14)
 
 
+def test_check_action_rejects_inf():
+    a = np.zeros((1, 14), dtype=np.float32)
+    a[0, 0] = np.inf
+    with pytest.raises(ValueError, match="NaN/Inf"):
+        check_action(a, action_dim=14)
+
+
 def test_check_action_rejects_out_of_range():
     a = np.full((1, 14), 99.0, dtype=np.float32)
     with pytest.raises(ValueError, match="exceeds limit"):
@@ -36,5 +43,5 @@ def test_check_action_rejects_out_of_range():
 
 def test_check_action_accepts_torch_tensor():
     import torch
-    a = torch.zeros((1, 14))
+    a = torch.zeros((1, 14), dtype=torch.float32)
     check_action(a, action_dim=14)  # should not raise
