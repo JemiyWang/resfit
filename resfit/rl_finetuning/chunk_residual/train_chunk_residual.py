@@ -36,6 +36,7 @@ from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
     ChunkResidualEnvWrapper, resolve_shaping_mode)
 from resfit.rl_finetuning.chunk_residual.stage_replay import sample_stage_balanced
 from resfit.rl_finetuning.chunk_residual.stage_diag import flatten_stage_diagnostics, stage_diagnostics
+from resfit.rl_finetuning.chunk_residual.stage_detectors import NUM_STAGES
 from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 
 
@@ -143,6 +144,10 @@ def main():
     p.add_argument("--eval_num_episodes", type=int, default=50)
     p.add_argument("--smoke", action="store_true", help="少量步数冒烟")
     p.add_argument("--stage_balanced", action="store_true", help="按 stage 配额采样(stage-balanced replay)")
+    p.add_argument("--stage_conditioned", action="store_true",
+                   help="把 stage_id one-hot 喂进 actor/critic（§22 分段修正；默认关=baseline）")
+    p.add_argument("--stage_budget_mode", choices=["none"], default="none",
+                   help="按阶段缩放残差上限（§18.3）。第一版仅占位，逻辑未实现")
     p.add_argument("--reward_shaping", choices=["none", "staged", "potential"], default=None,
                    help="奖励整形模式(canonical):none|staged(净加)|potential(PBS,不改最优策略)")
     p.add_argument("--staged_reward", action="store_true",
@@ -227,9 +232,14 @@ def main():
     cfg.agent.actor_lr = args.actor_lr
     cfg.agent.critic_lr = args.critic_lr
     cfg.agent.actor.action_scale = args.action_scale
+    num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
+    if args.stage_conditioned:
+        assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
+        assert args.task in NUM_STAGES, f"--stage_conditioned 需要 {args.task} 有 stage 检测器"
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
-                   cfg=cfg.agent, residual_actor=True)
+                   cfg=cfg.agent, residual_actor=True,
+                   stage_conditioned=args.stage_conditioned, num_stages=num_stages)
 
     # repr/patch 维(供 flow actor 构造,复用 QAgent 的算法)
     enc0 = agent.encoders[0]
