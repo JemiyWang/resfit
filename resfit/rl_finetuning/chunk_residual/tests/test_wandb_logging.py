@@ -1,6 +1,14 @@
+import argparse
+
 import torch
 import pytest
-from resfit.rl_finetuning.chunk_residual.wandb_logging import build_train_log_dict
+from resfit.rl_finetuning.chunk_residual.wandb_logging import (
+    build_train_log_dict,
+    _parse_purity,
+    build_eval_log_dict,
+    init_wandb,
+)
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
 
 
 def _fake_m_upd():
@@ -50,11 +58,6 @@ def test_train_log_histograms_use_hist_fn():
     assert out["histograms/critic_qt"] == ("H", 40)  # 10*4
 
 
-from resfit.rl_finetuning.chunk_residual.wandb_logging import (
-    _parse_purity, build_eval_log_dict,
-)
-
-
 def test_parse_purity_normal():
     s = "regress 11410/29939=38.1%  stage0:0/9289=0%  stage1:2184/5916=37%"
     out = _parse_purity(s)
@@ -90,10 +93,6 @@ def test_eval_log_diag_none():
     assert out["purity/raw"] == "no stage steps"
 
 
-import argparse
-from resfit.rl_finetuning.chunk_residual.wandb_logging import init_wandb
-
-
 def test_init_wandb_smoke_forces_disabled(monkeypatch):
     captured = {}
 
@@ -124,9 +123,6 @@ def test_init_wandb_name_falls_back_to_output_dir(monkeypatch):
     init_wandb(args)
     assert captured["name"] == "cl1_stageON"
     assert captured["mode"] == "disabled"
-
-
-from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
 
 
 def test_parser_has_wandb_defaults():
