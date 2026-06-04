@@ -119,7 +119,7 @@ def build_base_policy(wandb_id: str, device: str, wt_type: str = "best", wt_vers
     return base_policy
 
 
-def main():
+def build_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--actor", choices=["raw", "flow"], default="raw")
     p.add_argument("--task", default="TwoArmBoxCleanup")
@@ -173,7 +173,20 @@ def main():
     p.add_argument("--offline_stage_cache", default=None,
                    help="stage 缓存 npz 路径;命中则秒级读、不 replay。"
                         "缺失会 replay 并落盘到此路径(见 precompute_stage_cache)")
-    args = p.parse_args()
+    p.add_argument("--wandb_project", default="dexmg-chunk-residual",
+                   help="wandb project 名")
+    p.add_argument("--wandb_entity", default=None, help="wandb entity(默认用账号默认)")
+    p.add_argument("--wandb_name", default=None,
+                   help="wandb run 名;缺省回落为 output_dir 的 basename")
+    p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
+                   default="online", help="wandb 模式;--smoke 时自动 disabled")
+    p.add_argument("--log_freq", type=int, default=100,
+                   help="训练指标上报间隔(env_steps)")
+    return p
+
+
+def main():
+    args = build_parser().parse_args()
     torch.manual_seed(args.seed)
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 

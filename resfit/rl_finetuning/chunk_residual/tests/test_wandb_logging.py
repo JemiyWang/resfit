@@ -124,3 +124,23 @@ def test_init_wandb_name_falls_back_to_output_dir(monkeypatch):
     init_wandb(args)
     assert captured["name"] == "cl1_stageON"
     assert captured["mode"] == "disabled"
+
+
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+
+
+def test_parser_has_wandb_defaults():
+    args = build_parser().parse_args(["--task", "TwoArmThreePieceAssembly"])
+    assert args.wandb_project == "dexmg-chunk-residual"
+    assert args.wandb_entity is None
+    assert args.wandb_name is None
+    assert args.wandb_mode == "online"
+    assert args.log_freq == 100
+
+
+def test_parser_wandb_overrides():
+    args = build_parser().parse_args(
+        ["--wandb_mode", "disabled", "--wandb_project", "P", "--log_freq", "50"])
+    assert args.wandb_mode == "disabled"
+    assert args.wandb_project == "P"
+    assert args.log_freq == 50
