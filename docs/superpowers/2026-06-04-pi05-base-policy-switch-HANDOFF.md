@@ -116,6 +116,7 @@ conda run -n residual python -m pytest resfit_pi05/tests -v                     
 - **server 生命周期**：Task 10/11 依赖 server 常驻；server 挂则 RL 阻塞，注意健康检查/重连。
 - **domain gap 风险**：pi05 为真机/aloha 大图设计，robomimic 仿真小图微调效果未知 → 先用一个简单单臂任务小步验证。
 - **分支**：residual 改动在 `chunk-residual-validation`（与 stage-conditioned/residual_flow 工作同分支）；**kai0 的 adapter 改动提交在 kai0 `main`**——若需隔离可挪到独立分支。
+- **可换 pi0（drop-in，见 spec §5.4 / plan Task 9·9b）**：接口对 pi0/pi05 透明，换 pi0 只在 GPU serve 端改 `--policy.config`/`--policy.dir`（自训则 `model=Pi0Config(pi05=False)`），residual 侧 `type="pi05"`/host/port 一行不动；纯冒烟可直接 serve 官方 `pi0_aloha_sim`，但 aloha 域 robomimic 成功率低，只能 smoke、不能当基座 gate。
 - **未做的 nice-to-have**：没有"真 ACTPolicy 跑完整 build→wrapper→step 循环"的端到端回归测试（现有 ACT 回归是 import/默认值层面）。
 
 ---

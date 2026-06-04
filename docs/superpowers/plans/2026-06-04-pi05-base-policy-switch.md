@@ -791,6 +791,8 @@ git commit -m "docs: record robomimic->lerobot mapping for pi05 finetune"
 ## Task 9 (Phase 1): pi05 微调 config + 训练
 
 > 本任务依赖 openpi 内部 API。**实现前先读** `/data2/kai0/src/openpi/training/config.py` 中一个现成例子（推荐 `LeRobotLiberoDataConfig` 与其 `TrainConfig`），照其字段名仿写，避免猜 API。
+>
+> **pi0 变体（对照，见 spec §5.4）**：若改用 pi0 基座，本任务唯一区别是 `TrainConfig` 的 `model=Pi0Config(pi05=False)`（name 改 `pi0_robomimic_lift`），data config 同构；residual 侧无任何改动。
 
 **Files:**
 - Modify: `/data2/kai0/src/openpi/training/config.py`（新增 `Pi05RobomimicDataConfig` 与 `TrainConfig`）
@@ -859,6 +861,8 @@ cd /data2/kai0 && uv run scripts/serve_policy.py \
   --port 8000
 ```
 Expected: 打印 pi05 加载完成并监听 `:8000`。保持常驻（后台或独立终端）。
+
+> **pi0 对照（spec §5.4）**：换 pi0 只改这条命令 —— `--policy.config` 指向 pi0 config、`--policy.dir` 指向 pi0 ckpt（纯连通性冒烟可直接用官方 `--policy.config pi0_aloha_sim --policy.dir gs://openpi-assets/checkpoints/pi0_aloha_sim`，但 aloha 域 robomimic 成功率低，不能当基座 gate）。residual 端 `type="pi05"`/host/port 不变。
 
 - [ ] **Step 3: residual 端连通性自检**
 

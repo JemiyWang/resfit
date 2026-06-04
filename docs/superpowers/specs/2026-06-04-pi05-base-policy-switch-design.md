@@ -25,6 +25,7 @@
 - **ACT 不删除**：通过配置开关 `base_policy.type` 在 `"act"` 与 `"pi05"` 间切换，默认 `"act"`，
   保证旧实验行为字节级不变。
 - **基座模型选型 = pi05**（接口与 pi0 几乎一致；pi05 语言条件更强、单任务微调更易）。
+  因接口一致，换 **pi0** 是 drop-in：只在 GPU serve 端换 config/ckpt，residual 侧零改动。见 §5.4。
 - **基座需先微调**：当前没有 robomimic 上微调好的 pi05 checkpoint，微调是本期工作量大头。
 - **pi05 推理 = websocket 跨进程**（2026-06-04 gate 后定）：`residual` 环境无 flax、openpi 顶层硬 import flax，
   同进程不可行；无现成统一环境。改为 GPU 端在 kai0 uv 环境起 pi05 websocket server，
@@ -90,6 +91,24 @@
    （openpi 内部已做归一化，多为空实现或薄封装）。
 3. **action 维度一致**：adapter 输出维度 = robomimic action 维度 = 残差叠加维度，三者对齐
    （单臂 OSC 一般 7 维；adapter `action_dim` 截取，pi05 内部 32 维 padding）。
+
+### 5.4 用 pi0 替代 pi05（对照，drop-in）
+
+接口对 pi0/pi05 透明，换 pi0 几乎零成本，原因：
+- websocket 跨进程（§11）+ adapter 只认 `policy.infer(obs) -> {"actions": [H, D]}`，不关心背后是 pi0 还是 pi05。
+- residual 侧 `type="pi05"` 这个开关本质是"走 websocket 基座"，与模型种类无关；pi0 直接复用该分支。
+
+**改哪里 = 只在 GPU serve 端**：
+- `serve_policy.py` 的 `--policy.config` 指向 pi0 config（`model=Pi0Config(pi05=False)`）、`--policy.dir` 指向 pi0 ckpt。
+- residual 侧 `BasePolicyConfig` 仍填 `type="pi05"` + `host`/`port`，**一行都不改**。
+
+**若自训 pi0（Task 9 变体）**：注册 `TrainConfig(name="pi0_robomimic_xxx", model=Pi0Config(pi05=False), data=...)`，
+data config 与 pi05 版同构；区别仅在 state（pi05 离散 / pi0 连续）与 norm stats，对 adapter/residual 透明。
+
+**纯连通性冒烟**：可直接 serve 官方 `pi0_aloha_sim`（`gs://openpi-assets/checkpoints/pi0_aloha_sim`），
+但属 aloha 域，robomimic 成功率会很低 —— 只能当 smoke，**不能**当 §5.2 的基座质量 gate。
+
+**命名提示**：`type="pi05"` 是历史标签，涵盖一切 websocket 基座（含 pi0）；如需严格区分可后续改开关语义，功能上不必改代码。
 
 ## 6. 调用基座的代码点（已核实，2026-06-04）
 
