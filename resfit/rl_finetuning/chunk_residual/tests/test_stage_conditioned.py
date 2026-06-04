@@ -143,3 +143,35 @@ def test_qagent_update_smoke_stage_on():
     assert math.isfinite(metrics["train/actor_loss_total"]), (
         f"actor_loss_total is not finite: {metrics['train/actor_loss_total']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bug 回归：stage one-hot 必须对齐到目标张量的 device。
+# 实验在 GPU 崩溃：env wrapper 的 observation.stage_id 用 torch.full 默认在 CPU，
+# 而 feat/state/base_action 在 CUDA，cat 跨设备 RuntimeError。stage_onehot 跟随
+# stage_id 的 device(CPU)是错的，应跟随它要拼接的目标张量。CPU-only 的 manual
+# 烟雾测不出（全 CPU 同设备），故用 CUDA skipif 守住这个盲区。
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="cross-device 检查需要 CUDA")
+def test_append_stage_aligns_one_hot_to_prop_device():
+    prop = torch.randn(3, 7, device="cuda")
+    sid_cpu = torch.zeros(3, 1)                       # CPU：模拟 env wrapper 的 torch.full
+    out = append_stage(prop, sid_cpu, NUM_STAGES)     # 修复前：RuntimeError(device mismatch)
+    assert out.device.type == "cuda"
+    assert out.shape == (3, 7 + NUM_STAGES)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="cross-device 检查需要 CUDA")
+def test_actor_forward_with_stage_id_on_cpu_feat_on_cuda():
+    # 复现实验崩溃：feat/state/base 在 CUDA，stage_id 在 CPU
+    torch.manual_seed(0)
+    actor = _actor(stage_conditioned=True).cuda().eval()
+    obs = {
+        "feat": torch.randn(B, REPR // PATCH, PATCH, device="cuda"),
+        "observation.state": torch.randn(B, PROP, device="cuda"),
+        "observation.base_action": torch.tanh(torch.randn(B, FLAT, device="cuda")),
+        "observation.stage_id": torch.zeros(B, 1),    # CPU
+    }
+    dist = actor.forward(obs, std=0.0)                # 修复前：RuntimeError(device mismatch)
+    assert dist.mean.shape == (B, FLAT)
+    assert dist.mean.device.type == "cuda"

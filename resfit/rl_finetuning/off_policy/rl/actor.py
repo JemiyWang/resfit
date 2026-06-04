@@ -171,7 +171,8 @@ class Actor(nn.Module):
                 # The residual actor takes the base action as input alongside the state
                 all_input.append(obs["observation.base_action"])
             if self.stage_conditioned:
-                all_input.append(stage_onehot(obs["observation.stage_id"], self.num_stages))
+                # one-hot 对齐到 feat 的 device：env 的 stage_id 可能在 CPU，feat 在 GPU
+                all_input.append(stage_onehot(obs["observation.stage_id"], self.num_stages).to(feat.device))
 
         policy_input = torch.cat(all_input, dim=-1)
 

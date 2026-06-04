@@ -22,5 +22,9 @@ def stage_onehot(stage_id: torch.Tensor, num_stages: int) -> torch.Tensor:
 
 
 def append_stage(prop: torch.Tensor, stage_id: torch.Tensor, num_stages: int) -> torch.Tensor:
-    """把 stage one-hot 拼到 prop 末尾：[B, P] -> [B, P + num_stages]。"""
-    return torch.cat([prop, stage_onehot(stage_id, num_stages)], dim=-1)
+    """把 stage one-hot 拼到 prop 末尾：[B, P] -> [B, P + num_stages]。
+
+    one-hot 对齐到 prop 的 device（不是 stage_id 的）：env wrapper 的 stage_id
+    可能在 CPU（torch.full 默认），而 prop 在 GPU，否则 cat 跨设备报错。
+    """
+    return torch.cat([prop, stage_onehot(stage_id, num_stages).to(prop.device)], dim=-1)
