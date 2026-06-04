@@ -86,18 +86,23 @@
 3. **action 维度一致**：adapter 输出维度 = robomimic action 维度 = 残差叠加维度，三者对齐
    （单臂 OSC 一般 7 维；adapter `action_dim` 截取，pi05 内部 32 维 padding）。
 
-## 6. 待核实点（实现计划前必须先查清）
+## 6. 调用基座的代码点（已核实，2026-06-04）
 
-探查时两个来源对"框架从哪些代码点调用基座"说法不一致：
-- `resfit/rl_finetuning/wrappers/residual_env_wrapper.py` → 用 `select_action()`。
-- 另有 `chunk_act_base.py` 似乎调 `base_policy.normalize_inputs()` 与 `base_policy.model(batch)`。
+核实结论：框架有两条调用基座的路径——
 
-**实现前必须精确枚举所有调用基座的代码点**，确认：
-- 哪些在 rollout / 训练主路径上、哪些只在离线 label 计算路径上；
-- 开关是否覆盖全部调用点；
-- adapter 是否必须补 `normalize_inputs/unnormalize_outputs/model`。
+- **step 级**：`resfit/rl_finetuning/wrappers/residual_env_wrapper.py`（`BasePolicyVecEnvWrapper`），
+  仅用 `select_action()`（:102/:149）、`reset()`（:98/:156）、`config.image_features`（:63）。
+  `Pi05PolicyAdapter` 已全部具备 → 几乎零改（只需视角映射可配）。
+- **chunk 级**：`resfit/rl_finetuning/chunk_residual/chunk_act_base.py` 的 `get_action_chunk()`，
+  用 `normalize_inputs / config.image_features / model / unnormalize_outputs`，被 `chunk_env_wrapper.py` 调用。
+  `Pi05PolicyAdapter` 缺 `normalize_inputs/unnormalize_outputs/model`。
 
-此核实结果决定 §5.3 第 2 点的工作量，必须在 writing-plans 阶段开头完成。
+**本期决策：走 step 级路径**（`BasePolicyVecEnvWrapper`）。因此：
+- 不修改 `chunk_act_base.py` / chunk 路径；
+- adapter **无需**补 `normalize_inputs/unnormalize_outputs/model`；
+- §5.3 第 2 点（补缺失接口）本期不做。
+
+后续若要 chunk 级，再单独立项给 adapter 加原生 `get_action_chunk` 并让框架委托。
 
 ## 7. 测试策略（TDD）
 
