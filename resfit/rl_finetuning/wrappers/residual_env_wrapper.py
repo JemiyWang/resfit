@@ -16,8 +16,18 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+from typing import Protocol
+
 from resfit.dexmg.environments.dexmg import VectorizedEnvWrapper
 from resfit.lerobot.policies.act.modeling_act import ACTPolicy
+
+
+class BasePolicyProtocol(Protocol):
+    config: object
+
+    def select_action(self, raw_obs: dict): ...
+
+    def reset(self, env_ids=None): ...
 
 
 class BasePolicyVecEnvWrapper:
@@ -37,7 +47,7 @@ class BasePolicyVecEnvWrapper:
     def __init__(
         self,
         vec_env: VectorizedEnvWrapper,
-        base_policy: ACTPolicy,
+        base_policy: "BasePolicyProtocol",
         action_scaler,
         state_standardizer,
     ):
