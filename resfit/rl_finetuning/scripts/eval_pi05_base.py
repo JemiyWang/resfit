@@ -34,7 +34,7 @@ def _is_done(terminated, truncated):
     return _any(terminated) or _any(truncated)
 
 
-def run_smoke(env, base_policy, n_episodes, max_steps, action_dim):
+def run_smoke(env, base_policy, n_episodes: int, max_steps: int, action_dim: int) -> dict:
     """Run pure-base-policy rollouts; collect diagnostics. Raises on insane actions."""
     report = {
         "episodes": [],

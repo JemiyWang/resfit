@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
+import torch
 
-from resfit.rl_finetuning.scripts.eval_pi05_base import check_action
+from resfit.rl_finetuning.scripts.eval_pi05_base import check_action, run_smoke
 
 
 def test_check_action_accepts_valid():
@@ -45,10 +46,6 @@ def test_check_action_accepts_torch_tensor():
     import torch
     a = torch.zeros((1, 14), dtype=torch.float32)
     check_action(a, action_dim=14)  # should not raise
-
-
-import torch
-from resfit.rl_finetuning.scripts.eval_pi05_base import run_smoke
 
 
 class _FakeEnv:
