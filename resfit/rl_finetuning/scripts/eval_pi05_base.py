@@ -12,8 +12,12 @@ import numpy as np
 import torch
 
 
-def check_action(arr, action_dim: int, abs_limit: float = 5.0) -> None:
-    """Assert a base-policy action chunk-step is sane; raise ValueError otherwise."""
+def check_action(arr, action_dim: int, abs_limit: float = 5.0) -> np.ndarray:
+    """Assert a base-policy action chunk-step is sane; raise ValueError otherwise.
+
+    Returns the validated action as a numpy array (callers can reuse it instead of
+    re-converting from torch).
+    """
     if hasattr(arr, "detach"):  # handles both CPU and CUDA torch tensors
         arr = arr.detach().cpu().numpy()
     a = np.asarray(arr)
@@ -28,6 +32,7 @@ def check_action(arr, action_dim: int, abs_limit: float = 5.0) -> None:
     peak = float(np.abs(a).max())
     if peak > abs_limit:
         raise ValueError(f"action abs max {peak:.3f} exceeds limit {abs_limit}")
+    return a
 
 
 def _is_done(terminated, truncated):
@@ -52,8 +57,7 @@ def run_smoke(env, base_policy, n_episodes: int, max_steps: int, action_dim: int
             t0 = time.perf_counter()
             action = base_policy.select_action(obs)
             report["infer_times"].append(time.perf_counter() - t0)
-            check_action(action, action_dim)
-            a = action.detach().cpu().numpy() if hasattr(action, "detach") else np.asarray(action)
+            a = check_action(action, action_dim)
             report["action_min"] = min(report["action_min"], float(a.min()))
             report["action_max"] = max(report["action_max"], float(a.max()))
             obs, _reward, terminated, truncated, _info = env.step(action)

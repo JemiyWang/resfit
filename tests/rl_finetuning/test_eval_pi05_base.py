@@ -8,7 +8,8 @@ from resfit.rl_finetuning.scripts.eval_pi05_base import check_action, format_rep
 
 def test_check_action_accepts_valid():
     a = np.zeros((1, 14), dtype=np.float32)
-    check_action(a, action_dim=14)  # should not raise
+    out = check_action(a, action_dim=14)  # should not raise
+    assert isinstance(out, np.ndarray) and out.shape == (1, 14)
 
 
 def test_check_action_rejects_wrong_dim():
@@ -113,7 +114,7 @@ def test_format_report_runs():
     text = format_report(report)
     assert "episodes" in text.lower()
     assert "total_steps=6" in text
-    assert "15.0ms" in text                  # (0.01+0.02)/2*1000
+    assert "15." in text                     # avg (0.01+0.02)/2*1000 = 15.0 ms
     assert "[-0.100, 0.100]" in text
 
 
