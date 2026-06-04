@@ -7,6 +7,7 @@ from torch import nn
 
 from resfit.rl_finetuning.config.rlpd import ActorConfig
 from resfit.rl_finetuning.off_policy.common_utils import utils
+from resfit.rl_finetuning.off_policy.rl.stage_utils import stage_onehot
 
 
 def build_fc(in_dim, hidden_dim, action_dim, num_layer, layer_norm, dropout, use_layer_norm=True):
@@ -66,16 +67,23 @@ class SpatialEmb(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, repr_dim, patch_repr_dim, prop_dim, action_dim, cfg: ActorConfig, residual_actor: bool = False):
+    def __init__(self, repr_dim, patch_repr_dim, prop_dim, action_dim, cfg: ActorConfig, residual_actor: bool = False,
+                 stage_conditioned: bool = False, num_stages: int = 0):
         super().__init__()
 
         self.prop_dim = prop_dim
         self.residual_actor = residual_actor
+        self.stage_conditioned = stage_conditioned
+        self.num_stages = num_stages
         self.cfg = cfg
 
         if residual_actor:
             # The residual actor takes the base action as input alongside the state
             self.prop_dim += action_dim
+
+        if stage_conditioned:
+            # stage-conditioned: stage one-hot 作为额外 prop 维度喂入
+            self.prop_dim += num_stages
 
         if cfg.spatial_emb > 0:
             assert cfg.spatial_emb > 1, "this is the dimension"
@@ -162,6 +170,8 @@ class Actor(nn.Module):
             if self.residual_actor:
                 # The residual actor takes the base action as input alongside the state
                 all_input.append(obs["observation.base_action"])
+            if self.stage_conditioned:
+                all_input.append(stage_onehot(obs["observation.stage_id"], self.num_stages))
 
         policy_input = torch.cat(all_input, dim=-1)
 
