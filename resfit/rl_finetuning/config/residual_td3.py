@@ -35,9 +35,26 @@ class WandBConfig:
 
 @dataclass
 class BasePolicyConfig:
+    # base policy type switch: "act" (default, unchanged behavior) or "pi05"
+    type: str = "act"
+
+    # --- ACT path (load from W&B, existing fields unchanged) ---
     wandb_id: str = "TODO"
     wt_type: str = "best"
     wt_version: str = "latest"
+
+    # --- pi05 path (used when type == "pi05", websocket client) ---
+    host: str = "127.0.0.1"                 # pi05 websocket server address (GPU serve side)
+    port: int = 8000                        # pi05 websocket server port
+    prompt: str = "pick up the cube"        # must match finetuning prompt
+    action_dim: int = 7                     # robomimic single-arm action dim
+    execute_horizon: int = 30               # executed steps per inference (truncate 50-step chunk)
+    image_key_map: dict = field(default_factory=lambda: {
+        "observation.images.agentview": "base",
+        "observation.images.robot0_eye_in_hand": "left_wrist",
+    })
+    kai0_paths: list = field(default_factory=lambda: ["/data2/kai0"])
+    # note: pi05 config_name/checkpoint_dir belong to the GPU serve side, not here
 
 
 @dataclass
