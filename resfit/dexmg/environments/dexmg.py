@@ -23,6 +23,60 @@ from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
 macros.IMAGE_CONVENTION = "opencv"
 
 
+# ----------------------------------------------------------------------------
+# EGL 渲染设备 != CUDA 计算设备。
+# MuJoCo/robosuite 的 EGL 后端用 eglQueryDevicesEXT 的枚举下标来选渲染 GPU,而这个
+# 下标顺序和 CUDA / nvidia-smi 的 GPU 编号并不一致(本机上 EGL 下标 0 物理对应
+# nvidia-smi gpu3、下标 2 才对应 gpu0)。直接把 CUDA 设备号当 EGL 下标用,会把渲染
+# 开到另一张卡上 —— 表现为:训练在指定卡、却莫名其妙在别的卡上占一份 ~400MiB/env
+# 的显存且 SM 利用率 0%(看着像残留进程)。
+# 下面用 EGL_CUDA_DEVICE_NV 属性把"CUDA 设备号"翻译成"指向同一张物理卡的 EGL 下标",
+# 使渲染始终跟随计算卡。查询失败时原样返回(退回旧行为,绝不阻断训练)。
+# 全机映射表/诊断脚本见 tools/egl_gpu_map.py。
+# ----------------------------------------------------------------------------
+_EGL_CUDA_TO_EGL_INDEX: dict[int, int] = {}
+
+
+def cuda_to_egl_device_id(cuda_device_id: int) -> int:
+    """把 CUDA 设备号映射到指向同一物理 GPU 的 EGL 枚举下标(= MUJOCO_EGL_DEVICE_ID)。"""
+    if cuda_device_id in _EGL_CUDA_TO_EGL_INDEX:
+        return _EGL_CUDA_TO_EGL_INDEX[cuda_device_id]
+    egl_index = cuda_device_id  # 兜底:探测失败就退回原值(旧行为)
+    try:
+        import ctypes  # noqa: PLC0415
+
+        egl = ctypes.CDLL("libEGL.so.1")
+        egl.eglGetProcAddress.restype = ctypes.c_void_p
+        egl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
+
+        def _fn(name, restype, argtypes):
+            addr = egl.eglGetProcAddress(name.encode())
+            return ctypes.CFUNCTYPE(restype, *argtypes)(addr) if addr else None
+
+        Dev = ctypes.c_void_p
+        query_devices = _fn(
+            "eglQueryDevicesEXT", ctypes.c_uint,
+            [ctypes.c_int, ctypes.POINTER(Dev), ctypes.POINTER(ctypes.c_int)])
+        query_attrib = _fn(
+            "eglQueryDeviceAttribEXT", ctypes.c_uint,
+            [Dev, ctypes.c_int, ctypes.POINTER(ctypes.c_ssize_t)])
+        if query_devices and query_attrib:
+            max_devices = 32
+            devices = (Dev * max_devices)()
+            num = ctypes.c_int(0)
+            query_devices(max_devices, devices, ctypes.byref(num))
+            EGL_CUDA_DEVICE_NV = 0x323A
+            for i in range(num.value):
+                val = ctypes.c_ssize_t(-1)
+                if query_attrib(devices[i], EGL_CUDA_DEVICE_NV, ctypes.byref(val)) and val.value == cuda_device_id:
+                    egl_index = i
+                    break
+    except Exception:  # noqa: BLE001  渲染设备探测失败不应阻断训练
+        pass
+    _EGL_CUDA_TO_EGL_INDEX[cuda_device_id] = egl_index
+    return egl_index
+
+
 # Mapping from (canonical) environment name to the corresponding list of robot models
 # NOTE: When adding new tasks, always reference the *actual* robosuite environment
 # class name (the one expected by `robosuite.make`).
@@ -181,6 +235,11 @@ class RobosuiteGymWrapper:
 
         self.expected_image_keys = expected_image_keys  # Store for use in _process_obs
 
+        # render_gpu_device_id 传进来是 CUDA 设备号;EGL 渲染需要用指向同一张物理卡的
+        # EGL 枚举下标(两者顺序不一定相同,见上方 cuda_to_egl_device_id 说明),否则
+        # 渲染会被开到另一张卡上。
+        egl_device_id = cuda_to_egl_device_id(self.render_gpu_device_id)
+
         # Create environment using robosuite.make()
         env_kwargs = {
             "env_name": env_name,
@@ -196,14 +255,16 @@ class RobosuiteGymWrapper:
             "camera_widths": self.camera_size,
             "horizon": self.horizon,
             "renderer": "mujoco",
-            "render_gpu_device_id": self.render_gpu_device_id,
+            "render_gpu_device_id": egl_device_id,
         }
 
-        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(self.render_gpu_device_id)
+        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(egl_device_id)
 
         # Only log once per vectorized group (env_id==0) and at DEBUG level
         if self.env_id == 0:
-            logger.debug(f"render_gpu_device_id: {self.render_gpu_device_id}")
+            logger.debug(
+                f"render: cuda_device={self.render_gpu_device_id} -> "
+                f"EGL/MUJOCO_EGL_DEVICE_ID={egl_device_id}")
 
         # NOTE: This is a crucial change for the rollouts to work -- should it live here or elsewhere?
         if "composite_controller_specific_configs" in env_kwargs["controller_configs"]:
