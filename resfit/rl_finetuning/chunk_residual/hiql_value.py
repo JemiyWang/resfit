@@ -18,3 +18,12 @@ def expectile_loss(diff, expectile):
     """
     weight = torch.where(diff < 0, 1.0 - expectile, expectile)
     return (weight * diff.pow(2)).mean()
+
+
+def discounted_target(reward, next_v, done, gamma):
+    """action-free TD target y = r + gamma*(1-done)*V(s')。
+
+    done=1(终止)时 y=r,不 bootstrap(与 critic 的 Q-target 一致)。
+    入参均为 [B] 或 [B,1] 张量;done 为 float(0/1)。
+    """
+    return reward + gamma * (1.0 - done) * next_v
