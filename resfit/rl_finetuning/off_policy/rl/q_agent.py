@@ -30,6 +30,7 @@ class QAgent(nn.Module):
         residual_actor: bool = False,
         stage_conditioned: bool = False,
         num_stages: int = 0,
+        stage_budget: "list[float] | None" = None,
     ):
         """Initialize the Q-agent.
 
@@ -92,7 +93,8 @@ class QAgent(nn.Module):
         )
         self.actor = Actor(repr_dim, patch_repr_dim, prop_dim, action_dim, cfg.actor,
                            residual_actor=residual_actor,
-                           stage_conditioned=self.stage_conditioned, num_stages=self.num_stages)
+                           stage_conditioned=self.stage_conditioned, num_stages=self.num_stages,
+                           stage_budget=stage_budget)
 
         self.critic_target = copy.deepcopy(self.critic)
         self.actor_target = copy.deepcopy(self.actor)

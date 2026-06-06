@@ -85,3 +85,48 @@ def test_actor_budget_scales_mean_and_std():
     dist_off = actor.forward(obs, std=0.05)
     assert torch.allclose(dist_on.loc, dist_off.loc * factor, atol=1e-6)
     assert torch.allclose(dist_on.scale, torch.full_like(dist_on.loc, 0.05) * factor, atol=1e-6)
+
+
+import pytest
+
+
+def test_cli_stage_budget_default_none():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    args = build_parser().parse_args([])
+    assert args.stage_budget is None
+
+
+def test_cli_stage_budget_parses_string():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    args = build_parser().parse_args(["--stage_budget", "1,1,1,0.3,0.1"])
+    assert args.stage_budget == "1,1,1,0.3,0.1"
+
+
+@pytest.mark.manual
+def test_qagent_act_budget_only_scales_output():
+    """核心性质:同一 obs 只改 stage_id,残差只被乘 factor、网络计算不变。
+    (eval_mode + stddev=0 => 取均值;stage4 budget=0.1 => a4 == a0 * 0.1)
+    依赖 VitEncoder,故 manual;CPU 跑。"""
+    import math
+    from resfit.rl_finetuning.config.rlpd import QAgentConfig
+    from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+    torch.manual_seed(0)
+    C, H, W = 3, 84, 84
+    cam = "observation.images.agentview"
+    state_dim, flat, ns = 5, 12, 5
+    budget = [1.0, 1.0, 1.0, 1.0, 0.1]                 # 只在 stage4 卡死
+    cfg = QAgentConfig(); cfg.device = "cpu"; cfg.critic.loss.type = "mse"
+    agent = QAgent(obs_shape=(C, H, W), prop_shape=(state_dim,), action_dim=flat,
+                   rl_cameras=[cam], cfg=cfg, residual_actor=True,
+                   num_stages=ns, stage_budget=budget)
+    agent.train(False)
+    base = {cam: torch.rand(8, C, H, W),
+            "observation.state": torch.randn(8, state_dim),
+            "observation.base_action": torch.tanh(torch.randn(8, flat))}
+    o0 = dict(base); o0["observation.stage_id"] = torch.zeros(8, 1)        # budget 1.0
+    o4 = dict(base); o4["observation.stage_id"] = torch.full((8, 1), 4.0)  # budget 0.1
+    with torch.no_grad():
+        a0 = agent.act(o0, eval_mode=True, stddev=0.0, cpu=True)
+        a4 = agent.act(o4, eval_mode=True, stddev=0.0, cpu=True)
+    assert torch.allclose(a4, a0 * 0.1, atol=1e-5)     # 只缩输出,不改网络计算
+    assert math.isfinite(a0.abs().sum().item())

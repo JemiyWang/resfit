@@ -150,8 +150,8 @@ def build_parser():
     p.add_argument("--stage_balanced", action="store_true", help="按 stage 配额采样(stage-balanced replay)")
     p.add_argument("--stage_conditioned", action="store_true",
                    help="把 stage_id one-hot 喂进 actor/critic（§22 分段修正；默认关=baseline）")
-    p.add_argument("--stage_budget_mode", choices=["none"], default="none",
-                   help="按阶段缩放残差上限（§18.3）。第一版仅占位，逻辑未实现")
+    p.add_argument("--stage_budget", default=None,
+                   help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
     p.add_argument("--reward_shaping", choices=["none", "staged", "potential"], default=None,
                    help="奖励整形模式(canonical):none|staged(净加)|potential(PBS,不改最优策略)")
     p.add_argument("--staged_reward", action="store_true",
@@ -253,10 +253,16 @@ def main():
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
         assert args.task in NUM_STAGES, f"--stage_conditioned 需要 {args.task} 有 stage 检测器"
+    from resfit.rl_finetuning.off_policy.rl.stage_utils import parse_stage_budget
+    stage_budget = parse_stage_budget(args.stage_budget, num_stages)
+    if stage_budget is not None:
+        assert args.actor == "raw", "stage_budget 第一版只支持 --actor raw"
+        assert args.task in NUM_STAGES, f"--stage_budget 需要 {args.task} 有 stage 检测器"
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
                    cfg=cfg.agent, residual_actor=True,
-                   stage_conditioned=args.stage_conditioned, num_stages=num_stages)
+                   stage_conditioned=args.stage_conditioned, num_stages=num_stages,
+                   stage_budget=stage_budget)
 
     # repr/patch 维(供 flow actor 构造,复用 QAgent 的算法)
     enc0 = agent.encoders[0]
