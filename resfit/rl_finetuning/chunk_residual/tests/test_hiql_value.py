@@ -127,3 +127,23 @@ def test_train_value_monotone_along_trajectory():
     assert vs[-1] > vs[0]                       # 终点 value > 起点
     diffs = vs[1:] - vs[:-1]
     assert (diffs > 0).float().mean() > 0.7     # 大体单调递增
+
+
+from resfit.rl_finetuning.chunk_residual.train_hiql_value import build_parser
+
+
+def test_parser_defaults():
+    args = build_parser().parse_args(["--hdf5", "x.hdf5", "--dataset", "some/ds"])
+    assert args.gamma == 0.99
+    assert args.expectile == 0.7
+    assert args.ema == 0.005
+    assert args.steps == 50000
+    assert args.value_hidden == 256
+    assert args.output == "value.pt"
+
+
+def test_parser_overrides():
+    args = build_parser().parse_args(
+        ["--hdf5", "x.hdf5", "--dataset", "some/ds",
+         "--expectile", "0.9", "--steps", "1000", "--output", "v2.pt"])
+    assert args.expectile == 0.9 and args.steps == 1000 and args.output == "v2.pt"
