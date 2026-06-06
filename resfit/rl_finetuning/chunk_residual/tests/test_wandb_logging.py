@@ -140,3 +140,16 @@ def test_parser_wandb_overrides():
     assert args.wandb_mode == "disabled"
     assert args.wandb_project == "P"
     assert args.log_freq == 50
+
+
+def test_train_log_relabel_size_present():
+    """buf_sizes 含 'relabel' 键时，out 中 buffer/relabel_size 应等于该值。"""
+    buf_with_relabel = {"online": 100, "offline": 50, "relabel": 30}
+    out = build_train_log_dict(_fake_m_upd(), _LRS, buf_with_relabel, hist_fn=_STUB)
+    assert out["buffer/relabel_size"] == 30
+
+
+def test_train_log_relabel_size_missing_defaults_zero():
+    """buf_sizes 不含 'relabel' 键时（旧接口 _BUF），buffer/relabel_size 应为 0（向后兼容）。"""
+    out = build_train_log_dict(_fake_m_upd(), _LRS, _BUF, hist_fn=_STUB)
+    assert out["buffer/relabel_size"] == 0

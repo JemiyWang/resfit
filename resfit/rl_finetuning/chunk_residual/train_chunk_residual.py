@@ -541,7 +541,8 @@ def main():
                        "critic": agent.critic_opt.param_groups[0]["lr"],
                        "encoder": agent.encoder_opt.param_groups[0]["lr"]}
                 buf_sizes = {"online": len(online_rb),
-                             "offline": len(offline_rb) if offline_rb else 0}
+                             "offline": len(offline_rb) if offline_rb else 0,
+                             "relabel": len(relabel_rb) if relabel_rb else 0}
                 wandb.log(build_train_log_dict(m_upd, lrs, buf_sizes), step=env_steps)
                 next_log += args.log_freq
 

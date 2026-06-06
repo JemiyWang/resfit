@@ -16,7 +16,7 @@ def build_train_log_dict(m_upd, lrs, buf_sizes, with_histograms=True,
 
     m_upd: agent.update() 返回的 dict(含 train/* 与 _ 前缀内部键)。
     lrs: {"actor": float, "critic": float, "encoder": float}。
-    buf_sizes: {"online": int, "offline": int}。
+    buf_sizes: {"online": int, "offline": int, "relabel": int (optional, defaults to 0)}。
     hist_fn: 可注入,单测传 stub 即可绕开 wandb。
     """
     log_dict = {k: v for k, v in m_upd.items() if not k.startswith("_")}
@@ -25,6 +25,7 @@ def build_train_log_dict(m_upd, lrs, buf_sizes, with_histograms=True,
     log_dict["lr/encoder"] = lrs["encoder"]
     log_dict["buffer/online_size"] = buf_sizes["online"]
     log_dict["buffer/offline_size"] = buf_sizes["offline"]
+    log_dict["buffer/relabel_size"] = buf_sizes.get("relabel", 0)
     if with_histograms:
         if "_actions" in m_upd:
             log_dict["histograms/actions"] = hist_fn(m_upd["_actions"].numpy().reshape(-1))
