@@ -12,3 +12,6 @@ outputs_chunk/
 resfit/rl_finetuning/chunk_residual/ckpt/
 coffee_base58_proof/
 *.log
+# 大数据集 / eval 输出(不入库)
+resfit/dataset/
+resfit/out/
