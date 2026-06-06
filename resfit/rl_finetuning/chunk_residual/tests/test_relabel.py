@@ -69,3 +69,20 @@ def test_sample_bc_batch_falls_back_to_demo_when_relabel_short():
 def test_sample_bc_batch_none_relabel_uses_demo():
     bc = sample_bc_batch(None, _tiny_rb(20), batch_size=8, device="cpu")
     assert bc.shape[0] == 8
+
+
+def test_cli_relabel_defaults():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    a = build_parser().parse_args([])
+    assert a.relabel is False
+    assert a.relabel_buffer_size == 50_000
+    assert a.relabel_min_stage == 1
+
+
+def test_cli_relabel_parses():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    a = build_parser().parse_args(["--relabel", "--relabel_buffer_size", "1000",
+                                   "--relabel_min_stage", "2"])
+    assert a.relabel is True
+    assert a.relabel_buffer_size == 1000
+    assert a.relabel_min_stage == 2

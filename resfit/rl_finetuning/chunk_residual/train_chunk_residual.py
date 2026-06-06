@@ -22,7 +22,7 @@ import os
 import wandb
 import torch
 from tensordict import TensorDict
-from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer
+from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer, TensorDictReplayBuffer
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
@@ -74,6 +74,15 @@ def add_chunk_transition(*, obs, next_obs, combined_action, reward, done, info,
         "_priority": torch.tensor(10.0, dtype=torch.float32),
     }, batch_size=[]).unsqueeze(0)
     online_rb.add(td)
+
+
+def make_bc_entry(obs, action, image_keys, lowdim_keys):
+    """构造 relabel 用的 bc 条目 td:{obs:{图+lowdim}, action}(与 offline_rb 同构,供混采 bc_batch)。"""
+    keys = set(image_keys) | set(lowdim_keys)
+    curr = {k: obs[k][0].detach().cpu() for k in keys}
+    to_uint8(curr, image_keys)
+    return TensorDict({"obs": TensorDict(curr, batch_size=[]),
+                       "action": action[0].detach().cpu()}, batch_size=[]).unsqueeze(0)
 
 
 def _maybe_inject_flow_actor(args, agent, repr_dim, patch_repr_dim, prop_dim, action_dim):
@@ -242,6 +251,14 @@ def build_parser():
     p.add_argument("--demo_bc_coef", type=float, default=0.0,
                    help="残差 actor 的 demo-BC 权重(模块②a);0=关(逐位等价 baseline)。"
                         ">0 需 offline_fraction>0(bc_batch 取自 offline_rb)、--actor raw")
+    p.add_argument("--relabel", action="store_true",
+                   help="在线 relay relabeling(模块②b):harvest 产出前缀段进 relabel buffer,"
+                        "bc_batch 改 relabel+demo 50/50 混采。默认关=逐位等价 ②a。"
+                        "需 --demo_bc_coef>0 + --offline_fraction>0 + --actor raw")
+    p.add_argument("--relabel_buffer_size", type=int, default=50_000,
+                   help="relabel buffer 容量(FIFO,CPU storage)")
+    p.add_argument("--relabel_min_stage", type=int, default=1,
+                   help="只 harvest 走到 stage>=该值的 episode(默认 1=只要推进过)")
     p.add_argument("--reward_shaping", choices=["none", "staged", "potential"], default=None,
                    help="奖励整形模式(canonical):none|staged(净加)|potential(PBS,不改最优策略)")
     p.add_argument("--staged_reward", action="store_true",
@@ -449,6 +466,19 @@ def main():
         print(f"[offline] 混采 online_bs={online_batch_size} "
               f"offline_bs={offline_batch_size}(fraction={args.offline_fraction})")
 
+    relabel_rb = None
+    harvester = None
+    if args.relabel:
+        assert args.demo_bc_coef > 0, "--relabel 需 --demo_bc_coef>0(relabel 走 BC 路径)"
+        assert args.offline_fraction > 0, "--relabel 需 --offline_fraction>0(demo 半边)"
+        assert args.actor == "raw", "--relabel 第一版只支持 --actor raw"
+        from resfit.rl_finetuning.chunk_residual.relabel import RelabelHarvester, sample_bc_batch
+        relabel_rb = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(max_size=args.relabel_buffer_size, device="cpu"),
+            batch_size=max(args.batch_size // 2, 1))
+        harvester = RelabelHarvester(min_stage=args.relabel_min_stage)
+        print(f"[relabel] on; buffer_size={args.relabel_buffer_size} min_stage={args.relabel_min_stage}")
+
     # --- 训练循环(x 轴=环境步;每 chunk 计入 chunk_length 步)---
     run = init_wandb(args)
 
@@ -467,6 +497,12 @@ def main():
         add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
                              reward=reward, done=done, info=info, image_keys=image_keys,
                              lowdim_keys=lowdim_keys, online_rb=online_rb)
+        if harvester is not None:
+            harvester.add(make_bc_entry(obs, info["scaled_action"], image_keys, lowdim_keys),
+                          info.get("max_stage_in_chunk", 0))
+            if bool(done.any()):
+                for e in harvester.flush():
+                    relabel_rb.add(e)
         obs = next_obs
         env_steps += args.chunk_length
 
@@ -485,7 +521,10 @@ def main():
                 update_actor = ((i + 1) % args.utd == 0)
                 bc_batch = None
                 if args.demo_bc_coef > 0 and update_actor and offline_rb is not None:
-                    bc_batch = offline_rb.sample(args.batch_size).to(args.device, non_blocking=True)
+                    if args.relabel:
+                        bc_batch = sample_bc_batch(relabel_rb, offline_rb, args.batch_size, args.device)
+                    else:
+                        bc_batch = offline_rb.sample(args.batch_size).to(args.device, non_blocking=True)
                 m_upd = agent.update(batch, args.stddev, update_actor,
                                      bc_batch=bc_batch,
                                      ref_agent=(agent if bc_batch is not None else None))
