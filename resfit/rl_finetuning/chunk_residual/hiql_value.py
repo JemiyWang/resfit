@@ -96,3 +96,37 @@ def load_value(path, map_location="cpu"):
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
     return model, info
+
+
+def train_value(s, s_next, done, *, gamma=0.99, expectile=0.7, ema=0.005,
+                lr=3e-4, batch_size=256, steps=50000, hidden=256, seed=0):
+    """在 (s, s_next, done) 上训 action-free IQL expectile value。
+
+    goal-reaching 内部 reward = done(末步=1 否则 0)。EMA target net 稳定 bootstrap。
+    返回 (model, v_stats),v_stats = 训练后全数据上 V 的 {min,max,mean}。
+    """
+    torch.manual_seed(seed)
+    n, d = s.shape
+    model = ValueMLP(d, hidden)
+    target = copy.deepcopy(model)
+    for p in target.parameters():
+        p.requires_grad_(False)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    reward = done  # r_t = 1 if done else 0 == done
+    bs = min(batch_size, n)
+    for _ in range(steps):
+        idx = torch.randint(0, n, (bs,))
+        with torch.no_grad():
+            y = discounted_target(reward[idx], target(s_next[idx]), done[idx], gamma)
+        v = model(s[idx])
+        loss = expectile_loss(y - v, expectile)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        with torch.no_grad():
+            for tp, mp in zip(target.parameters(), model.parameters()):
+                tp.mul_(1.0 - ema).add_(ema * mp)
+    with torch.no_grad():
+        allv = model(s)
+        v_stats = {"min": float(allv.min()), "max": float(allv.max()), "mean": float(allv.mean())}
+    return model, v_stats

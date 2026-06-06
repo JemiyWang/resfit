@@ -103,3 +103,27 @@ def test_save_load_roundtrip(tmp_path):
     assert info["v_stats"] == vstats
     assert info["dataset_id"] == "dummy/ds"
     assert torch.allclose(info["mean"], mean) and torch.allclose(info["std"], std)
+
+
+from resfit.rl_finetuning.chunk_residual.hiql_value import train_value
+
+
+def test_train_value_returns_model_and_stats():
+    seq = np.linspace(0, 1, 10).reshape(-1, 1).astype(np.float32)
+    s, sn, done = build_transitions([seq] * 16)
+    model, v_stats = train_value(s, sn, done, steps=50, batch_size=32, hidden=16, seed=0)
+    assert isinstance(model, ValueMLP)
+    assert set(v_stats) == {"min", "max", "mean"}
+    assert v_stats["min"] <= v_stats["mean"] <= v_stats["max"]
+
+
+def test_train_value_monotone_along_trajectory():
+    # 一维直线轨迹:越靠近终点(goal)value 应越大
+    seq = np.linspace(0, 1, 20).reshape(-1, 1).astype(np.float32)
+    s, sn, done = build_transitions([seq] * 64)
+    model, _ = train_value(s, sn, done, steps=2000, batch_size=128, hidden=64, seed=0)
+    with torch.no_grad():
+        vs = model(torch.from_numpy(seq)).squeeze(1)
+    assert vs[-1] > vs[0]                       # 终点 value > 起点
+    diffs = vs[1:] - vs[:-1]
+    assert (diffs > 0).float().mean() > 0.7     # 大体单调递增
