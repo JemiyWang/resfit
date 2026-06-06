@@ -96,3 +96,13 @@ def test_default_off_no_bc_loss_metric():
                            bc_batch=None, ref_agent=None)
     assert "rft/bc_loss" not in metrics
     assert math.isfinite(metrics["train/actor_loss_total"])
+
+
+def test_cli_demo_bc_coef_default_zero():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    assert build_parser().parse_args([]).demo_bc_coef == 0.0
+
+
+def test_cli_demo_bc_coef_parses():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    assert build_parser().parse_args(["--demo_bc_coef", "0.1"]).demo_bc_coef == 0.1

@@ -239,6 +239,9 @@ def build_parser():
                    help="把 stage_id one-hot 喂进 actor/critic（§22 分段修正；默认关=baseline）")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
+    p.add_argument("--demo_bc_coef", type=float, default=0.0,
+                   help="残差 actor 的 demo-BC 权重(模块②a);0=关(逐位等价 baseline)。"
+                        ">0 需 offline_fraction>0(bc_batch 取自 offline_rb)、--actor raw")
     p.add_argument("--reward_shaping", choices=["none", "staged", "potential"], default=None,
                    help="奖励整形模式(canonical):none|staged(净加)|potential(PBS,不改最优策略)")
     p.add_argument("--staged_reward", action="store_true",
@@ -363,6 +366,12 @@ def main():
     cfg.agent.actor_lr = args.actor_lr
     cfg.agent.critic_lr = args.critic_lr
     cfg.agent.actor.action_scale = args.action_scale
+    cfg.agent.bc_loss_coef = args.demo_bc_coef
+    cfg.agent.bc_loss_dynamic = 0          # 均匀 BC(②a 不开 DAPG 动态)
+    if args.demo_bc_coef > 0:
+        assert args.actor == "raw", "demo_bc 第一版只支持 --actor raw"
+        assert args.offline_fraction > 0, \
+            "demo_bc_coef>0 需 offline_fraction>0(bc_batch 取自 offline_rb)"
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
@@ -474,7 +483,12 @@ def main():
                 else:
                     batch = online_batch
                 update_actor = ((i + 1) % args.utd == 0)
-                m_upd = agent.update(batch, args.stddev, update_actor, bc_batch=None, ref_agent=None)
+                bc_batch = None
+                if args.demo_bc_coef > 0 and update_actor and offline_rb is not None:
+                    bc_batch = offline_rb.sample(args.batch_size).to(args.device, non_blocking=True)
+                m_upd = agent.update(batch, args.stddev, update_actor,
+                                     bc_batch=bc_batch,
+                                     ref_agent=(agent if bc_batch is not None else None))
                 # stage-aware 诊断:按 stage 看残差幅度/价值(用 update 已暴露的 _actions/_target_q)
                 if update_actor and "_actions" in m_upd:
                     st = batch["obs"]["observation.stage_id"].flatten().cpu()
