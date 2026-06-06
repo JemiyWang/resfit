@@ -41,3 +41,23 @@ def test_target_batch():
     y = discounted_target(torch.tensor([0.0, 1.0]), torch.tensor([2.0, 9.0]),
                           torch.tensor([0.0, 1.0]), 0.9)
     assert torch.allclose(y, torch.tensor([1.8, 1.0]))
+
+
+from resfit.rl_finetuning.chunk_residual.hiql_value import ValueMLP
+
+
+def test_valuemlp_output_shape():
+    m = ValueMLP(state_dim=18, hidden=32)
+    out = m(torch.randn(4, 18))
+    assert out.shape == (4, 1)
+
+
+def test_valuemlp_records_dims():
+    m = ValueMLP(state_dim=18, hidden=64)
+    assert m.state_dim == 18 and m.hidden == 64
+
+
+def test_valuemlp_trainable():
+    m = ValueMLP(18, 32)
+    m(torch.randn(4, 18)).sum().backward()
+    assert all(p.grad is not None for p in m.parameters())

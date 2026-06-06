@@ -27,3 +27,20 @@ def discounted_target(reward, next_v, done, gamma):
     入参均为 [B] 或 [B,1] 张量;done 为 float(0/1)。
     """
     return reward + gamma * (1.0 - done) * next_v
+
+
+class ValueMLP(nn.Module):
+    """lowdim state -> 标量 V(s) 的小 MLP。state_dim/hidden 存为属性,便于 save/load 重建。"""
+
+    def __init__(self, state_dim, hidden=256):
+        super().__init__()
+        self.state_dim = state_dim
+        self.hidden = hidden
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, s):
+        return self.net(s)
