@@ -7,7 +7,7 @@ from torch import nn
 
 from resfit.rl_finetuning.config.rlpd import ActorConfig
 from resfit.rl_finetuning.off_policy.common_utils import utils
-from resfit.rl_finetuning.off_policy.rl.stage_utils import stage_onehot
+from resfit.rl_finetuning.off_policy.rl.stage_utils import stage_onehot, stage_budget_factor
 
 
 def build_fc(in_dim, hidden_dim, action_dim, num_layer, layer_norm, dropout, use_layer_norm=True):
@@ -68,7 +68,8 @@ class SpatialEmb(nn.Module):
 
 class Actor(nn.Module):
     def __init__(self, repr_dim, patch_repr_dim, prop_dim, action_dim, cfg: ActorConfig, residual_actor: bool = False,
-                 stage_conditioned: bool = False, num_stages: int = 0):
+                 stage_conditioned: bool = False, num_stages: int = 0,
+                 stage_budget: "list[float] | None" = None):
         super().__init__()
 
         self.prop_dim = prop_dim
@@ -76,6 +77,11 @@ class Actor(nn.Module):
         self.stage_conditioned = stage_conditioned
         self.num_stages = num_stages
         self.cfg = cfg
+        self.stage_budget = stage_budget
+        if stage_budget is not None:
+            assert len(stage_budget) == num_stages, \
+                f"stage_budget 长度 {len(stage_budget)} != num_stages {num_stages}"
+            self.register_buffer("_stage_budget", torch.tensor(stage_budget, dtype=torch.float32))
 
         if residual_actor:
             # The residual actor takes the base action as input alongside the state
@@ -181,6 +187,13 @@ class Actor(nn.Module):
         # Scale the mean by action_scale
         # NOTE: std is already in environment action space (more interpretable)
         scaled_mu = mu * self.cfg.action_scale
+
+        if self.stage_budget is not None:
+            # 只缩输出包络,不改网络输入(区别于 stage_conditioning)
+            factor = stage_budget_factor(
+                obs["observation.stage_id"], self._stage_budget, self.num_stages).to(scaled_mu.device)
+            scaled_mu = scaled_mu * factor
+            std = std * factor                  # float * [B,1] -> [B,1]，TruncatedNormal 接受张量 scale 并广播
 
         # Create distribution with scaled mean but environment-scale std
         action_dist = utils.TruncatedNormal(scaled_mu, std)
