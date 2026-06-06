@@ -67,3 +67,32 @@ def build_transitions(state_seqs):
     sn = torch.from_numpy(np.concatenate(sn_list, axis=0))
     done = torch.from_numpy(np.concatenate(done_list, axis=0)).unsqueeze(1)
     return s, sn, done
+
+
+def save_value(path, model, *, v_stats, mean, std, dataset_id):
+    """存 value.pt:权重 + 维度 + 训练集 V 统计 + (记录用)state mean/std + dataset_id。
+
+    标准化口径与 RL 训练同源,③b 推理时喂的 state 已标准化,故 mean/std 仅作记录/自校验,③b 不依赖。
+    """
+    torch.save({
+        "state_dict": model.state_dict(),
+        "state_dim": model.state_dim,
+        "hidden": model.hidden,
+        "v_stats": v_stats,
+        "mean": mean,
+        "std": std,
+        "dataset_id": dataset_id,
+    }, path)
+
+
+def load_value(path, map_location="cpu"):
+    """读 value.pt,重建 ValueMLP(eval 模式),返回 (model, info_dict)。
+
+    info_dict 含 v_stats / mean / std / dataset_id。
+    """
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    model = ValueMLP(ckpt["state_dim"], ckpt["hidden"])
+    model.load_state_dict(ckpt["state_dict"])
+    model.eval()
+    info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
+    return model, info

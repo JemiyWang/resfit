@@ -85,3 +85,21 @@ def test_build_transitions_alignment():
 def test_build_transitions_skips_short():
     s, sn, done = build_transitions([np.zeros((1, 2)), np.zeros((3, 2))])
     assert s.shape == (2, 2)  # 仅 3 帧的 demo 贡献(1 帧的跳过)
+
+
+from resfit.rl_finetuning.chunk_residual.hiql_value import save_value, load_value
+
+
+def test_save_load_roundtrip(tmp_path):
+    m = ValueMLP(6, 16)
+    vstats = {"min": 0.0, "max": 1.0, "mean": 0.5}
+    mean, std = torch.zeros(6), torch.ones(6)
+    p = str(tmp_path / "value.pt")
+    save_value(p, m, v_stats=vstats, mean=mean, std=std, dataset_id="dummy/ds")
+    m2, info = load_value(p)
+    x = torch.randn(3, 6)
+    assert torch.allclose(m(x), m2(x))          # 权重一致
+    assert m2.state_dim == 6 and m2.hidden == 16  # 维度重建正确
+    assert info["v_stats"] == vstats
+    assert info["dataset_id"] == "dummy/ds"
+    assert torch.allclose(info["mean"], mean) and torch.allclose(info["std"], std)
