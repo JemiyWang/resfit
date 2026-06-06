@@ -44,3 +44,26 @@ class ValueMLP(nn.Module):
 
     def forward(self, s):
         return self.net(s)
+
+
+def build_transitions(state_seqs):
+    """list of [T_i, D] 数组(每条 demo 的标准化 state 序列)-> (s, s_next, done) float32 张量。
+
+    每条长 T 的 demo 产出 T-1 个 transition;done 在该 demo 末 transition=1(到达 goal=轨迹终点)。
+    T<2 的 demo 跳过。done 形状 [N,1]。
+    """
+    s_list, sn_list, done_list = [], [], []
+    for seq in state_seqs:
+        seq = np.asarray(seq, dtype=np.float32)
+        T = seq.shape[0]
+        if T < 2:
+            continue
+        s_list.append(seq[:-1])
+        sn_list.append(seq[1:])
+        d = np.zeros(T - 1, dtype=np.float32)
+        d[-1] = 1.0
+        done_list.append(d)
+    s = torch.from_numpy(np.concatenate(s_list, axis=0))
+    sn = torch.from_numpy(np.concatenate(sn_list, axis=0))
+    done = torch.from_numpy(np.concatenate(done_list, axis=0)).unsqueeze(1)
+    return s, sn, done
