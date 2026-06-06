@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import os
 
 import wandb
@@ -105,12 +106,41 @@ def _maybe_inject_flow_actor(args, agent, repr_dim, patch_repr_dim, prop_dim, ac
     print("[inject] residual_flow actor 已注入,actor_opt 仅含 velocity 网络参数")
 
 
-def build_base_policy(wandb_id: str, device: str, wt_type: str = "best", wt_version: str = "latest"):
-    """加载冻结 ACT 基座(eval 模式)。
+# three-piece(TwoArmThreePieceAssembly)默认相机映射:env obs 图像键 -> server 端 DexmgInputs
+# 期望的相机名。注意:dexmg serve 的 DexmgInputs.EXPECTED_CAMERAS 就是原始相机名
+# (agentview/robot0_eye_in_hand/robot1_eye_in_hand),它自己再 rename 到 base_0_rgb 等 pi0 槽位。
+# 所以这里的"目标名"必须保持原始相机名,不能改成 base/left_wrist/right_wrist。
+PIECE_IMAGE_KEY_MAP = {
+    "observation.images.agentview": "agentview",
+    "observation.images.robot0_eye_in_hand": "robot0_eye_in_hand",
+    "observation.images.robot1_eye_in_hand": "robot1_eye_in_hand",
+}
 
-    wandb_id 若是本地目录则直接 load(免 wandb);否则按 wandb artifact 拉。
-    本地目录可指向 run 根下的 step 目录(自动取其 policy/ 子目录)或直接 policy 目录。
+
+def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str = "latest"):
+    """加载冻结基座(eval 模式),按 args.base_policy_type 分发。
+
+    - act (默认,行为不变):ACT(PyTorch lerobot)。args.base_wandb_id 若是本地目录则直接 load
+      (自动取其 policy/ 子目录或直接 policy 目录),否则按 wandb artifact 拉。
+    - pi05:pi0/pi05(openpi,JAX)。经 openpi-client websocket 连 serve 进程,用
+      Pi05PolicyAdapter 包成 step 级基座(select_action / reset / config.image_features),
+      内部自带 action queue(execute_horizon)。仅 queue 模式(chunk_length==1)用。
     """
+    if getattr(args, "base_policy_type", "act") == "pi05":
+        from resfit.rl_finetuning.config.residual_td3 import BasePolicyConfig
+        from resfit.lerobot.policies.pi05 import load_pi05_base_policy
+        image_key_map = (json.loads(args.pi0_image_key_map)
+                         if args.pi0_image_key_map else dict(PIECE_IMAGE_KEY_MAP))
+        bp = BasePolicyConfig(
+            type="pi05", host=args.pi0_host, port=args.pi0_port,
+            prompt=args.pi0_prompt, action_dim=args.pi0_action_dim,
+            execute_horizon=args.pi0_execute_horizon,
+            image_key_map=image_key_map, kai0_paths=[args.pi0_kai0_path],
+        )
+        # adapter 已按 device 构造(连 serve);不需再 .to/.eval(它是远端推理的薄封装)
+        return load_pi05_base_policy(bp, device)
+
+    wandb_id = args.base_wandb_id
     if os.path.isdir(wandb_id):
         from pathlib import Path
         cand = Path(wandb_id) / "policy"
@@ -121,6 +151,63 @@ def build_base_policy(wandb_id: str, device: str, wt_type: str = "best", wt_vers
     base_policy.to(device)
     base_policy.eval()
     return base_policy
+
+
+def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode):
+    """决定 offline buffer 内容的全部参数;任一变化都意味着旧缓存失效需重建。
+
+    内容依赖:动作/base_action 用 action_scaler(action_scale+min_range);state 标准化(来自
+    dataset stats);reward/done/stage 由 (reward_shaping mode, bonus, gamma) 烤入;n-step 由
+    MultiStepTransform(n_step, gamma) 在 add 时合并进存储;图像由 image_keys;stage 由 stage_cache。
+    """
+    return {
+        "dataset": args.dataset,
+        "offline_dataset_path": os.path.abspath(args.offline_dataset_path),
+        "num_demos": args.offline_num_demos,
+        "offline_cap": int(offline_cap),
+        "action_scale": float(args.action_scale),
+        "min_range_per_dim": float(args.min_range_per_dim),
+        "reward_shaping": shaping_mode,
+        "stage_reward_bonus": float(args.stage_reward_bonus),
+        "gamma": float(args.gamma),
+        "n_step": int(args.n_step),
+        "image_keys": sorted(image_keys),
+        "task": args.task,
+        "stage_cache": (os.path.abspath(args.offline_stage_cache)
+                        if args.offline_stage_cache else None),
+    }
+
+
+def _offline_cache_valid(cache_dir, sig):
+    """缓存目录存在、meta 完整且签名完全匹配才算命中。"""
+    meta = os.path.join(cache_dir, "buffer_meta.json")
+    storage = os.path.join(cache_dir, "storage")
+    if not (os.path.isfile(meta) and os.path.isdir(storage)):
+        return False
+    try:
+        with open(meta) as fp:
+            saved = json.load(fp)
+    except Exception:
+        return False
+    if saved.get("signature") != sig:
+        print(f"[offline] 缓存 {cache_dir} 签名与当前配置不符 → 重建")
+        return False
+    return True
+
+
+def _save_offline_buffer(offline_rb, cache_dir, sig, n_off):
+    """把建好的 offline buffer(已经过 MultiStepTransform 合并)的存储落成 memmap + 写签名。
+
+    存的是合并后的 transition;loads 时用不带 MultiStepTransform 的 buffer 注入(勿二次合并)。
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    data = offline_rb[:len(offline_rb)]
+    for k in ("index", "_weight"):     # 采样期/读取期附加键,不入存储
+        if k in data.keys():
+            data = data.exclude(k)
+    data.memmap(os.path.join(cache_dir, "storage"))
+    with open(os.path.join(cache_dir, "buffer_meta.json"), "w") as fp:
+        json.dump({"signature": sig, "n_transitions": int(n_off)}, fp, indent=2)
 
 
 def build_parser():
@@ -162,6 +249,21 @@ def build_parser():
                    help="ckpt / eval 产物目录(并行 run 用不同目录避免抢 best.pt)")
     p.add_argument("--base_action_mode", choices=["replan", "queue"], default="replan",
                    help="基座动作来源:replan(每边界重跑模型取前chunk步)|queue(ACT原生action queue,仅cl=1,复刻原版step级)")
+    # --- 基座类型开关(act 默认行为不变;pi05=pi0/pi05 经 websocket 连 openpi serve)---
+    p.add_argument("--base_policy_type", choices=["act", "pi05"], default="act",
+                   help="基座类型:act(PyTorch lerobot,默认)|pi05(pi0/pi05,经 openpi-client websocket 连 serve)")
+    p.add_argument("--pi0_host", default="127.0.0.1", help="pi0/pi05 serve websocket host")
+    p.add_argument("--pi0_port", type=int, default=8000, help="pi0/pi05 serve websocket port")
+    p.add_argument("--pi0_prompt", default="assemble the three pieces",
+                   help="pi0/pi05 prompt;必须与微调/serve 的 default-prompt 完全一致")
+    p.add_argument("--pi0_action_dim", type=int, default=14,
+                   help="pi0/pi05 基座输出 action 维度(three-piece=14)")
+    p.add_argument("--pi0_execute_horizon", type=int, default=30,
+                   help="pi0/pi05 每次推理实际执行的步数(adapter 内部 action queue 长度)")
+    p.add_argument("--pi0_kai0_path", default="/mnt/mnt/data/kai0_new4090",
+                   help="kai0 仓路径(供 import resfit_pi05.pi05_policy_adapter;本机=kai0_new4090)")
+    p.add_argument("--pi0_image_key_map", default=None,
+                   help="JSON: env obs 图像键->pi0 槽位(base/left_wrist/right_wrist);缺省=three-piece 默认映射")
     p.add_argument("--base_n_action_steps", type=int, default=None,
                    help="覆盖基座 ACT 的 n_action_steps(每多少步重规划;默认用 checkpoint 的 20)。"
                         "≤chunk_size;设 10 即基座预测20步但只执行前10就重推理")
@@ -177,6 +279,10 @@ def build_parser():
     p.add_argument("--offline_stage_cache", default=None,
                    help="stage 缓存 npz 路径;命中则秒级读、不 replay。"
                         "缺失会 replay 并落盘到此路径(见 precompute_stage_cache)")
+    p.add_argument("--offline_buffer_cache", default=None,
+                   help="offline buffer 落盘目录(建议放 /mnt 大盘)。命中且签名匹配则秒级 loads、"
+                        "跳过 ~27min 重建;缺失/签名不符则正常重建并 dump。签名锁 "
+                        "dataset/action_scale/min_range/reward_shaping/bonus/gamma/n_step/stage_cache 等")
     p.add_argument("--wandb_project", default="dexmg-chunk-residual",
                    help="wandb project 名")
     p.add_argument("--wandb_entity", default=None, help="wandb entity(默认用账号默认)")
@@ -195,8 +301,11 @@ def main():
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 
     # --- 归一化器(从 dataset stats 建,与 AE / RL 同款)---
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-    meta = LeRobotDataset(args.dataset).meta
+    # 只需 dataset 的统计量来建归一化器:用 LeRobotDatasetMetadata(仅拉 meta/ 几个小文件)
+    # 而非 LeRobotDataset(会 snapshot 整个 repo,含上百 MB 视频)。.stats 完全一致,且可离线工作,
+    # 避免国内直连 HF 下视频频繁超时。
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+    meta = LeRobotDatasetMetadata(args.dataset)
     action_scaler = ActionScaler.from_dataset_stats(
         meta.stats["action"], action_scale=args.action_scale,
         min_range_per_dim=args.min_range_per_dim, device=args.device)
@@ -204,9 +313,12 @@ def main():
         meta.stats["observation.state"], device=args.device)
 
     # --- 基座 + env ---
+    if args.base_policy_type == "pi05":
+        assert args.base_action_mode == "queue", \
+            "pi05/pi0 基座是 step 级(select_action),只支持 --base_action_mode queue(且 --chunk_length 1)"
     if args.base_action_mode == "queue":
         assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
-    base_policy = build_base_policy(args.base_wandb_id, args.device)
+    base_policy = build_base_policy(args, args.device)
     vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device)
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
@@ -220,10 +332,12 @@ def main():
                                      device=args.device)
     # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
     # 会互踩 queue。queue 模式给 eval 单独的 base_policy 实例(对齐原版 train_residual_td3 双实例)。
-    eval_base_policy = (build_base_policy(args.base_wandb_id, args.device)
+    eval_base_policy = (build_base_policy(args, args.device)
                         if args.base_action_mode == "queue" else base_policy)
     # 可选:覆盖基座 n_action_steps(每多少步重规划)。在任何 reset 前设置,reset() 会按此建队列
     if args.base_n_action_steps is not None:
+        assert args.base_policy_type == "act", \
+            "--base_n_action_steps 只对 ACT 基座有效;pi0/pi05 用 --pi0_execute_horizon 控制每次推理执行步数"
         assert args.base_n_action_steps <= base_policy.config.chunk_size, \
             f"n_action_steps({args.base_n_action_steps}) 不能超过 chunk_size({base_policy.config.chunk_size})"
         base_policy.config.n_action_steps = args.base_n_action_steps
@@ -290,18 +404,40 @@ def main():
         # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
         offline_cap = count_offline_transitions(args.offline_dataset_path,
                                                 num_demos=args.offline_num_demos)
-        offline_rb = TensorDictPrioritizedReplayBuffer(
-            storage=LazyTensorStorage(max_size=offline_cap, device="cpu"),
-            alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority",
-            transform=MultiStepTransform(n_steps=args.n_step, gamma=args.gamma),
-            pin_memory=True, prefetch=4, batch_size=max(offline_batch_size, 1))
-        n_off = build_offline_buffer(
-            offline_rb, args.offline_dataset_path,
-            action_scaler=action_scaler, state_standardizer=state_standardizer,
-            image_keys=image_keys, bonus=args.stage_reward_bonus,
-            mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
-            stage_cache=args.offline_stage_cache)
-        print(f"[offline] 灌装 {n_off} 条 demo transition;混采 online_bs={online_batch_size} "
+        sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode)
+
+        def _new_offline_rb(with_transform):
+            # 命中缓存走 with_transform=False:存的是已合并 transition,勿让 MultiStepTransform 二次合并
+            tf = MultiStepTransform(n_steps=args.n_step, gamma=args.gamma) if with_transform else None
+            return TensorDictPrioritizedReplayBuffer(
+                storage=LazyTensorStorage(max_size=offline_cap, device="cpu"),
+                alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority",
+                transform=tf, pin_memory=True, prefetch=4,
+                batch_size=max(offline_batch_size, 1))
+
+        cache_dir = args.offline_buffer_cache
+        if cache_dir and _offline_cache_valid(cache_dir, sig):
+            from tensordict import TensorDict
+            offline_rb = _new_offline_rb(with_transform=False)
+            data = TensorDict.load_memmap(os.path.join(cache_dir, "storage"))
+            offline_rb.extend(data)
+            n_off = len(offline_rb)
+            print(f"[offline] 命中缓存 {cache_dir}:loads {n_off} 条(跳过重建)")
+        else:
+            offline_rb = _new_offline_rb(with_transform=True)
+            build_offline_buffer(
+                offline_rb, args.offline_dataset_path,
+                action_scaler=action_scaler, state_standardizer=state_standardizer,
+                image_keys=image_keys, bonus=args.stage_reward_bonus,
+                mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
+                stage_cache=args.offline_stage_cache)
+            n_off = len(offline_rb)
+            if cache_dir:
+                _save_offline_buffer(offline_rb, cache_dir, sig, n_off)
+                print(f"[offline] 已建 {n_off} 条并落盘 {cache_dir}(下次秒级复用)")
+            else:
+                print(f"[offline] 灌装 {n_off} 条 demo transition(未设 --offline_buffer_cache,不落盘)")
+        print(f"[offline] 混采 online_bs={online_batch_size} "
               f"offline_bs={offline_batch_size}(fraction={args.offline_fraction})")
 
     # --- 训练循环(x 轴=环境步;每 chunk 计入 chunk_length 步)---

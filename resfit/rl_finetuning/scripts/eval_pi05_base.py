@@ -71,10 +71,12 @@ def run_smoke(env, base_policy, n_episodes: int, max_steps: int, action_dim: int
 ACTION_DIM = 14
 TASK_NAME = "TwoArmThreePieceAssembly"
 PROMPT = "assemble the three pieces"
+# dexmg serve 端 DexmgInputs.EXPECTED_CAMERAS = 原始相机名;它自己再 rename 到 base_0_rgb 等。
+# 故这里"目标名"保持原始相机名(早期误用 base/left_wrist/right_wrist 会被 server 拒)。
 IMAGE_KEY_MAP = {
-    "observation.images.agentview": "base",
-    "observation.images.robot0_eye_in_hand": "left_wrist",
-    "observation.images.robot1_eye_in_hand": "right_wrist",
+    "observation.images.agentview": "agentview",
+    "observation.images.robot0_eye_in_hand": "robot0_eye_in_hand",
+    "observation.images.robot1_eye_in_hand": "robot1_eye_in_hand",
 }
 
 
