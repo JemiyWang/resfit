@@ -36,3 +36,36 @@ def test_harvester_no_advance_returns_empty():
     h.add("a", 0)
     h.add("b", 0)
     assert h.flush() == []
+
+
+import torch
+from tensordict import TensorDict
+from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
+from resfit.rl_finetuning.chunk_residual.relabel import sample_bc_batch
+
+
+def _tiny_rb(n):
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(max_size=max(n, 1), device="cpu"), batch_size=4)
+    for _ in range(n):
+        td = TensorDict({
+            "obs": TensorDict({"observation.state": torch.randn(3)}, batch_size=[]),
+            "action": torch.randn(5),
+        }, batch_size=[]).unsqueeze(0)
+        rb.add(td)
+    return rb
+
+
+def test_sample_bc_batch_mixes_when_relabel_full():
+    bc = sample_bc_batch(_tiny_rb(20), _tiny_rb(20), batch_size=8, device="cpu")
+    assert bc.shape[0] == 8                       # half relabel + half demo
+
+
+def test_sample_bc_batch_falls_back_to_demo_when_relabel_short():
+    bc = sample_bc_batch(_tiny_rb(1), _tiny_rb(20), batch_size=8, device="cpu")   # relabel<half(4)
+    assert bc.shape[0] == 8                       # 整批来自 demo
+
+
+def test_sample_bc_batch_none_relabel_uses_demo():
+    bc = sample_bc_batch(None, _tiny_rb(20), batch_size=8, device="cpu")
+    assert bc.shape[0] == 8

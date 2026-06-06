@@ -39,3 +39,20 @@ class RelabelHarvester:
         out = self._entries[:n]
         self._entries, self._stages = [], []
         return out
+
+
+from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import concat_mixed_batch
+
+
+def sample_bc_batch(relabel_rb, offline_rb, batch_size: int, device):
+    """bc_batch = relabel + demo 50/50 混采;relabel 不足半批 -> 整批回退 demo。搬到 device。
+
+    relabel 条目只有 {obs, action};offline 还含 next/_priority/_weight。concat_mixed_batch 取两者
+    公共 key 再 cat(bc 消费端只读 obs+action,公共 key 足够)。
+    """
+    half = batch_size // 2
+    if relabel_rb is not None and len(relabel_rb) >= half:
+        bc = concat_mixed_batch(relabel_rb.sample(half), offline_rb.sample(batch_size - half))
+    else:
+        bc = offline_rb.sample(batch_size)
+    return bc.to(device, non_blocking=True)
