@@ -28,3 +28,24 @@ def append_stage(prop: torch.Tensor, stage_id: torch.Tensor, num_stages: int) ->
     可能在 CPU（torch.full 默认），而 prop 在 GPU，否则 cat 跨设备报错。
     """
     return torch.cat([prop, stage_onehot(stage_id, num_stages).to(prop.device)], dim=-1)
+
+
+def stage_budget_factor(stage_id: torch.Tensor, budget: torch.Tensor, num_stages: int) -> torch.Tensor:
+    """stage_id [B,1] 或 [B] float -> 每样本残差幅度乘子 [B,1] float32。
+
+    budget: 1-D 张量，长度 num_stages，budget[k] = stage k 的乘子。
+    越界 stage_id clamp 到 [0, num_stages-1]。返回乘子在 stage_id 的 device 上。
+    """
+    idx = stage_id.reshape(stage_id.shape[0]).long().clamp_(0, num_stages - 1)
+    fac = budget.to(idx.device)[idx]
+    return fac.reshape(-1, 1).to(torch.float32)
+
+
+def parse_stage_budget(arg: "str | None", num_stages: int) -> "list[float] | None":
+    """解析 --stage_budget 字符串 -> list[float]；None 表关。长度必须 == num_stages。"""
+    if arg is None:
+        return None
+    vals = [float(x) for x in arg.split(",")]
+    if len(vals) != num_stages:
+        raise ValueError(f"stage_budget 长度 {len(vals)} != num_stages {num_stages}")
+    return vals
