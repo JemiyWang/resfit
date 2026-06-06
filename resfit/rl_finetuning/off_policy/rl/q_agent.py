@@ -19,6 +19,11 @@ from resfit.rl_finetuning.off_policy.rl.critic import Critic
 from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage
 
 
+def bc_target(action, base_action, residual_actor):
+    """残差 actor 的 BC 目标 = 采取动作 - 基座动作;非残差 actor = 采取动作(不解引用 base_action)。"""
+    return action - base_action if residual_actor else action
+
+
 class QAgent(nn.Module):
     def __init__(
         self,
