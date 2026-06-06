@@ -476,7 +476,6 @@ class QAgent(nn.Module):
         return actor_loss_total, actor_loss_base, combined_action, action_pred, action_l2_penalty
 
     def _compute_actor_bc_loss(self, batch, *, backprop_encoder):
-        assert not self.residual_actor, "Not implemented"
         obs: dict[str, torch.Tensor] = batch["obs"]
 
         assert "feat" not in obs, "safety check"
@@ -492,8 +491,9 @@ class QAgent(nn.Module):
             clip=None,
             use_target=False,
         )
-        action: torch.Tensor = batch["action"]
-        loss = nn.functional.mse_loss(pred_action, action, reduction="none")
+        base_action = obs["observation.base_action"] if self.residual_actor else None
+        target = bc_target(batch["action"], base_action, self.residual_actor)
+        loss = nn.functional.mse_loss(pred_action, target, reduction="none")
         loss = loss.sum(1).mean(0)
         return loss  # noqa: RET504
 
