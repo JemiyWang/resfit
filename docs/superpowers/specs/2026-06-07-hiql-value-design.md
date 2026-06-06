@@ -42,9 +42,15 @@ PBS 理论保证:Φ 任意(只要固定)都不改变最优策略,所以即便 V 
   `deps/dexmimicgen/datasets/generated/two_arm_three_piece_assembly.hdf5` +
   现有 stage cache npz(见 `offline_stage_replay.py` / `offline_hdf5_buffer.py`)。
 - ③a 学 value **只需 state 序列 + episode 边界**(goal = 轨迹终点),**不需要 stage**(stage 是 ③b/PBS 用的)。
-  故 ③a 可写一个轻量 loader 直接读 hdf5 的 `observation.state` + 每条 demo 的边界,构 `(s_t, s_{t+1}, is_terminal_t)`,
+  故 ③a 可写一个轻量 loader 直接读 hdf5 的 state + 每条 demo 的边界,构 `(s_t, s_{t+1}, done_t)`,
   **不依赖 stage cache、不跑 sim replay**(比 build_offline_buffer 轻得多)。
-- state 标准化:复用现有 norm stats(offline 管道所用),保证与后续 ③b/在线 obs 同口径。
+- **18 维 state 的来源(已核实)**:不是 hdf5 里的单一 dataset,而是 6 个分离 lowdim key 拼接 ——
+  `robot0/1` 各 `eef_pos[3]+eef_quat[4]+gripper_qpos[2]`,由 `offline_hdf5_buffer.assemble_state18` + 常量
+  `STATE18_KEYS` + `sorted_demo_keys` 完成(hdf5 路径 `data/demo_i/obs/<key>`,T<2 的 demo 跳过)。
+- **标准化口径(已核实,关键)**:用 `StateStandardizer.from_dataset_stats(LeRobotDatasetMetadata(dataset).stats
+  ["observation.state"])`(从数据集 metadata 拉 mean/std,**不是在 ③a 数据上自算**)。在线 obs(chunk_env_wrapper:105)
+  与 offline buffer 用**同一套拼接顺序 + 同一个 StateStandardizer**,所以 ③b 推理时喂给 V 的 `obs.state` 本就已标准化、
+  与 ③a 训练同分布 —— 这是 ③a/③b 对齐的根基。
 
 ## 4. 设计
 
@@ -75,14 +81,18 @@ PBS 理论保证:Φ 任意(只要固定)都不改变最优策略,所以即便 V 
 
 ### 4.3 数据加载(`train_hiql_value.py`:loader)
 
-- 读 hdf5 每条 demo 的 `observation.state` 序列 + 边界,标准化(现有 norm stats),
-  构 transitions `(s_t, s_{t+1}, done_t)`,`done_{T-1}=True`。
+- **复用** `assemble_state18` + `STATE18_KEYS` + `sorted_demo_keys`(offline_hdf5_buffer.py)逐 demo 读 6 个 key
+  拼 (T,18);用 `StateStandardizer.from_dataset_stats(LeRobotDatasetMetadata(dataset).stats["observation.state"])`
+  标准化(**与 RL 训练同源,不自算 mean/std**);把每条 demo 的标准化 state 序列交给纯函数 `build_transitions`
+  构 `(s_t, s_{t+1}, done_t)`,`done_{T-1}=True`,T<2 跳过。
 - 全部装进内存张量(state 18 维,极轻),普通 minibatch 采样。
 
 ### 4.4 产出 `value.pt`
 
-- 存:`ValueMLP` 权重 + state 归一化参数(实际 mean/std,自包含,便于 ③b/在线同口径加载)
-  + **训练集上 V 的统计(min/max/mean)**。
+- 存:`ValueMLP` 权重 + `state_dim`/`hidden` + **训练集上 V 的统计(min/max/mean)** + 记录用的 `dataset_id`
+  与 state mean/std(仅作记录/自校验,**③b 不依赖**)。
+- **标准化不进 value.pt 的依赖链**:V 在标准化 state 上训练;③b 推理时喂的 `obs.state` 本就被同一套 StateStandardizer
+  标准化过(在线 wrapper + offline buffer 都已标准化、同源 dataset stats),故 value.pt 不需自带 norm 也能对齐。
 - V 的**尺度归一化决策留给 ③b**(关系到 PBS 幅度与 bonus 的配合):③a 只产出 raw V 模型 + V 统计,
   ③b 据此把 V 线性缩放到与整数 stage Φ∈[0,num_stages-1] 可比的量级(或暴露 `--phi_scale`)。
   职责切分:③a 学 V,③b 决定怎么缩放接进 PBS。
@@ -103,8 +113,9 @@ PBS 理论保证:Φ 任意(只要固定)都不改变最优策略,所以即便 V 
 - `expectile_loss` 纯函数(light):τ=0.5 == 0.5·MSE;u>0 与 u<0 的非对称权重(τ>0.5 时 u>0 权重更大);shape。
 - `discounted_target` 纯函数(light):done 时 y==r(无 bootstrap);非 done y==r+γ·V';批量正确。
 - `ValueMLP` forward(light):输入 [B,18] -> 输出 [B,1];参数可训。
-- loader(light):假轨迹 -> (s,s',done) 正确,末步 done=True,episode 边界正确,标准化往返。
-- 归一化 / save-load 往返(light):value.pt 存取后权重 + 统计一致。
+- `build_transitions`(light):假轨迹 list -> (s,s',done) 正确,末步 done=True,episode 边界正确,T<2 跳过。
+- save-load 往返(light):value.pt 存取后权重 + state_dim/hidden + v_stats 一致。
+- (state 标准化用现有 `StateStandardizer`,本模块不重测;loader 的 hdf5 读取靠 manual 实跑验证。)
 - manual(集成,CPU):小数据训几百步,loss 下降;沿一条成功 demo,V 随进度**单调递增**、末态最高。
 
 ## 6. A/B 验证方案(属 ③b,不在本实现)
@@ -115,8 +126,9 @@ PBS 理论保证:Φ 任意(只要固定)都不改变最优策略,所以即便 V 
 ## 7. 文件改动清单
 
 - `resfit/rl_finetuning/chunk_residual/hiql_value.py`(新)—— `ValueMLP` + `expectile_loss` +
-  `discounted_target` + 归一化 + save/load(纯逻辑,可单测)。
-- `resfit/rl_finetuning/chunk_residual/train_hiql_value.py`(新)—— loader + 训练循环(EMA target)+ 存 value.pt。
+  `discounted_target` + `build_transitions` + `train_value`(EMA target)+ `save_value`/`load_value`(纯逻辑,可单测)。
+- `resfit/rl_finetuning/chunk_residual/train_hiql_value.py`(新)—— `read_per_demo_states`(复用 assemble_state18
+  + StateStandardizer)+ CLI + 串起 build_transitions/train_value/save_value。
 - 测试:`resfit/rl_finetuning/chunk_residual/tests/test_hiql_value.py`(新)。
 
 ## 8. 风险与缓解
