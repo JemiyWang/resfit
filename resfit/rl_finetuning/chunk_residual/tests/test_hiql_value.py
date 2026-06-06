@@ -140,6 +140,8 @@ def test_parser_defaults():
     assert args.steps == 50000
     assert args.value_hidden == 256
     assert args.output == "value.pt"
+    assert args.lr == 3e-4
+    assert args.batch_size == 256
 
 
 def test_parser_overrides():
