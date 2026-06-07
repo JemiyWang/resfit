@@ -6,7 +6,7 @@
 
 ## ✅ 完成更新(2026-06-08):Task 8(正确架构)+ Task 9(端到端冒烟)全过
 
-**Task 8 按 §3 重做完毕**(observation.state 保持 18 维,rel_piece 经 info 只喂 Φ)。**Task 9 端到端冒烟 exit 0 通过**。改动均 TDD(先红后绿),未 commit(等用户)。
+**Task 8 按 §3 重做完毕**(observation.state 保持 18 维,rel_piece 经 info 只喂 Φ)。**Task 9 端到端冒烟 exit 0 通过**。改动均 TDD(先红后绿),**已 commit `a223750`**(12 文件,+565/-47,分支 chunk-residual-validation)。
 
 - **observation.state 始终 18 维**(actor/critic + 部署不变):`dexmg._process_obs`/`_process_obs_for_space_inference` 不再拼 rel;原 `_append_rel_piece` 改为 `_rel_piece_info()`(只算 (12,) 不拼),`step`/`reset` 像 `stage_id` 一样经 `info["rel_piece"]` 透出(eef_piece 模式)。
 - **HiqlPotential.phi(state_std, rel_piece_raw=None)**:from_ckpt 读 `state_mode`+`rel_piece_mean/std`;eef_piece 时 `_value_input` 把 raw rel 标准化 `(rel-mean)/std` 后拼成 30 维喂 V(与 `train_hiql_value` 逐位同源);eef 模式忽略 rel(零回归)。**设计决策(偏离原 §4.4)**:online/offline **统一**走 `phi(18维std state, raw rel)`,标准化在 phi 内部做 → 两端数值严格一致(原 §4.4 想让 offline 传 30 维预标准化 state_seq,会和 §4.2 online 口径分叉,故废弃)。
