@@ -33,7 +33,7 @@
 | 5 | `hiql_value.save/load_value` 存读 state_mode + rel_piece_mean/std | ✅ commit `7467eb0`,load 验证通过 |
 
 - **同源命门坑(关键,已修)**:offline replay `set_state` 后 `env._get_observations()` 的 robot obs **cache stale**(eef 差 0.24m);必须用 `env._eef0_xpos`/`_eef1_xpos`(sim 实时,== hdf5 eef、差 0.2mm)。两端统一走 `compute_eef_rel_piece_from_env(env)`。
-- 全量 30 维 value 训练:`outputs_chunk/three_piece_value_objaware.pt`,2026-06-07 跑(`tee three_piece_value_objaware.log`)。**replay 全 1006 demo 已完成**(`state_mode=eef_piece demos=1006 transitions=238821 state_dim=30`),随后训 5 万步(4 线程 CPU,~2.5min)。训完看 `v_stats` 确认 max>min;接手时若没生成就重跑(命令见 §6)。
+- 全量 30 维 value 训练:`outputs_chunk/three_piece_value_objaware.pt`,2026-06-07 跑(`tee three_piece_value_objaware.log`)。**replay 全 1006 demo 已完成**(`state_mode=eef_piece demos=1006 transitions=238821 state_dim=30`),随后训 5 万步(4 线程 CPU,~2.5min)。**已训完**(2026-06-07):`v_stats={min:0.149, max:1.017, mean:0.448}`(max≫min、有区分度,和 18 维版 {0.173,1.010,0.447} 几乎一致)。30 维 value.pt 就绪,等 Task 8 接入。
 
 ---
 
