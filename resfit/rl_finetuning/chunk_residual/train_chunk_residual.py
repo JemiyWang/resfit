@@ -502,7 +502,10 @@ def main():
                           info.get("max_stage_in_chunk", 0))
             if bool(done.any()):
                 for e in harvester.flush():
-                    relabel_rb.add(e)
+                    # extend(非 add):e 是 batch=[1] 的条目,extend 存成 [feat] 元素 → sample 出 [N,feat]
+                    # (2D),与从 memmap extend 进来的 offline_rb 同构。relabel_rb 无 MultiStepTransform
+                    # 收维(online_rb 有),若用 add 会留下前导 [1] 维 → 与 offline 混采 concat 报 3-vs-2。
+                    relabel_rb.extend(e)
         obs = next_obs
         env_steps += args.chunk_length
 

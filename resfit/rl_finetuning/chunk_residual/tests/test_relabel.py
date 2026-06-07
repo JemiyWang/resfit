@@ -71,6 +71,41 @@ def test_sample_bc_batch_none_relabel_uses_demo():
     assert bc.shape[0] == 8
 
 
+def _offline_like_rb(n, sdim=3, adim=5):
+    """模拟真实 offline_rb:从 [n,feat] 批 extend 进来,元素 [feat] -> sample 出 2D [B,feat]。"""
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(max_size=max(n, 1), device="cpu"), batch_size=4)
+    rb.extend(TensorDict({
+        "obs": TensorDict({"observation.state": torch.randn(n, sdim)}, batch_size=[n]),
+        "action": torch.randn(n, adim),
+    }, batch_size=[n]))
+    return rb
+
+
+def _relabel_like_rb(n, sdim=3, adim=5):
+    """模拟训练里的 relabel_rb:make_bc_entry(batch=[1]) 经 extend(非 add)灌入 -> sample 出 2D。"""
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import make_bc_entry
+    rb = TensorDictReplayBuffer(
+        storage=LazyTensorStorage(max_size=max(n, 1), device="cpu"), batch_size=4)
+    for _ in range(n):
+        e = make_bc_entry({"observation.state": torch.randn(1, sdim)}, torch.randn(1, adim),
+                          image_keys=[], lowdim_keys=["observation.state"])
+        rb.extend(e)
+    return rb
+
+
+def test_relabel_mixes_with_2d_offline_without_dim_mismatch():
+    """回归:relabel(无 MultiStepTransform)与 2D offline 混采不得报 3-vs-2。
+
+    旧实现 relabel_rb.add(make_bc_entry(...).unsqueeze(0)) 会留下前导 [1] -> sample 3D,
+    与 2D offline concat 抛 'Tensors must have same number of dimensions: got 3 and 2'。
+    """
+    bc = sample_bc_batch(_relabel_like_rb(20), _offline_like_rb(20), batch_size=8, device="cpu")
+    assert bc.shape[0] == 8
+    assert bc["obs"]["observation.state"].ndim == 2      # [B, sdim],不是 [B,1,sdim]
+    assert bc["action"].ndim == 2
+
+
 def test_cli_relabel_defaults():
     from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
     a = build_parser().parse_args([])
