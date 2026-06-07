@@ -6,7 +6,7 @@
 
 ## 0. 一句话现状
 
-- **offline 链路 + online 同源命门 + value 训练已就位**(Task 1-7 + 4-5,commit `cb84de6`/`9b0bb11` + 未提交的 Task 4-5)。
+- **offline 链路 + online 同源命门 + value 训练侧已就位**(Task 1-7 + 4-5,**全部已 commit**:`cb84de6`→`9b0bb11`→`7467eb0`,分支 chunk-residual-validation;EGL 修复 `584a07b`)。
 - **但 Task 8(③b 接入)发现一个架构问题必须先改**(见 §3):rel_piece 是特权,**不能进 `observation.state`**(否则 actor/critic 也吃到、违反"脚手架不进房子"),要像 `stage_id` 那样经 `info` 透出、只喂给 V。
 - **Task 6 当前实现(把 rel_piece 拼进 observation.state)方向错了,要按 §4 改。**
 
@@ -29,11 +29,11 @@
 | 3 | `offline_stage_replay.replay_eef_rel_piece`:replay set_state 从 sim 算 rel_piece | ✅(改用 from_env)`9b0bb11` |
 | 6 | `dexmg.RobosuiteGymWrapper(state_mode)` + `_append_rel_piece` | ⚠️ **见 §3,要改** `9b0bb11` |
 | 7 | online/offline 同源命门 **PARITY_OK(0.2mm)** | ✅ |
-| 4 | `train_hiql_value --state_mode eef_piece`(replay 全 demo + rel_piece stats) | ✅ 未提交,冒烟通过(5 demo→state_dim 30) |
-| 5 | `hiql_value.save/load_value` 存读 state_mode + rel_piece_mean/std | ✅ 未提交,load 验证通过 |
+| 4 | `train_hiql_value --state_mode eef_piece`(replay 全 demo + rel_piece stats) | ✅ commit `7467eb0`,冒烟通过(5 demo→state_dim 30) |
+| 5 | `hiql_value.save/load_value` 存读 state_mode + rel_piece_mean/std | ✅ commit `7467eb0`,load 验证通过 |
 
 - **同源命门坑(关键,已修)**:offline replay `set_state` 后 `env._get_observations()` 的 robot obs **cache stale**(eef 差 0.24m);必须用 `env._eef0_xpos`/`_eef1_xpos`(sim 实时,== hdf5 eef、差 0.2mm)。两端统一走 `compute_eef_rel_piece_from_env(env)`。
-- 全量 30 维 value 训练:`outputs_chunk/three_piece_value_objaware.pt`,2026-06-07 后台跑中(`tee three_piece_value_objaware.log`;replay 全 1006 demo + 训 5 万步,十几分钟)。
+- 全量 30 维 value 训练:`outputs_chunk/three_piece_value_objaware.pt`,2026-06-07 跑(`tee three_piece_value_objaware.log`)。**replay 全 1006 demo 已完成**(`state_mode=eef_piece demos=1006 transitions=238821 state_dim=30`),随后训 5 万步(4 线程 CPU,~2.5min)。训完看 `v_stats` 确认 max>min;接手时若没生成就重跑(命令见 §6)。
 
 ---
 
@@ -73,7 +73,7 @@
 
 - B run(基础版 18 维 hiql Φ,wandb `nas10_best_pothiql`/`2v1rfnuk`)跑到 100k:10k bump 0.58 → 30k 塌到 0.04 → 后5点滑动均值 ~0.17,stage3 回退率 58%→64%(不降反升)。**和 memory 里 potential/staged/budget/relabel 同款衰减**。
 - 坐实:**reward-shaping 模式(换 Φ 形式/信息量)救不了 20k 塌方,根因在 critic 侧(Q 高估)**。
-- 已起对照:**critic_lr=3e-5 实验**(`nas10_pothiql_criticlr3e-5`,gpu3,vs B 唯一差别=critic_lr 从默认 1e-4 降到 3e-5)。盯它 20k 是否还塌、residual_norm 是否还失控涨。
+- 已起对照:**critic_lr=3e-5 实验**(`nas10_pothiql_criticlr3e-5`,gpu3)。**用 18 维 value(`three_piece_value.pt`,和 B 同),vs B 唯一差别=critic_lr 从默认 1e-4 降到 3e-5**(控制变量:孤立验证"降 critic_lr 能否救塌方";和 30 维 object-aware 是两条独立线、没混)。当前 10k=0.56(和 B 的 0.58 接近),**关键判读点 20-30k**(B 在那塌到 0.04)——盯 success 是否还塌、`residual_norm` 是否还失控涨。复用 buffer `offline_buf_piece_hiql` 秒级命中。
 - **判断**:object-aware V 还是改 Φ,若 critic 是真瓶颈则也白做。后半段(Task 8-9 + 起实验)**优先级取决于 critic_lr 实验结果**。
 
 ---
