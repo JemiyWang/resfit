@@ -265,6 +265,12 @@ def build_parser():
                    help="[别名] 等价 --reward_shaping staged;canonical flag 优先")
     p.add_argument("--stage_reward_bonus", type=float, default=1.0,
                    help="stage 整形幅度旋钮(staged/potential 共用;仅在 shaping≠none 时生效)")
+    p.add_argument("--potential_source", choices=["stage", "hiql"], default="stage",
+                   help="PBS 势函数 Φ 来源(③b):stage=整数 stage(默认,逐位等价);hiql=V(state)*scale")
+    p.add_argument("--hiql_value_ckpt", default=None,
+                   help="--potential_source hiql 时 ③a 产出的 value.pt 路径")
+    p.add_argument("--phi_scale", type=float, default=1.0,
+                   help="hiql Φ 的额外缩放乘子(在 auto_scale 之上;默认 1.0)")
     p.add_argument("--output_dir", default="outputs_chunk",
                    help="ckpt / eval 产物目录(并行 run 用不同目录避免抢 best.pt)")
     p.add_argument("--base_action_mode", choices=["replan", "queue"], default="replan",
@@ -343,11 +349,6 @@ def main():
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
     print(f"[base-action] mode={args.base_action_mode}")
-    env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
-                                  chunk_length=args.chunk_length,
-                                  stage_reward_bonus=args.stage_reward_bonus,
-                                  reward_shaping_mode=shaping_mode, gamma=args.gamma,
-                                  base_action_mode=args.base_action_mode)
     eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
                                      device=args.device)
     # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
@@ -369,14 +370,6 @@ def main():
                                        reward_shaping_mode="none",   # eval 不加 shaping,指标纯净
                                        base_action_mode=args.base_action_mode)
 
-    # --- 维度 ---
-    image_keys = list(base_policy.config.image_features.keys())
-    lowdim_keys = ["observation.state", "observation.base_action", "observation.stage_id"]
-    obs0, _ = env.reset()
-    img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
-    state_dim = obs0["observation.state"].shape[1]
-    action_dim = env.action_dim * args.chunk_length     # = 480
-
     # --- agent(复用 QAgent,action_dim=480)---
     from resfit.rl_finetuning.config.residual_td3 import ResidualTD3BoxCleanConfig
     cfg = ResidualTD3BoxCleanConfig()
@@ -390,6 +383,35 @@ def main():
         assert args.offline_fraction > 0, \
             "demo_bc_coef>0 需 offline_fraction>0(bc_batch 取自 offline_rb)"
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
+
+    # --- ③b: HiqlPotential(potential_source=hiql 时构建;stage 时保持 None 逐位等价)---
+    potential = None
+    if args.potential_source == "hiql":
+        import os as _os
+        assert shaping_mode == "potential", \
+            "--potential_source hiql 需 --reward_shaping potential"
+        assert args.hiql_value_ckpt and _os.path.exists(args.hiql_value_ckpt), \
+            f"--hiql_value_ckpt 不存在: {args.hiql_value_ckpt!r}"
+        from resfit.rl_finetuning.chunk_residual.hiql_potential import HiqlPotential
+        potential = HiqlPotential.from_ckpt(
+            args.hiql_value_ckpt, num_stages=num_stages,
+            phi_scale=args.phi_scale, device=args.device)
+        print(f"[hiql-phi] potential on; ckpt={args.hiql_value_ckpt} scale={potential.scale:.4f}")
+
+    env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
+                                  chunk_length=args.chunk_length,
+                                  stage_reward_bonus=args.stage_reward_bonus,
+                                  reward_shaping_mode=shaping_mode, gamma=args.gamma,
+                                  base_action_mode=args.base_action_mode,
+                                  potential=potential)
+
+    # --- 维度 ---
+    image_keys = list(base_policy.config.image_features.keys())
+    lowdim_keys = ["observation.state", "observation.base_action", "observation.stage_id"]
+    obs0, _ = env.reset()
+    img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
+    state_dim = obs0["observation.state"].shape[1]
+    action_dim = env.action_dim * args.chunk_length     # = 480
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
         assert args.task in NUM_STAGES, f"--stage_conditioned 需要 {args.task} 有 stage 检测器"
@@ -456,7 +478,7 @@ def main():
                 action_scaler=action_scaler, state_standardizer=state_standardizer,
                 image_keys=image_keys, bonus=args.stage_reward_bonus,
                 mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
-                stage_cache=args.offline_stage_cache)
+                stage_cache=args.offline_stage_cache, potential=potential)
             n_off = len(offline_rb)
             if cache_dir:
                 _save_offline_buffer(offline_rb, cache_dir, sig, n_off)

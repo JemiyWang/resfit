@@ -13,6 +13,7 @@ from __future__ import annotations
 import torch
 
 from resfit.rl_finetuning.chunk_residual.chunk_act_base import get_action_chunk
+from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
 
 
 def staged_bonus(start_stage: int, end_stage: int, bonus: float) -> float:
@@ -34,9 +35,8 @@ def shaping_reward(start_stage: int, end_stage: int, *,
     if mode == "staged":
         return staged_bonus(start_stage, end_stage, bonus)
     if mode == "potential":
-        phi_start = float(int(start_stage))
-        phi_next = 0.0 if done else float(int(end_stage))    # 终止 Φ=0
-        return bonus * (gamma * phi_next - phi_start)
+        return potential_shaping(int(start_stage), int(end_stage),
+                                 bonus=bonus, gamma=gamma, done=done)
     raise ValueError(f"unknown reward_shaping mode: {mode!r}")
 
 
@@ -54,7 +54,7 @@ class ChunkResidualEnvWrapper:
     def __init__(self, vec_env, base_policy, action_scaler, state_standardizer,
                  chunk_length: int, stage_reward_bonus: float = 0.0,
                  reward_shaping_mode: str = "none", gamma: float = 0.99,
-                 base_action_mode: str = "replan"):
+                 base_action_mode: str = "replan", potential=None):
         self.vec_env = vec_env
         self.base_policy = base_policy
         self.action_scaler = action_scaler
@@ -64,6 +64,8 @@ class ChunkResidualEnvWrapper:
         self.reward_shaping_mode = reward_shaping_mode
         self.gamma = gamma
         self.base_action_mode = base_action_mode
+        self.potential = potential          # None=Φ用stage(现状);HiqlPotential=Φ用V(state)
+        self._start_state_std = None         # 本 chunk 起点的标准化 state(potential 模式用)
         assert chunk_length >= 1, "chunk_length must be >= 1"
         assert base_action_mode in ("replan", "queue"), \
             f"unknown base_action_mode: {base_action_mode!r}"
@@ -114,7 +116,9 @@ class ChunkResidualEnvWrapper:
         self._stage_now = 0
         base_flat = self._base_chunk_flat(raw_obs)
         self._last_base_flat = base_flat
-        return self._augment(raw_obs, base_flat), info
+        aug = self._augment(raw_obs, base_flat)
+        self._start_state_std = aug["observation.state"]
+        return aug, info
 
     def step(self, residual_flat: torch.Tensor):
         """执行一段 chunk(开环逐步),返回 chunk 级 transition。
@@ -161,9 +165,17 @@ class ChunkResidualEnvWrapper:
                 break
 
         chunk_done = bool((terminated | truncated).any())
-        total_reward = total_reward + shaping_reward(
-            start_stage, max_in_chunk, mode=self.reward_shaping_mode,
-            bonus=self.stage_reward_bonus, gamma=self.gamma, done=chunk_done)
+        if self.potential is None:
+            total_reward = total_reward + shaping_reward(
+                start_stage, max_in_chunk, mode=self.reward_shaping_mode,
+                bonus=self.stage_reward_bonus, gamma=self.gamma, done=chunk_done)
+        else:
+            end_state_std = self.state_standardizer.standardize(raw_obs["observation.state"])
+            phi_start = self.potential.phi(self._start_state_std)
+            phi_next = self.potential.phi(end_state_std)
+            total_reward = total_reward + potential_shaping(
+                phi_start, phi_next, bonus=self.stage_reward_bonus,
+                gamma=self.gamma, done=chunk_done)
 
         if bool((terminated | truncated).any()):
             self.base_policy.reset()
@@ -173,6 +185,7 @@ class ChunkResidualEnvWrapper:
         self._last_base_flat = base_flat
 
         aug_obs = self._augment(raw_obs, base_flat)      # stage_id = chunk 结束时 max-so-far
+        self._start_state_std = aug_obs["observation.state"]   # 本 chunk 末 = 下个 chunk 起点
         info = dict(last_info)
         info["scaled_action"] = combined_flat
         info["max_stage_in_chunk"] = max_in_chunk        # 给 stage-balanced replay

@@ -1,0 +1,132 @@
+"""离线 HIQL action-free value(模块 ③a)的纯逻辑。
+
+设计见 docs/superpowers/specs/2026-06-07-hiql-value-design.md。
+学法:goal-reaching 内部 reward(末步=1 否则 0)+ expectile TD,EMA target。
+"""
+import copy
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+
+def expectile_loss(diff, expectile):
+    """expectile regression 损失 L_tau(u) = |tau - 1[u<0]| * u^2,u=diff=y-V。
+
+    tau>0.5 时对低估(diff>0,V<y)惩罚更重 -> 学上侧 expectile(乐观 value)。
+    tau=0.5 退化为 0.5*MSE。返回标量。
+    """
+    weight = torch.where(diff < 0, 1.0 - expectile, expectile)
+    return (weight * diff.pow(2)).mean()
+
+
+def discounted_target(reward, next_v, done, gamma):
+    """action-free TD target y = r + gamma*(1-done)*V(s')。
+
+    done=1(终止)时 y=r,不 bootstrap(与 critic 的 Q-target 一致)。
+    入参均为 [B] 或 [B,1] 张量;done 为 float(0/1)。
+    """
+    return reward + gamma * (1.0 - done) * next_v
+
+
+class ValueMLP(nn.Module):
+    """lowdim state -> 标量 V(s) 的小 MLP。state_dim/hidden 存为属性,便于 save/load 重建。"""
+
+    def __init__(self, state_dim, hidden=256):
+        super().__init__()
+        self.state_dim = state_dim
+        self.hidden = hidden
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, s):
+        return self.net(s)
+
+
+def build_transitions(state_seqs):
+    """list of [T_i, D] 数组(每条 demo 的标准化 state 序列)-> (s, s_next, done) float32 张量。
+
+    每条长 T 的 demo 产出 T-1 个 transition;done 在该 demo 末 transition=1(到达 goal=轨迹终点)。
+    T<2 的 demo 跳过。done 形状 [N,1]。
+    """
+    s_list, sn_list, done_list = [], [], []
+    for seq in state_seqs:
+        seq = np.asarray(seq, dtype=np.float32)
+        T = seq.shape[0]
+        if T < 2:
+            continue
+        s_list.append(seq[:-1])
+        sn_list.append(seq[1:])
+        d = np.zeros(T - 1, dtype=np.float32)
+        d[-1] = 1.0
+        done_list.append(d)
+    s = torch.from_numpy(np.concatenate(s_list, axis=0))
+    sn = torch.from_numpy(np.concatenate(sn_list, axis=0))
+    done = torch.from_numpy(np.concatenate(done_list, axis=0)).unsqueeze(1)
+    return s, sn, done
+
+
+def save_value(path, model, *, v_stats, mean, std, dataset_id):
+    """存 value.pt:权重 + 维度 + 训练集 V 统计 + (记录用)state mean/std + dataset_id。
+
+    标准化口径与 RL 训练同源,③b 推理时喂的 state 已标准化,故 mean/std 仅作记录/自校验,③b 不依赖。
+    """
+    torch.save({
+        "state_dict": model.state_dict(),
+        "state_dim": model.state_dim,
+        "hidden": model.hidden,
+        "v_stats": v_stats,
+        "mean": mean,
+        "std": std,
+        "dataset_id": dataset_id,
+    }, path)
+
+
+def load_value(path, map_location="cpu"):
+    """读 value.pt,重建 ValueMLP(eval 模式),返回 (model, info_dict)。
+
+    info_dict 含 v_stats / mean / std / dataset_id。
+    """
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    model = ValueMLP(ckpt["state_dim"], ckpt["hidden"])
+    model.load_state_dict(ckpt["state_dict"])
+    model.eval()
+    info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
+    return model, info
+
+
+def train_value(s, s_next, done, *, gamma=0.99, expectile=0.7, ema=0.005,
+                lr=3e-4, batch_size=256, steps=50000, hidden=256, seed=0):
+    """在 (s, s_next, done) 上训 action-free IQL expectile value。
+
+    goal-reaching 内部 reward = done(末步=1 否则 0)。EMA target net 稳定 bootstrap。
+    返回 (model, v_stats),v_stats = 训练后全数据上 V 的 {min,max,mean}。
+    """
+    torch.manual_seed(seed)
+    n, d = s.shape
+    model = ValueMLP(d, hidden)
+    target = copy.deepcopy(model)
+    for p in target.parameters():
+        p.requires_grad_(False)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    reward = done  # r_t = 1 if done else 0 == done
+    bs = min(batch_size, n)
+    for _ in range(steps):
+        idx = torch.randint(0, n, (bs,))
+        with torch.no_grad():
+            y = discounted_target(reward[idx], target(s_next[idx]), done[idx], gamma)
+        v = model(s[idx])
+        loss = expectile_loss(y - v, expectile)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        with torch.no_grad():
+            for tp, mp in zip(target.parameters(), model.parameters()):
+                tp.mul_(1.0 - ema).add_(ema * mp)
+    with torch.no_grad():
+        allv = model(s)
+        v_stats = {"min": float(allv.min()), "max": float(allv.max()), "mean": float(allv.mean())}
+    return model, v_stats
