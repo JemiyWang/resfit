@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from resfit.rl_finetuning.chunk_residual.object_state import (
-    eef_rel_piece, rel_piece_stats, compute_eef_rel_piece, PIECE_ROOT_BODIES)
+    eef_rel_piece, rel_piece_stats, compute_eef_rel_piece, PIECE_ROOT_BODIES,
+    read_eef_positions, compute_eef_rel_piece_from_env)
 
 
 def test_piece_root_bodies_constant():
@@ -53,3 +54,31 @@ def test_compute_eef_rel_piece_reads_sim():
     assert out.shape == (12,)
     np.testing.assert_allclose(out[0:3], [1, 0, 0])    # eef0 - p1
     np.testing.assert_allclose(out[3:6], [1, 0, -1])   # eef0 - p2
+
+
+class _FakeEnv:
+    """mock TwoArm env: _eefN_xpos(sim 实时 eef) + sim.data.get_body_xpos(piece)。"""
+    def __init__(self, eef0, eef1, piece_xpos):
+        self._eef0_xpos = np.asarray(eef0, dtype=np.float64)
+        self._eef1_xpos = np.asarray(eef1, dtype=np.float64)
+        self.sim = _FakeSim(piece_xpos)
+
+
+def test_read_eef_positions():
+    env = _FakeEnv([1., 0., 0.], [0., 2., 0.], {})
+    eefs = read_eef_positions(env)
+    assert len(eefs) == 2
+    np.testing.assert_allclose(eefs[0], [1, 0, 0])
+    np.testing.assert_allclose(eefs[1], [0, 2, 0])
+    assert eefs[0].dtype == np.float32
+
+
+def test_compute_eef_rel_piece_from_env():
+    env = _FakeEnv([1., 0., 0.], [0., 2., 0.],
+                   {"piece_1_root": [0., 0., 0.], "piece_2_root": [0., 0., 1.]})
+    out = compute_eef_rel_piece_from_env(env)
+    assert out.shape == (12,)
+    np.testing.assert_allclose(out[0:3], [1, 0, 0])    # eef0 - p1
+    np.testing.assert_allclose(out[3:6], [1, 0, -1])   # eef0 - p2
+    np.testing.assert_allclose(out[6:9], [0, 2, 0])    # eef1 - p1
+    np.testing.assert_allclose(out[9:12], [0, 2, -1])  # eef1 - p2

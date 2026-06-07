@@ -144,6 +144,7 @@ class RobosuiteGymWrapper:
         camera_size: int = 84,
         render_size: tuple[int, int] | int | None = None,
         env_id: int = 0,
+        state_mode: str = "eef",
     ):
         # ------------------------------------------------------------------
         # Allow common aliases used in the Robomimic literature.
@@ -167,6 +168,7 @@ class RobosuiteGymWrapper:
         self.env_name = env_name
         self.num_envs = num_envs
         self.render_gpu_device_id = render_gpu_device_id
+        self.state_mode = state_mode   # "eef"(18) | "eef_piece"(30, ③a' object-aware)
         self.camera_size = camera_size
         # Convert render_size to tuple if it's an int, or use default (240, 320)
         if render_size is None:
@@ -328,6 +330,7 @@ class RobosuiteGymWrapper:
 
         if state_components:
             concatenated_state = np.concatenate(state_components)
+            concatenated_state = self._append_rel_piece(concatenated_state, obs)
             processed_obs["observation.state"] = concatenated_state.astype(np.float32)
 
         # Extract camera observations
@@ -403,6 +406,18 @@ class RobosuiteGymWrapper:
 
         return processed_obs, reward_scalar, terminated_scalar, truncated_scalar, info
 
+    def _append_rel_piece(self, base_state, obs):
+        """state_mode=eef_piece 时从 sim 算双臂 eef-rel-piece(12)拼到 base 后(→30 维)。
+
+        eef 用 obs 的 robot0/1_eef_pos(与 base 同源)、piece 从 self.env.sim 读(特权)。
+        online/offline 共用 object_state.compute_eef_rel_piece 保证同源;default eef 时原样返回。
+        """
+        if getattr(self, "state_mode", "eef") != "eef_piece":
+            return base_state
+        from resfit.rl_finetuning.chunk_residual.object_state import compute_eef_rel_piece_from_env
+        rel = compute_eef_rel_piece_from_env(self.env)
+        return np.concatenate([base_state, rel]).astype(np.float32)
+
     def _process_obs(self, obs):
         """Process robosuite observations to match expected format."""
         processed_obs = {}
@@ -424,6 +439,7 @@ class RobosuiteGymWrapper:
 
         if state_components:
             concatenated_state = np.concatenate(state_components)
+            concatenated_state = self._append_rel_piece(concatenated_state, obs)
             # Return numpy array - Gymnasium will handle device placement and batching
             processed_obs["observation.state"] = concatenated_state.astype(np.float32)
 
@@ -619,6 +635,7 @@ def make_dexmimicgen_env(
     render_size: tuple[int, int] | int | None = None,
     render_gpu_device_id: int = 0,
     env_id: int = 0,
+    state_mode: str = "eef",
 ):
     """Factory function to create a DexMimicGen environment for vectorization."""
 
@@ -630,6 +647,7 @@ def make_dexmimicgen_env(
             camera_size=camera_size,
             render_size=render_size,
             env_id=env_id,
+            state_mode=state_mode,
         )
 
     return _make
@@ -705,6 +723,7 @@ def create_vectorized_env(
     render_size: tuple[int, int] | int | None = None,
     debug: bool = False,
     video_key: str = "observation.images.agentview",
+    state_mode: str = "eef",
 ) -> VectorizedEnvWrapper:
     """Create vectorized environment using Gymnasium's vector environments."""
 
@@ -731,7 +750,7 @@ def create_vectorized_env(
         # (典型表现:训练在指定卡、却在另一张卡上占 ~400MiB/env 且 SM=0%)。
         # 逻辑号写法对"不设掩码、多卡共享"的老用法同样兼容(那时逻辑号==物理号)。
         render_gpu_device_id = env_id % num_visible_gpus
-        env_fns.append(make_dexmimicgen_env(env_name, camera_size, render_size, render_gpu_device_id, env_id))
+        env_fns.append(make_dexmimicgen_env(env_name, camera_size, render_size, render_gpu_device_id, env_id, state_mode))
 
     if debug:
         # Use synchronous vectorized environment for debugging

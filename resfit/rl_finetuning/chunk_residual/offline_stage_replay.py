@@ -91,27 +91,20 @@ def replay_instant_stages(env, states, *, model_file, detector, ep_meta=None) ->
     return stages
 
 
-def replay_eef_rel_piece(env, states, eef_pos_by_arm_seq, *, model_file, ep_meta=None,
-                         piece_root_bodies=None) -> np.ndarray:
-    """逐帧 set_state + 从 sim 读 piece pose,配传入 eef → 该 demo 的 rel_piece (T,12)。
+def replay_eef_rel_piece(env, states, *, model_file, ep_meta=None) -> np.ndarray:
+    """逐帧 set_state + 从 env 读 eef(sim 实时)与 piece(sim) → 该 demo 的 rel_piece (T,12)。
 
-    eef_pos_by_arm_seq: (T,2,3) — 每帧 [robot0_eef_pos, robot1_eef_pos],来自 hdf5 obs
-      (与 assemble_state18 同源)。piece pose 从 replay sim 读(数据集没录)。
-    online/offline 同源由共用 object_state.eef_rel_piece + sim piece 读取保证。③a' object-aware。
+    eef 用 env._eef0/1_xpos(set_state 后立即正确,已验证 == hdf5 eef)、piece 从 sim 读。
+    online(dexmg._append_rel_piece)与 offline **共用 compute_eef_rel_piece_from_env** → 严格同源。
+    ③a' object-aware。
     """
-    from resfit.rl_finetuning.chunk_residual.object_state import (
-        eef_rel_piece, read_piece_positions, PIECE_ROOT_BODIES)
-    bodies = piece_root_bodies or PIECE_ROOT_BODIES
+    from resfit.rl_finetuning.chunk_residual.object_state import compute_eef_rel_piece_from_env
     states = np.asarray(states)
-    eef_seq = np.asarray(eef_pos_by_arm_seq, dtype=np.float32)
-    assert eef_seq.shape == (len(states), 2, 3), \
-        f"eef_pos_by_arm_seq 形状应为 ({len(states)},2,3),实为 {eef_seq.shape}"
     reset_to(env, {"model": model_file, "ep_meta": ep_meta, "states": states[0]})
     out = np.empty((len(states), 12), dtype=np.float32)
     for i in range(len(states)):
         reset_to(env, {"states": states[i]})
-        pieces = read_piece_positions(env.sim, bodies)
-        out[i] = eef_rel_piece(eef_seq[i], pieces)
+        out[i] = compute_eef_rel_piece_from_env(env)
     return out
 
 

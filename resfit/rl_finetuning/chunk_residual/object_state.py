@@ -30,9 +30,30 @@ def read_piece_positions(sim, piece_root_bodies=PIECE_ROOT_BODIES):
 
 
 def compute_eef_rel_piece(sim, eef_pos_by_arm, piece_root_bodies=PIECE_ROOT_BODIES):
-    """组合:读 sim piece pose + 算 eef_rel_piece(12,)。online/offline 共用,保证同源。"""
+    """组合:读 sim piece pose + 算 eef_rel_piece(12,)。eef 由调用方传入。"""
     pieces = read_piece_positions(sim, piece_root_bodies)
     return eef_rel_piece(eef_pos_by_arm, pieces)
+
+
+def read_eef_positions(env):
+    """从 env 读双臂 eef 世界位置(TwoArm: _eef0_xpos/_eef1_xpos)。返回 [(3,),(3,)] float32。
+
+    用 sim 实时算的 _eefN_xpos —— set_state 后立即正确(已验证 == 数据集 hdf5 eef);
+    不用 env._get_observations(),那是 robosuite 的 obs cache、set_state replay 时会 stale。
+    """
+    return [np.asarray(env._eef0_xpos, dtype=np.float32).copy(),
+            np.asarray(env._eef1_xpos, dtype=np.float32).copy()]
+
+
+def compute_eef_rel_piece_from_env(env, piece_root_bodies=PIECE_ROOT_BODIES):
+    """从 env 读 eef(双臂,sim 实时)+ piece(sim) → rel_piece(12,)。
+
+    online(dexmg._append_rel_piece)与 offline(replay)**共用此函数** → 严格同源,
+    不依赖 obs 刷新行为。③a' object-aware 的同源命门。
+    """
+    eefs = read_eef_positions(env)
+    pieces = read_piece_positions(env.sim, piece_root_bodies)
+    return eef_rel_piece(eefs, pieces)
 
 
 def rel_piece_stats(rel_piece_array):
