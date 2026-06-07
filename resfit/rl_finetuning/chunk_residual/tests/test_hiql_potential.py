@@ -86,3 +86,22 @@ def test_transition_rewards_none_matches_stage_baseline():
     exp0 = shaping_reward(0, 1, mode="potential", bonus=1.0, gamma=0.99, done=False)
     exp1 = 1.0 + shaping_reward(1, 2, mode="potential", bonus=1.0, gamma=0.99, done=True)
     assert abs(r[0] - exp0) < 1e-5 and abs(r[1] - exp1) < 1e-5
+
+
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+
+
+def test_parser_potential_source_defaults():
+    args = build_parser().parse_args(["--task", "TwoArmThreePieceAssembly"])
+    assert args.potential_source == "stage"
+    assert args.hiql_value_ckpt is None
+    assert args.phi_scale == 1.0
+
+
+def test_parser_potential_source_hiql():
+    args = build_parser().parse_args(
+        ["--task", "TwoArmThreePieceAssembly", "--potential_source", "hiql",
+         "--hiql_value_ckpt", "v.pt", "--phi_scale", "0.5"])
+    assert args.potential_source == "hiql"
+    assert args.hiql_value_ckpt == "v.pt"
+    assert args.phi_scale == 0.5
