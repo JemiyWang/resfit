@@ -95,7 +95,7 @@ def replay_eef_rel_piece(env, states, *, model_file, ep_meta=None) -> np.ndarray
     """逐帧 set_state + 从 env 读 eef(sim 实时)与 piece(sim) → 该 demo 的 rel_piece (T,12)。
 
     eef 用 env._eef0/1_xpos(set_state 后立即正确,已验证 == hdf5 eef)、piece 从 sim 读。
-    online(dexmg._append_rel_piece)与 offline **共用 compute_eef_rel_piece_from_env** → 严格同源。
+    online(dexmg._rel_piece_info → info["rel_piece"])与 offline **共用 compute_eef_rel_piece_from_env** → 严格同源。
     ③a' object-aware。
     """
     from resfit.rl_finetuning.chunk_residual.object_state import compute_eef_rel_piece_from_env
@@ -171,6 +171,9 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     detector = None
     new_stages = {}
     added = 0
+    # ③a' object-aware:eef_piece value 时,每 demo set_state replay 从 sim 算 raw rel_piece,
+    # 喂 Φ 重算 reward(observation.state 仍存 18 维)。stage cache 命中也得起 env 算 rel。
+    need_rel = potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece"
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
@@ -198,9 +201,18 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 obs_arrays = {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS}
                 state_n = state_standardizer.standardize(
                     torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)).cpu()
+                rel_seq = None
+                if need_rel:                          # eef_piece:replay 算 raw rel_piece(T,12)
+                    if env is None:                   # 懒建(stage cache 命中时 stage 分支没起 env)
+                        env, env_name = make_replay_env(dataset_path)
+                        detector = get_stage_detector(env_name)
+                    rel_seq = replay_eef_rel_piece(
+                        env, states, model_file=grp.attrs["model_file"],
+                        ep_meta=grp.attrs.get("ep_meta"))
                 fld = transition_fields(instant, bonus=bonus, mode=mode,
                                         gamma=gamma, success=True,
-                                        potential=potential, state_seq=state_n)
+                                        potential=potential, state_seq=state_n,
+                                        rel_piece_seq=rel_seq)
                 act_n = action_scaler.scale(
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
                 imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])

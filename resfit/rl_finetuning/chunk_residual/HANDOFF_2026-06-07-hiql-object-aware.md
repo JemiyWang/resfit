@@ -4,6 +4,22 @@
 
 ---
 
+## ✅ 完成更新(2026-06-08):Task 8(正确架构)+ Task 9(端到端冒烟)全过
+
+**Task 8 按 §3 重做完毕**(observation.state 保持 18 维,rel_piece 经 info 只喂 Φ)。**Task 9 端到端冒烟 exit 0 通过**。改动均 TDD(先红后绿),未 commit(等用户)。
+
+- **observation.state 始终 18 维**(actor/critic + 部署不变):`dexmg._process_obs`/`_process_obs_for_space_inference` 不再拼 rel;原 `_append_rel_piece` 改为 `_rel_piece_info()`(只算 (12,) 不拼),`step`/`reset` 像 `stage_id` 一样经 `info["rel_piece"]` 透出(eef_piece 模式)。
+- **HiqlPotential.phi(state_std, rel_piece_raw=None)**:from_ckpt 读 `state_mode`+`rel_piece_mean/std`;eef_piece 时 `_value_input` 把 raw rel 标准化 `(rel-mean)/std` 后拼成 30 维喂 V(与 `train_hiql_value` 逐位同源);eef 模式忽略 rel(零回归)。**设计决策(偏离原 §4.4)**:online/offline **统一**走 `phi(18维std state, raw rel)`,标准化在 phi 内部做 → 两端数值严格一致(原 §4.4 想让 offline 传 30 维预标准化 state_seq,会和 §4.2 online 口径分叉,故废弃)。
+- **online**(`chunk_env_wrapper`):新增 `_extract_rel(info)`(取批后 (num_envs,12) 的 env0)+ `_start_rel_piece` 跨 chunk 携带(镜像 `_start_state_std`);`step` 的 potential 分支 `phi(start_std, start_rel)`/`phi(end_std, rel_next)`。done 时 SAME_STEP autoreset 后 `info` 顶层是 `reset_info`(dexmg.reset 也透 rel),故携带的 rel 与返回的 reset obs 同步——已核 gymnasium 1.1.1 async worker 逻辑。
+- **offline**(`offline_hdf5_buffer.transition_rewards/fields` 加 `rel_piece_seq`;`build_offline_buffer` 在 `need_rel`(eef_piece)时每 demo `replay_eef_rel_piece` 出 (T,12) raw 传给 Φ)。buffer 的 observation.state 仍存 18 维 `state_n`。
+- **train_chunk_residual**:potential 移到 `create_vectorized_env` **之前**构建 → 按 value.pt 的 `state_mode` 给训练 vec_env 传 `state_mode`(eval_vec 保持 eef、省 sim);加维度命门断言 `potential.model.state_dim == observation.state + (12 if eef_piece)`。
+- **🐞 顺手修一个潜在 bug**:`_offline_buffer_signature` 原**不含 Φ 身份** → potential_source=hiql 时换 value.pt(如 18 维↔30 维)会**撞签名错误复用旧 reward 缓存**。已加 hiql 源的 `hiql_value_ckpt/phi_scale/potential_scale/value_state_mode` 进签名(stage 源不加键、**现有 stage 缓存向后兼容**)。⚠️ 副作用:**现有 18 维 hiql 缓存 `offline_buf_piece_hiql` 下次 hiql 启动会失效重建一次**(~14min);stage 缓存 `offline_buf_piece_as0.05` 不受影响。critic_lr 在跑那条不受影响(已 load)。
+- **新增/改测试全绿**(84 passed 合并跑):`test_hiql_potential`(+6 eef_piece/签名相关)、`test_chunk_env_wrapper`(+online rel 透传)、`test_dexmg_rel_piece_info`(新,observation.state 不被拼大 + info 透出)、`test_build_offline_buffer_rel`(新,eef_piece replay rel + 签名区分)。
+- **端到端冒烟**(gpu7,`outputs_chunk/smoke_objaware`,日志 `/tmp/smoke_objaware.log`):`--potential_source hiql --hiql_value_ckpt three_piece_value_objaware.pt --offline_num_demos 4 --smoke`。打印 `[hiql-phi] ... state_mode=eef_piece scale=4.6093` + `[state-mode] env_state_mode=eef_piece(observation.state 仍 18 维)`;offline 建 937 条(真 rel replay+30 维 V 重算)无错;1 step + eval 渲染跑通;**零 error/assert/traceback,exit 0**。
+- **⚠️ 起正式 A/B 仍看 §5**:瓶颈大概率在 critic(非 Φ),起 object-aware 正式实验前先确认 critic_lr 结果。正式跑时 **object-aware 用独立 `--offline_buffer_cache` 目录**(别复用 `offline_buf_piece_hiql`);命令照下方 §6 的 B-run 把 ckpt 换成 `three_piece_value_objaware.pt`、base 用本地 `resfit/out/piecce/best/policy`、hdf5 用 `resfit/dataset/two_arm_three_piece_assembly.hdf5`。
+
+---
+
 ## 0. 一句话现状
 
 - **offline 链路 + online 同源命门 + value 训练侧已就位**(Task 1-7 + 4-5,**全部已 commit**:`cb84de6`→`9b0bb11`→`7467eb0`,分支 chunk-residual-validation;EGL 修复 `584a07b`)。

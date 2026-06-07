@@ -327,8 +327,8 @@ class _StateRampEnv:
 
 
 class _StubPotential:
-    """phi(state[B,3]) = 每行第一元素(= ramp 的 _k),模拟 V(state)。"""
-    def phi(self, state_std):
+    """phi(state[B,3]) = 每行第一元素(= ramp 的 _k),模拟 V(state)。eef 模式 rel 被忽略。"""
+    def phi(self, state_std, rel_piece_raw=None):
         return state_std[:, 0]
 
 
@@ -343,3 +343,53 @@ def test_step_hiql_potential_uses_v_and_advances_start():
     assert abs(float(r1) - potential_shaping(0.0, 1.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
     _, r2, *_ = w.step(torch.zeros(1, D))      # start 应推进到上次 end(_k=1),end=_k=2
     assert abs(float(r2) - potential_shaping(1.0, 2.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
+
+
+class _StateRelRampEnv:
+    """obs.state 与 info['rel_piece'] 同步递增。rel 经 info 透出(模拟 AsyncVectorEnv 批后 (1,12))。"""
+    def __init__(self):
+        self.action_space = gym.spaces.Box(low=-1, high=1, shape=(D,), dtype=np.float32)
+        self._k = 0
+
+    def _obs(self):
+        return {"observation.state": torch.full((1, 3), float(self._k)),
+                "observation.images.cam": torch.zeros(1, 3, 4, 4)}
+
+    def _info(self):
+        rel = np.zeros((1, 12), dtype=np.float32)   # (num_envs=1, 12)
+        rel[0, 0] = 10.0 * self._k                  # rel 第一列 = 10*_k,便于与 state 区分
+        return {"rel_piece": rel}
+
+    def reset(self, **kw):
+        self._k = 0
+        return self._obs(), self._info()
+
+    def step(self, action):
+        self._k += 1
+        return (self._obs(), torch.tensor([0.0]), torch.tensor([False]),
+                torch.tensor([False]), self._info())
+
+
+class _RelAwareStubPot:
+    """phi = state第一列 + rel第一列;state_mode=eef_piece。rel 不透传则对不上。"""
+    state_mode = "eef_piece"
+
+    def phi(self, state_std, rel_piece_raw=None):
+        base = state_std[:, 0]
+        if rel_piece_raw is not None:
+            base = base + float(np.asarray(rel_piece_raw).reshape(-1)[0])
+        return base
+
+
+def test_step_hiql_potential_eef_piece_threads_rel_from_info():
+    """eef_piece:online 从 info['rel_piece'] 取 raw rel 喂 Φ,且 start_rel 跨 chunk 携带。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
+    env = _StateRelRampEnv()
+    w = ChunkResidualEnvWrapper(env, _FakeBase(), _IdentityScaler(), _IdentityStd(),
+                                chunk_length=1, reward_shaping_mode="potential",
+                                stage_reward_bonus=1.0, gamma=0.99, potential=_RelAwareStubPot())
+    w.reset()                                  # start: _k=0 -> phi = 0(state)+0(rel) = 0
+    _, r1, *_ = w.step(torch.zeros(1, D))      # end: _k=1 -> phi = 1 + 10 = 11
+    assert abs(float(r1) - potential_shaping(0.0, 11.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
+    _, r2, *_ = w.step(torch.zeros(1, D))      # start 推进到 _k=1(phi 11),end _k=2(phi 2+20=22)
+    assert abs(float(r2) - potential_shaping(11.0, 22.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5

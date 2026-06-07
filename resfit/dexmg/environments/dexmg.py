@@ -330,7 +330,7 @@ class RobosuiteGymWrapper:
 
         if state_components:
             concatenated_state = np.concatenate(state_components)
-            concatenated_state = self._append_rel_piece(concatenated_state, obs)
+            # rel_piece 不进 observation.state(见 _process_obs / _rel_piece_info);空间维度保持本体维度。
             processed_obs["observation.state"] = concatenated_state.astype(np.float32)
 
         # Extract camera observations
@@ -362,7 +362,13 @@ class RobosuiteGymWrapper:
         processed_obs = self._process_obs(obs)
         self._last_obs = processed_obs  # Store for video recording
         self.episode_steps = 0
-        return processed_obs, {}
+        # ③a' object-aware:reset 也透出 rel_piece(eef_piece 模式),让 chunk wrapper 在
+        # chunk 起点(含 autoreset 后)拿到与返回 obs 同步的特权 rel_piece 喂 Φ。
+        info = {}
+        rel = self._rel_piece_info()
+        if rel is not None:
+            info["rel_piece"] = rel
+        return processed_obs, info
 
     def step(self, action):
         """Step the environment with the given action."""
@@ -396,6 +402,11 @@ class RobosuiteGymWrapper:
             except Exception:
                 info = {**info, "stage_id": 0}
 
+        # ③a' object-aware:每步透出特权 rel_piece(eef_piece 模式),只喂 Φ、不进 obs。
+        rel = self._rel_piece_info()
+        if rel is not None:
+            info = {**info, "rel_piece": rel}
+
         if terminated_scalar or truncated_scalar:
             info = {
                 **info,
@@ -406,17 +417,18 @@ class RobosuiteGymWrapper:
 
         return processed_obs, reward_scalar, terminated_scalar, truncated_scalar, info
 
-    def _append_rel_piece(self, base_state, obs):
-        """state_mode=eef_piece 时从 sim 算双臂 eef-rel-piece(12)拼到 base 后(→30 维)。
+    def _rel_piece_info(self):
+        """state_mode=eef_piece 时从 sim 算双臂 eef-rel-piece(12,),供 info 透出(只喂 V)。
 
-        eef 用 obs 的 robot0/1_eef_pos(与 base 同源)、piece 从 self.env.sim 读(特权)。
-        online/offline 共用 object_state.compute_eef_rel_piece 保证同源;default eef 时原样返回。
+        关键(handoff §3):rel_piece 是特权 Φ 信息,**绝不拼进 observation.state**
+        (否则 actor/critic 也吃到、策略依赖特权 → 真机不可部署)。像 stage_id 一样经
+        info 跨 spawn 边界透出,只给 HiqlPotential(Φ)用。online/offline 共用
+        object_state.compute_eef_rel_piece_from_env 保证同源。eef 模式返回 None(零额外开销)。
         """
         if getattr(self, "state_mode", "eef") != "eef_piece":
-            return base_state
+            return None
         from resfit.rl_finetuning.chunk_residual.object_state import compute_eef_rel_piece_from_env
-        rel = compute_eef_rel_piece_from_env(self.env)
-        return np.concatenate([base_state, rel]).astype(np.float32)
+        return compute_eef_rel_piece_from_env(self.env)
 
     def _process_obs(self, obs):
         """Process robosuite observations to match expected format."""
@@ -439,7 +451,8 @@ class RobosuiteGymWrapper:
 
         if state_components:
             concatenated_state = np.concatenate(state_components)
-            concatenated_state = self._append_rel_piece(concatenated_state, obs)
+            # 注意:rel_piece(③a' object-aware)不进 observation.state(保持本体维度,
+            # actor/critic + 部署不变),只经 info["rel_piece"] 透给 Φ。见 _rel_piece_info。
             # Return numpy array - Gymnasium will handle device placement and batching
             processed_obs["observation.state"] = concatenated_state.astype(np.float32)
 

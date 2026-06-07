@@ -99,7 +99,7 @@ def latch_from_instant(instant) -> np.ndarray:
 
 def transition_fields(instant_stages, *, bonus: float, mode: str,
                       gamma: float, success: bool = True,
-                      potential=None, state_seq=None) -> dict:
+                      potential=None, state_seq=None, rel_piece_seq=None) -> dict:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的全部 stage/reward/done 字段。
 
     汇总索引约定(与线上 cl=1 同构),供灌装层 zip obs/action/图:
@@ -118,7 +118,8 @@ def transition_fields(instant_stages, *, bonus: float, mode: str,
     return {
         "reward": transition_rewards(instant, bonus=bonus, mode=mode,
                                      gamma=gamma, success=success,
-                                     potential=potential, state_seq=state_seq),
+                                     potential=potential, state_seq=state_seq,
+                                     rel_piece_seq=rel_piece_seq),
         "done": done,
         "stage_id": transition_stage_ids(instant),
         "next_stage_id": instant[1:],
@@ -137,12 +138,13 @@ def transition_stage_ids(instant_stages) -> np.ndarray:
 
 def transition_rewards(instant_stages, *, bonus: float, mode: str,
                        gamma: float, success: bool = True,
-                       potential=None, state_seq=None) -> np.ndarray:
+                       potential=None, state_seq=None, rel_piece_seq=None) -> np.ndarray:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的总 reward。
 
     与线上 cl=1 一致:每步 reward = base 稀疏 + shaping。
     potential=None:Φ=闩锁 stage(现状)。potential 非空(③b):Φ=potential.phi(state_seq)(V*scale),
     用通用 potential_shaping;两端用同一个 potential 保证 Φ 一致。
+    ③a' object-aware:eef_piece value 时另传 rel_piece_seq(T,12) raw,phi 内部标准化拼 30 维。
     """
     latch = latch_from_instant(instant_stages)
     T = len(latch)
@@ -151,7 +153,9 @@ def transition_rewards(instant_stages, *, bonus: float, mode: str,
     if potential is not None:
         assert state_seq is not None and len(state_seq) == T, \
             "potential 模式需 state_seq 且长度=T"
-        phi = potential.phi(state_seq)            # [T]
+        assert rel_piece_seq is None or len(rel_piece_seq) == T, \
+            "rel_piece_seq 长度须 = T"
+        phi = potential.phi(state_seq, rel_piece_seq)            # [T]
     for t in range(T - 1):
         done = success and (t == T - 2)
         base = float(done)

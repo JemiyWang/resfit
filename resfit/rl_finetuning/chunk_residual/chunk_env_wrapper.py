@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from resfit.rl_finetuning.chunk_residual.chunk_act_base import get_action_chunk
@@ -66,6 +67,7 @@ class ChunkResidualEnvWrapper:
         self.base_action_mode = base_action_mode
         self.potential = potential          # None=Φ用stage(现状);HiqlPotential=Φ用V(state)
         self._start_state_std = None         # 本 chunk 起点的标准化 state(potential 模式用)
+        self._start_rel_piece = None         # 本 chunk 起点的 raw rel_piece(eef_piece object-aware Φ 用)
         assert chunk_length >= 1, "chunk_length must be >= 1"
         assert base_action_mode in ("replan", "queue"), \
             f"unknown base_action_mode: {base_action_mode!r}"
@@ -109,6 +111,21 @@ class ChunkResidualEnvWrapper:
         aug["observation.stage_id"] = torch.full((b, 1), float(self._stage_now))  # 瞬时(解耦)
         return aug
 
+    @staticmethod
+    def _extract_rel(info):
+        """从(批后)info 取本 env(env 0)的 raw rel_piece;无则 None。
+
+        dexmg 在 eef_piece 模式经 info["rel_piece"] 透出特权 rel_piece(像 stage_id),
+        AsyncVectorEnv 批成 (num_envs,12);训练 num_envs==1 取 [0]。eef 模式无此键 → None。
+        """
+        if not info:
+            return None
+        rel = info.get("rel_piece")
+        if rel is None:
+            return None
+        rel = np.asarray(rel)
+        return rel[0] if rel.ndim == 2 else rel
+
     def reset(self, **kwargs):
         raw_obs, info = self.vec_env.reset(**kwargs)
         self.base_policy.reset()
@@ -118,6 +135,7 @@ class ChunkResidualEnvWrapper:
         self._last_base_flat = base_flat
         aug = self._augment(raw_obs, base_flat)
         self._start_state_std = aug["observation.state"]
+        self._start_rel_piece = self._extract_rel(info)   # 起点 rel(与 start state 同步,喂 object-aware Φ)
         return aug, info
 
     def step(self, residual_flat: torch.Tensor):
@@ -170,9 +188,11 @@ class ChunkResidualEnvWrapper:
                 start_stage, max_in_chunk, mode=self.reward_shaping_mode,
                 bonus=self.stage_reward_bonus, gamma=self.gamma, done=chunk_done)
         else:
+            # object-aware(eef_piece):从 info 取 raw rel_piece 一并喂 Φ;eef 模式 rel=None、phi 忽略。
             end_state_std = self.state_standardizer.standardize(raw_obs["observation.state"])
-            phi_start = self.potential.phi(self._start_state_std)
-            phi_next = self.potential.phi(end_state_std)
+            rel_next = self._extract_rel(last_info)
+            phi_start = self.potential.phi(self._start_state_std, self._start_rel_piece)
+            phi_next = self.potential.phi(end_state_std, rel_next)
             total_reward = total_reward + potential_shaping(
                 phi_start, phi_next, bonus=self.stage_reward_bonus,
                 gamma=self.gamma, done=chunk_done)
@@ -186,6 +206,9 @@ class ChunkResidualEnvWrapper:
 
         aug_obs = self._augment(raw_obs, base_flat)      # stage_id = chunk 结束时 max-so-far
         self._start_state_std = aug_obs["observation.state"]   # 本 chunk 末 = 下个 chunk 起点
+        # rel_piece 同步携带:done 时 SAME_STEP autoreset 后 info 顶层是 reset_info,
+        # rel_piece 与返回的(reset)obs 同步 → 下个 chunk 起点 Φ 一致。
+        self._start_rel_piece = self._extract_rel(last_info)
         info = dict(last_info)
         info["scaled_action"] = combined_flat
         info["max_stage_in_chunk"] = max_in_chunk        # 给 stage-balanced replay

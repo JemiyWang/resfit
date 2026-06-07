@@ -162,14 +162,18 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
     return base_policy
 
 
-def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode):
+def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, potential=None):
     """决定 offline buffer 内容的全部参数;任一变化都意味着旧缓存失效需重建。
 
     内容依赖:动作/base_action 用 action_scaler(action_scale+min_range);state 标准化(来自
     dataset stats);reward/done/stage 由 (reward_shaping mode, bonus, gamma) 烤入;n-step 由
     MultiStepTransform(n_step, gamma) 在 add 时合并进存储;图像由 image_keys;stage 由 stage_cache。
+
+    ③b:potential_source=hiql 时 Φ=V(state)*scale 被烤进 offline reward,故还依赖 value ckpt /
+    phi_scale / scale / value 的 state_mode(18 eef vs 30 eef_piece);任一变(含换 value.pt)都
+    必须重建,否则会错误复用旧 V 算的 reward。stage 源不加这些键 → 现有 stage 缓存向后兼容。
     """
-    return {
+    sig = {
         "dataset": args.dataset,
         "offline_dataset_path": os.path.abspath(args.offline_dataset_path),
         "num_demos": args.offline_num_demos,
@@ -185,6 +189,16 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode):
         "stage_cache": (os.path.abspath(args.offline_stage_cache)
                         if args.offline_stage_cache else None),
     }
+    if args.potential_source == "hiql":
+        sig["potential_source"] = "hiql"
+        sig["hiql_value_ckpt"] = (os.path.abspath(args.hiql_value_ckpt)
+                                  if args.hiql_value_ckpt else None)
+        sig["phi_scale"] = float(args.phi_scale)
+        sig["potential_scale"] = (round(float(potential.scale), 8)
+                                  if potential is not None else None)
+        sig["value_state_mode"] = (getattr(potential, "state_mode", None)
+                                   if potential is not None else None)
+    return sig
 
 
 def _offline_cache_valid(cache_dir, sig):
@@ -345,10 +359,35 @@ def main():
     if args.base_action_mode == "queue":
         assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
     base_policy = build_base_policy(args, args.device)
-    vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device)
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
+    num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
+
+    # --- ③b: HiqlPotential(potential_source=hiql 时构建;stage 时保持 None 逐位等价)---
+    # 必须在 create_vectorized_env 之前:value.pt 的 state_mode 决定训练 env 要不要经 info
+    # 透出特权 rel_piece(eef_piece object-aware);observation.state 始终 18 维、actor/critic 不变。
+    potential = None
+    if args.potential_source == "hiql":
+        import os as _os
+        assert shaping_mode == "potential", \
+            "--potential_source hiql 需 --reward_shaping potential"
+        assert args.hiql_value_ckpt and _os.path.exists(args.hiql_value_ckpt), \
+            f"--hiql_value_ckpt 不存在: {args.hiql_value_ckpt!r}"
+        from resfit.rl_finetuning.chunk_residual.hiql_potential import HiqlPotential
+        potential = HiqlPotential.from_ckpt(
+            args.hiql_value_ckpt, num_stages=num_stages,
+            phi_scale=args.phi_scale, device=args.device)
+        print(f"[hiql-phi] potential on; ckpt={args.hiql_value_ckpt} "
+              f"state_mode={potential.state_mode} scale={potential.scale:.4f}")
+    # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
+    env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
+
+    vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device,
+                                    state_mode=env_state_mode)
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
     print(f"[base-action] mode={args.base_action_mode}")
+    print(f"[state-mode] env_state_mode={env_state_mode} "
+          f"(observation.state 仍 18 维;rel_piece 经 info 只喂 Φ)")
+    # eval 不加 shaping、不喂 Φ → 保持 eef(省每步 sim rel 开销)
     eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
                                      device=args.device)
     # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
@@ -382,21 +421,6 @@ def main():
         assert args.actor == "raw", "demo_bc 第一版只支持 --actor raw"
         assert args.offline_fraction > 0, \
             "demo_bc_coef>0 需 offline_fraction>0(bc_batch 取自 offline_rb)"
-    num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
-
-    # --- ③b: HiqlPotential(potential_source=hiql 时构建;stage 时保持 None 逐位等价)---
-    potential = None
-    if args.potential_source == "hiql":
-        import os as _os
-        assert shaping_mode == "potential", \
-            "--potential_source hiql 需 --reward_shaping potential"
-        assert args.hiql_value_ckpt and _os.path.exists(args.hiql_value_ckpt), \
-            f"--hiql_value_ckpt 不存在: {args.hiql_value_ckpt!r}"
-        from resfit.rl_finetuning.chunk_residual.hiql_potential import HiqlPotential
-        potential = HiqlPotential.from_ckpt(
-            args.hiql_value_ckpt, num_stages=num_stages,
-            phi_scale=args.phi_scale, device=args.device)
-        print(f"[hiql-phi] potential on; ckpt={args.hiql_value_ckpt} scale={potential.scale:.4f}")
 
     env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
                                   chunk_length=args.chunk_length,
@@ -411,6 +435,13 @@ def main():
     obs0, _ = env.reset()
     img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
     state_dim = obs0["observation.state"].shape[1]
+    if potential is not None:
+        # 命门:observation.state(给 actor/critic)绝不含特权 rel_piece;喂 Φ 的 V 输入维度
+        # = state_dim(+12 当 eef_piece)。断言 value.pt 与 task / 接线一致(online/offline 同源)。
+        exp_v_dim = state_dim + (12 if env_state_mode == "eef_piece" else 0)
+        assert potential.model.state_dim == exp_v_dim, (
+            f"Φ value 输入维度 {potential.model.state_dim} != observation.state({state_dim})"
+            f"+rel({12 if env_state_mode == 'eef_piece' else 0});value.pt 的 state_mode 与 task 不匹配")
     action_dim = env.action_dim * args.chunk_length     # = 480
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
@@ -452,7 +483,8 @@ def main():
         # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
         offline_cap = count_offline_transitions(args.offline_dataset_path,
                                                 num_demos=args.offline_num_demos)
-        sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode)
+        sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode,
+                                        potential=potential)
 
         def _new_offline_rb(with_transform):
             # 命中缓存走 with_transform=False:存的是已合并 transition,勿让 MultiStepTransform 二次合并

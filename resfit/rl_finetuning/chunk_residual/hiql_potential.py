@@ -4,6 +4,7 @@
 potential_shaping 是通用 PBS 公式(Φ 可为 int stage 或 V(state)*scale);
 HiqlPotential 加载冻结 value 并把标准化 state 映射到 Φ。
 """
+import numpy as np
 import torch
 
 from resfit.rl_finetuning.chunk_residual.hiql_value import load_value
@@ -25,21 +26,57 @@ class HiqlPotential:
     匹配现状整数 stage Φ 的 [0,num_stages-1]。只缩放不平移(PBS 下平移会引入存活项)。
     """
 
-    def __init__(self, model, scale, device="cpu"):
+    def __init__(self, model, scale, device="cpu",
+                 state_mode="eef", rel_piece_mean=None, rel_piece_std=None):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
         self.scale = float(scale)
         self.device = device
+        # ③a' object-aware:eef_piece 时 V 是 30 维(18 本体 + 12 标准化 rel_piece)。
+        # phi 入参仍是 18 维 std state + raw rel_piece,在此用训练同款 stats 标准化 rel 再拼,
+        # 保证 online/offline 喂 V 的 30 维表示与 train_hiql_value 逐位同源。
+        self.state_mode = state_mode
+        self.rel_mean = None
+        self.rel_std = None
+        if state_mode == "eef_piece":
+            if rel_piece_mean is None or rel_piece_std is None:
+                raise ValueError("state_mode='eef_piece' 需 rel_piece_mean/std(value.pt 应已存)")
+            self.rel_mean = torch.as_tensor(np.asarray(rel_piece_mean),
+                                            dtype=torch.float32, device=device)
+            self.rel_std = torch.as_tensor(np.asarray(rel_piece_std),
+                                           dtype=torch.float32, device=device)
 
     @classmethod
     def from_ckpt(cls, path, *, num_stages, phi_scale=1.0, device="cpu"):
         model, info = load_value(path, map_location=device)
         vmin, vmax = info["v_stats"]["min"], info["v_stats"]["max"]
         auto_scale = (num_stages - 1) / max(vmax - vmin, 1e-6)
-        return cls(model, scale=auto_scale * phi_scale, device=device)
+        return cls(model, scale=auto_scale * phi_scale, device=device,
+                   state_mode=info["state_mode"],
+                   rel_piece_mean=info["rel_piece_mean"],
+                   rel_piece_std=info["rel_piece_std"])
+
+    def _value_input(self, state_std, rel_piece_raw):
+        """构造喂 V 的输入:eef 模式直接 18 维;eef_piece 模式拼 30 维(标准化 rel)。"""
+        x = torch.as_tensor(state_std, dtype=torch.float32, device=self.device)
+        if self.state_mode != "eef_piece":
+            return x
+        if rel_piece_raw is None:
+            raise ValueError("state_mode='eef_piece' 的 phi 需传 rel_piece_raw(12,)")
+        rel = torch.as_tensor(np.asarray(rel_piece_raw), dtype=torch.float32, device=self.device)
+        rel_n = (rel - self.rel_mean) / self.rel_std
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+        if rel_n.ndim == 1:
+            rel_n = rel_n.unsqueeze(0)
+        return torch.cat([x, rel_n], dim=-1)
 
     @torch.no_grad()
-    def phi(self, state_std):
-        """state_std: [B,state_dim] 已标准化 -> [B] 势函数值 = V(state)*scale。"""
-        return self.model(state_std.to(self.device)).squeeze(-1) * self.scale
+    def phi(self, state_std, rel_piece_raw=None):
+        """[B,18] 已标准化 state(+ eef_piece 模式 raw rel_piece[B,12]/(12,))-> [B] 势函数值 = V*scale。
+
+        eef 模式:rel_piece_raw 被忽略(逐位等价旧单参行为)。
+        eef_piece 模式:用存储的 rel mean/std 标准化 rel,拼成 30 维喂 V(与训练同源)。
+        """
+        return self.model(self._value_input(state_std, rel_piece_raw)).squeeze(-1) * self.scale

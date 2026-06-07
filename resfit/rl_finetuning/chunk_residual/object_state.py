@@ -48,7 +48,7 @@ def read_eef_positions(env):
 def compute_eef_rel_piece_from_env(env, piece_root_bodies=PIECE_ROOT_BODIES):
     """从 env 读 eef(双臂,sim 实时)+ piece(sim) → rel_piece(12,)。
 
-    online(dexmg._append_rel_piece)与 offline(replay)**共用此函数** → 严格同源,
+    online(dexmg._rel_piece_info → info["rel_piece"])与 offline(replay)**共用此函数** → 严格同源,
     不依赖 obs 刷新行为。③a' object-aware 的同源命门。
     """
     eefs = read_eef_positions(env)
