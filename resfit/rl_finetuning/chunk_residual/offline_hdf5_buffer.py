@@ -64,6 +64,30 @@ def assemble_state18(obs) -> np.ndarray:
     )
 
 
+# state_mode → state 维度(③a' object-aware;eef 为旧默认、逐位零回归)
+STATE_DIM_BY_MODE = {"eef": 18, "eef_piece": 30}
+
+
+def assemble_state(obs, mode: str = "eef", rel_piece=None) -> np.ndarray:
+    """按 state_mode 拼 observation.state。
+
+    mode="eef"       : (T,18) = 纯 eef 本体(== assemble_state18,逐位零回归)。
+    mode="eef_piece" : (T,30) = [assemble_state18 | rel_piece(T,12)];rel_piece 必传,
+                       = 双臂 eef 相对两 piece 的世界系位置(object_state.eef_rel_piece 算)。
+    """
+    s18 = assemble_state18(obs)
+    if mode == "eef":
+        return s18
+    if mode == "eef_piece":
+        if rel_piece is None:
+            raise ValueError("state_mode='eef_piece' 需传 rel_piece (T,12)")
+        rp = np.asarray(rel_piece, dtype=s18.dtype)
+        if rp.shape != (s18.shape[0], 12):
+            raise ValueError(f"rel_piece 形状应为 ({s18.shape[0]},12),实为 {rp.shape}")
+        return np.concatenate([s18, rp], axis=1)
+    raise ValueError(f"未知 state_mode: {mode!r}(应为 {list(STATE_DIM_BY_MODE)})")
+
+
 def latch_from_instant(instant) -> np.ndarray:
     """瞬时 stage 序列 → 闩锁序列（episode 内单调不降，= 前缀最大值）。
 
