@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import shaping_reward
+from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
 
 # 18 维 observation.state 的构成与顺序，严格对齐 LeRobot ankile/dexmg-... 的 names：
 # 每臂 eef_pos(3) + eef_quat(4) + gripper_qpos(2)，robot0 在前 robot1 在后。
@@ -73,7 +74,8 @@ def latch_from_instant(instant) -> np.ndarray:
 
 
 def transition_fields(instant_stages, *, bonus: float, mode: str,
-                      gamma: float, success: bool = True) -> dict:
+                      gamma: float, success: bool = True,
+                      potential=None, state_seq=None) -> dict:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的全部 stage/reward/done 字段。
 
     汇总索引约定(与线上 cl=1 同构),供灌装层 zip obs/action/图:
@@ -91,7 +93,8 @@ def transition_fields(instant_stages, *, bonus: float, mode: str,
         done[-1] = True
     return {
         "reward": transition_rewards(instant, bonus=bonus, mode=mode,
-                                     gamma=gamma, success=success),
+                                     gamma=gamma, success=success,
+                                     potential=potential, state_seq=state_seq),
         "done": done,
         "stage_id": transition_stage_ids(instant),
         "next_stage_id": instant[1:],
@@ -109,19 +112,30 @@ def transition_stage_ids(instant_stages) -> np.ndarray:
 
 
 def transition_rewards(instant_stages, *, bonus: float, mode: str,
-                       gamma: float, success: bool = True) -> np.ndarray:
+                       gamma: float, success: bool = True,
+                       potential=None, state_seq=None) -> np.ndarray:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的总 reward。
 
-    与线上 cl=1 一致:每步 reward = base 稀疏 + shaping_reward(闩锁[t], 闩锁[t+1])。
-    demo 为成功轨迹时,最后一个 transition 终止且成功(base +1)。
+    与线上 cl=1 一致:每步 reward = base 稀疏 + shaping。
+    potential=None:Φ=闩锁 stage(现状)。potential 非空(③b):Φ=potential.phi(state_seq)(V*scale),
+    用通用 potential_shaping;两端用同一个 potential 保证 Φ 一致。
     """
     latch = latch_from_instant(instant_stages)
     T = len(latch)
     rewards = np.empty(T - 1, dtype=np.float32)
+    phi = None
+    if potential is not None:
+        assert state_seq is not None and len(state_seq) == T, \
+            "potential 模式需 state_seq 且长度=T"
+        phi = potential.phi(state_seq)            # [T]
     for t in range(T - 1):
         done = success and (t == T - 2)
         base = float(done)
-        shaped = shaping_reward(int(latch[t]), int(latch[t + 1]),
-                                mode=mode, bonus=bonus, gamma=gamma, done=done)
+        if potential is None:
+            shaped = shaping_reward(int(latch[t]), int(latch[t + 1]),
+                                    mode=mode, bonus=bonus, gamma=gamma, done=done)
+        else:
+            shaped = potential_shaping(phi[t], phi[t + 1],
+                                       bonus=bonus, gamma=gamma, done=done)
         rewards[t] = base + shaped
     return rewards

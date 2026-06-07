@@ -55,3 +55,34 @@ def test_hiqlpotential_phi_scale_multiplies(tmp_path):
     p, _ = _make_fake_ckpt(tmp_path, vmin=0.0, vmax=2.0)
     pot = HiqlPotential.from_ckpt(p, num_stages=5, phi_scale=0.5, device="cpu")
     assert abs(pot.scale - 1.0) < 1e-6   # 2.0 * 0.5
+
+
+import numpy as np
+from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import transition_rewards
+
+
+class _StubPot:
+    """phi(state_seq[T,D]) = 每行第一元素,模拟 V(state)。"""
+    def phi(self, state_seq):
+        return state_seq[:, 0]
+
+
+def test_transition_rewards_hiql_uses_v():
+    instant = np.array([0, 1, 2])                 # 3 帧 -> 2 transition,T=3
+    state_seq = torch.tensor([[10.], [20.], [30.]])  # phi = [10,20,30]
+    r = transition_rewards(instant, bonus=1.0, mode="potential", gamma=0.99,
+                           success=True, potential=_StubPot(), state_seq=state_seq)
+    exp0 = potential_shaping(10.0, 20.0, bonus=1.0, gamma=0.99, done=False)        # t=0 not done
+    exp1 = 1.0 + potential_shaping(20.0, 30.0, bonus=1.0, gamma=0.99, done=True)   # t=1 done(base+1)
+    assert abs(r[0] - exp0) < 1e-5
+    assert abs(r[1] - exp1) < 1e-5
+
+
+def test_transition_rewards_none_matches_stage_baseline():
+    # potential=None(默认)走现状 latch 路径,逐位等价
+    instant = np.array([0, 1, 2])
+    from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import shaping_reward
+    r = transition_rewards(instant, bonus=1.0, mode="potential", gamma=0.99, success=True)
+    exp0 = shaping_reward(0, 1, mode="potential", bonus=1.0, gamma=0.99, done=False)
+    exp1 = 1.0 + shaping_reward(1, 2, mode="potential", bonus=1.0, gamma=0.99, done=True)
+    assert abs(r[0] - exp0) < 1e-5 and abs(r[1] - exp1) < 1e-5
