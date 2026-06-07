@@ -305,3 +305,41 @@ def test_emitted_stage_id_is_instantaneous_not_latch():
     obs2, *_ = w.step(torch.zeros(1, D))
     assert obs2["observation.stage_id"].item() == 2.0      # 解耦:用瞬时 2,而非闩锁 3
     assert w._stage == 3                                    # 闩锁保持(reward 用)
+
+
+class _StateRampEnv:
+    """obs.state 每步递增(不 terminate),便于区分 phi(start)/phi(next) 并验证 start 推进。"""
+    def __init__(self):
+        self.action_space = gym.spaces.Box(low=-1, high=1, shape=(D,), dtype=np.float32)
+        self._k = 0
+
+    def _obs(self):
+        return {"observation.state": torch.full((1, 3), float(self._k)),
+                "observation.images.cam": torch.zeros(1, 3, 4, 4)}
+
+    def reset(self, **kw):
+        self._k = 0
+        return self._obs(), {}
+
+    def step(self, action):
+        self._k += 1
+        return self._obs(), torch.tensor([0.0]), torch.tensor([False]), torch.tensor([False]), {}
+
+
+class _StubPotential:
+    """phi(state[B,3]) = 每行第一元素(= ramp 的 _k),模拟 V(state)。"""
+    def phi(self, state_std):
+        return state_std[:, 0]
+
+
+def test_step_hiql_potential_uses_v_and_advances_start():
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
+    env = _StateRampEnv()
+    w = ChunkResidualEnvWrapper(env, _FakeBase(), _IdentityScaler(), _IdentityStd(),
+                                chunk_length=1, reward_shaping_mode="potential",
+                                stage_reward_bonus=1.0, gamma=0.99, potential=_StubPotential())
+    w.reset()                                  # start state _k=0 -> phi 0
+    _, r1, *_ = w.step(torch.zeros(1, D))      # end _k=1 -> phi 1;env reward=0
+    assert abs(float(r1) - potential_shaping(0.0, 1.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
+    _, r2, *_ = w.step(torch.zeros(1, D))      # start 应推进到上次 end(_k=1),end=_k=2
+    assert abs(float(r2) - potential_shaping(1.0, 2.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
