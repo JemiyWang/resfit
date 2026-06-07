@@ -138,7 +138,7 @@ def precompute_stage_cache(dataset_path, out_path, num_demos=None) -> int:
 
 def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
-                         stage_cache=None) -> int:
+                         stage_cache=None, potential=None) -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
     GT-as-base:obs.base_action 与 action 都用缩放后的 GT 动作(残差目标 = 0,把 actor
@@ -178,12 +178,12 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 T = len(instant)
                 if T < 2:
                     continue
-                fld = transition_fields(instant, bonus=bonus, mode=mode,
-                                        gamma=gamma, success=True)
-
                 obs_arrays = {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS}
                 state_n = state_standardizer.standardize(
                     torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)).cpu()
+                fld = transition_fields(instant, bonus=bonus, mode=mode,
+                                        gamma=gamma, success=True,
+                                        potential=potential, state_seq=state_n)
                 act_n = action_scaler.scale(
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
                 imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])
