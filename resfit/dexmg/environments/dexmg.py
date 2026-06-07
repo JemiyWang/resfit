@@ -724,10 +724,13 @@ def create_vectorized_env(
     num_visible_gpus = len(visible_device_ids) if visible_device_ids else 1
 
     for env_id in range(num_envs):
-        if num_visible_gpus > 1:
-            render_gpu_device_id = visible_device_ids[env_id % num_visible_gpus]
-        else:
-            render_gpu_device_id = visible_device_ids[0] if visible_device_ids else 0
+        # 进程被 CUDA_VISIBLE_DEVICES 掩码后,torch/EGL 都会把可见卡重编号为 0..N-1。
+        # 渲染设备必须用这个"逻辑号"(而不是从 CUDA_VISIBLE_DEVICES 抠出来的物理号),
+        # 否则 cuda_to_egl_device_id() 里按 EGL_CUDA_DEVICE_NV(同样是掩码后的逻辑号)
+        # 匹配不到设备 -> 走兜底把物理号当 EGL 下标用 -> 渲染漏到别的物理卡上
+        # (典型表现:训练在指定卡、却在另一张卡上占 ~400MiB/env 且 SM=0%)。
+        # 逻辑号写法对"不设掩码、多卡共享"的老用法同样兼容(那时逻辑号==物理号)。
+        render_gpu_device_id = env_id % num_visible_gpus
         env_fns.append(make_dexmimicgen_env(env_name, camera_size, render_size, render_gpu_device_id, env_id))
 
     if debug:
