@@ -69,12 +69,14 @@ def build_transitions(state_seqs):
     return s, sn, done
 
 
-def save_value(path, model, *, v_stats, mean, std, dataset_id):
-    """存 value.pt:权重 + 维度 + 训练集 V 统计 + (记录用)state mean/std + dataset_id。
+def save_value(path, model, *, v_stats, mean, std, dataset_id,
+               state_mode="eef", rel_piece_stats=None):
+    """存 value.pt:权重 + 维度 + V 统计 + state mean/std + dataset_id + state_mode(+ rel_piece stats)。
 
-    标准化口径与 RL 训练同源,③b 推理时喂的 state 已标准化,故 mean/std 仅作记录/自校验,③b 不依赖。
+    state_mode=eef(18)|eef_piece(30);eef_piece 时 rel_piece_stats=(mean(12,),std(12,)),
+    ③b online 推理标准化 rel_piece 用(③a' object-aware)。
     """
-    torch.save({
+    payload = {
         "state_dict": model.state_dict(),
         "state_dim": model.state_dim,
         "hidden": model.hidden,
@@ -82,7 +84,11 @@ def save_value(path, model, *, v_stats, mean, std, dataset_id):
         "mean": mean,
         "std": std,
         "dataset_id": dataset_id,
-    }, path)
+        "state_mode": state_mode,
+    }
+    if rel_piece_stats is not None:
+        payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
+    torch.save(payload, path)
 
 
 def load_value(path, map_location="cpu"):
@@ -95,6 +101,9 @@ def load_value(path, map_location="cpu"):
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
+    info["state_mode"] = ckpt.get("state_mode", "eef")        # 旧 ckpt 无此键 → eef
+    info["rel_piece_mean"] = ckpt.get("rel_piece_mean")        # eef_piece 才有
+    info["rel_piece_std"] = ckpt.get("rel_piece_std")
     return model, info
 
 
