@@ -13,6 +13,7 @@ from __future__ import annotations
 import torch
 
 from resfit.rl_finetuning.chunk_residual.chunk_act_base import get_action_chunk
+from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
 
 
 def staged_bonus(start_stage: int, end_stage: int, bonus: float) -> float:
@@ -34,9 +35,8 @@ def shaping_reward(start_stage: int, end_stage: int, *,
     if mode == "staged":
         return staged_bonus(start_stage, end_stage, bonus)
     if mode == "potential":
-        phi_start = float(int(start_stage))
-        phi_next = 0.0 if done else float(int(end_stage))    # 终止 Φ=0
-        return bonus * (gamma * phi_next - phi_start)
+        return potential_shaping(int(start_stage), int(end_stage),
+                                 bonus=bonus, gamma=gamma, done=done)
     raise ValueError(f"unknown reward_shaping mode: {mode!r}")
 
 
