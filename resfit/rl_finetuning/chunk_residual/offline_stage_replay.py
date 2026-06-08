@@ -174,6 +174,8 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     # ③a' object-aware:eef_piece value 时,每 demo set_state replay 从 sim 算 raw rel_piece,
     # 喂 Φ 重算 reward(observation.state 仍存 18 维)。stage cache 命中也得起 env 算 rel。
     need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or (subgoal is not None)
+    _sg_rel_mean = subgoal.rel_mean.cpu() if subgoal is not None else None
+    _sg_rel_std = subgoal.rel_std.cpu() if subgoal is not None else None
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
@@ -222,10 +224,11 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
 
                 subgoal_z = None
                 if subgoal is not None:
-                    assert rel_seq is not None, "subgoal 模式需 eef_piece rel(env replay 已算)"
-                    rel_n = (torch.as_tensor(rel_seq, dtype=torch.float32) - subgoal.rel_mean.cpu()) \
-                        / subgoal.rel_std.cpu()
-                    s30 = torch.cat([state_n, rel_n[:T]], dim=-1)            # (T,30)
+                    if rel_seq is None:
+                        raise RuntimeError("subgoal 模式需 eef_piece rel(env replay 应已算出)")
+                    rel_n = (torch.as_tensor(rel_seq, dtype=torch.float32) - _sg_rel_mean) \
+                        / _sg_rel_std
+                    s30 = torch.cat([state_n, rel_n], dim=-1)            # rel_seq 与 state 等长=T → (T,30)
                     way = np.minimum(np.arange(T) + way_steps, T - 1)        # k 步航点(裁到末态)
                     subgoal_z = subgoal.subgoal_waypoint(s30, s30[way]).cpu()  # (T,10)
 
@@ -238,7 +241,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                            "observation.stage_id": nsid[t:t + 1]}
                     if subgoal_z is not None:
                         curr["observation.subgoal"] = subgoal_z[t]
-                        nxt["observation.subgoal"] = subgoal_z[min(t + 1, T - 1)]
+                        nxt["observation.subgoal"] = subgoal_z[t + 1]
                     for k in image_keys:
                         curr[k] = imgs[k][t]
                         nxt[k] = imgs[k][t + 1]
