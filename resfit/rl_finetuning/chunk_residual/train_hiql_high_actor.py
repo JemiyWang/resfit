@@ -1,0 +1,64 @@
+"""离线训练 HIQL 高层 π^h(分层路 Phase 2)。从仓库根跑:
+
+    conda run -n residual python -m resfit.rl_finetuning.chunk_residual.train_hiql_high_actor \
+      --hdf5 resfit/dataset/two_arm_three_piece_assembly.hdf5 \
+      --dataset ankile/dexmg-two-arm-three-piece-assembly \
+      --stage_cache outputs_chunk/three_piece_stages.npz \
+      --state30_cache outputs_chunk/three_piece_state30.npz \
+      --gc_value_ckpt outputs_chunk/three_piece_gc_value.pt \
+      --way_steps 25 --output outputs_chunk/three_piece_high_actor.pt
+
+state30_cache 命中则秒读回放后的 30 维 state(否则首次 MuJoCo 回放全 demo 并落盘)。
+设计见 docs/superpowers/specs/2026-06-08-hiql-hierarchy-residual-design.md。
+"""
+import argparse
+
+from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, load_gc_value
+from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor, save_high_actor
+from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
+from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import stage_entries_aligned
+
+
+def build_parser():
+    p = argparse.ArgumentParser(description="离线训练 HIQL 高层 π^h(Phase 2)")
+    p.add_argument("--hdf5", required=True)
+    p.add_argument("--dataset", required=True)
+    p.add_argument("--stage_cache", required=True)
+    p.add_argument("--state30_cache", default=None,
+                   help="回放后 30 维 state 缓存 npz;命中秒读,否则回放并落盘(强烈建议设)")
+    p.add_argument("--gc_value_ckpt", required=True, help="Phase 1 产的冻结 gc_value.pt")
+    p.add_argument("--output", default="high_actor.pt")
+    p.add_argument("--num_demos", type=int, default=None)
+    p.add_argument("--way_steps", type=int, default=25)
+    p.add_argument("--beta", type=float, default=1.0)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--batch_size", type=int, default=256)
+    p.add_argument("--steps", type=int, default=50_000)
+    p.add_argument("--hidden", type=int, default=256)
+    p.add_argument("--seed", type=int, default=0)
+    return p
+
+
+def main():
+    args = build_parser().parse_args()
+    seqs = load_or_build_state30(args.hdf5, args.dataset, args.num_demos, args.state30_cache)
+    seq_lens = [len(s) for s in seqs]
+    stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
+    assert len(seqs) == len(stage_entries), \
+        f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
+    data = build_gc_data(seqs, stage_entries)
+    vf, info = load_gc_value(args.gc_value_ckpt)
+    assert data["states"].shape[1] == vf.state_dim, \
+        f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(state_mode 须同源 eef_piece)"
+    print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
+          f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps}")
+    ha = train_high_actor(data, vf, way_steps=args.way_steps, beta=args.beta, lr=args.lr,
+                          batch_size=args.batch_size, steps=args.steps, hidden=args.hidden,
+                          seed=args.seed)
+    save_high_actor(args.output, ha, gc_value_ckpt=args.gc_value_ckpt,
+                    way_steps=args.way_steps, beta=args.beta)
+    print(f"[hiql_high] saved {args.output}")
+
+
+if __name__ == "__main__":
+    main()
