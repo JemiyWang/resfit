@@ -32,19 +32,21 @@ def stage_entries_aligned(hdf5_path, stage_cache, num_demos, seq_lens):
         eps = eps[:num_demos]
     out = []
     for ep, T in zip(eps, seq_lens):
+        if ep not in stages_by_demo:
+            raise KeyError(f"demo '{ep}' 不在 stage 缓存 '{stage_cache}' 里(缓存过期?重跑 precompute_stage_cache)")
         inst = np.asarray(stages_by_demo[ep])[:T]
         ent = stage_entries_from_instant(inst)
-        out.append(ent[ent < T])
+        out.append(ent)
     return out
 
 
 def build_parser():
     p = argparse.ArgumentParser(description="离线训练 goal-conditioned HIQL value(Phase 1)")
-    p.add_argument("--hdf5", required=True)
+    p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--stage_cache", required=True, help="逐帧 stage 缓存 npz(precompute_stage_cache 产)")
     p.add_argument("--output", default="gc_value.pt")
-    p.add_argument("--num_demos", type=int, default=None)
+    p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -64,6 +66,8 @@ def main():
         args.hdf5, args.dataset, "eef_piece", num_demos=args.num_demos)
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
+    assert len(seqs) == len(stage_entries), \
+        f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim}")
