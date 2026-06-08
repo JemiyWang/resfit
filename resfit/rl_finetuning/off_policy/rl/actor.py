@@ -69,7 +69,8 @@ class SpatialEmb(nn.Module):
 class Actor(nn.Module):
     def __init__(self, repr_dim, patch_repr_dim, prop_dim, action_dim, cfg: ActorConfig, residual_actor: bool = False,
                  stage_conditioned: bool = False, num_stages: int = 0,
-                 stage_budget: "list[float] | None" = None):
+                 stage_budget: "list[float] | None" = None,
+                 subgoal_conditioned: bool = False, subgoal_dim: int = 0):
         super().__init__()
 
         self.prop_dim = prop_dim
@@ -78,6 +79,8 @@ class Actor(nn.Module):
         self.num_stages = num_stages
         self.cfg = cfg
         self.stage_budget = stage_budget
+        self.subgoal_conditioned = subgoal_conditioned
+        self.subgoal_dim = subgoal_dim
         if stage_budget is not None:
             assert len(stage_budget) == num_stages, \
                 f"stage_budget 长度 {len(stage_budget)} != num_stages {num_stages}"
@@ -90,6 +93,10 @@ class Actor(nn.Module):
         if stage_conditioned:
             # stage-conditioned: stage one-hot 作为额外 prop 维度喂入
             self.prop_dim += num_stages
+
+        if subgoal_conditioned:
+            # 子目标条件:潜 z 作为额外 prop 维度喂入(与 stage one-hot 同位置)
+            self.prop_dim += subgoal_dim
 
         if cfg.spatial_emb > 0:
             assert cfg.spatial_emb > 1, "this is the dimension"
@@ -179,6 +186,8 @@ class Actor(nn.Module):
             if self.stage_conditioned:
                 # one-hot 对齐到 feat 的 device：env 的 stage_id 可能在 CPU，feat 在 GPU
                 all_input.append(stage_onehot(obs["observation.stage_id"], self.num_stages).to(feat.device))
+            if self.subgoal_conditioned:
+                all_input.append(obs["observation.subgoal"].to(feat.device))
 
         policy_input = torch.cat(all_input, dim=-1)
 
