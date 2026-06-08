@@ -52,7 +52,7 @@ def parse_stage_budget(arg: "str | None", num_stages: int) -> "list[float] | Non
 
 
 def append_subgoal(prop: torch.Tensor, subgoal: torch.Tensor) -> torch.Tensor:
-    """把 10 维潜子目标 z 拼到 prop 末尾:[B, P] -> [B, P + rep_dim]。
+    """把潜子目标 z(维度任意)拼到 prop 末尾:[B, P] -> [B, P + rep_dim]。
 
     z 对齐到 prop 的 device(env 给的 z 可能在 CPU,prop 在 GPU)。与 append_stage 同模板,
     但 z 已是连续向量,无需 one-hot。

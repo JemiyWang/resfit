@@ -594,8 +594,8 @@ class QAgent(nn.Module):
                 bc_obs = bc_batch.obs
                 curr_action = self.act(bc_obs, eval_mode=True, cpu=False)
 
-                curr_q = self.critic.q_value_for_policy(bc_obs["feat"], bc_obs["observation.state"], curr_action)
-                ref_q = self.critic.q_value_for_policy(bc_obs["feat"], bc_obs["observation.state"], ref_action)
+                curr_q = self.critic.q_value_for_policy(bc_obs["feat"], self._critic_prop(bc_obs), curr_action)
+                ref_q = self.critic.q_value_for_policy(bc_obs["feat"], self._critic_prop(bc_obs), ref_action)
 
                 ratio = (ref_q > curr_q).float().mean().item()
 
