@@ -70,3 +70,4 @@ def test_high_actor_save_load_roundtrip(tmp_path):
     s, g = torch.randn(3, 30), torch.randn(3, 30)
     assert torch.allclose(ha(s, g).mean, ha2(s, g).mean, atol=1e-6)
     assert info["way_steps"] == 25 and info["gc_value_ckpt"] == "gc_value.pt"
+    assert info["beta"] == 1.0

@@ -86,6 +86,8 @@ def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta):
         "state_dim": model.state_dim,
         "rep_dim": model.rep_dim,
         "hidden": model.hidden,
+        "log_std_min": model.log_std_min,
+        "log_std_max": model.log_std_max,
         "gc_value_ckpt": gc_value_ckpt,
         "way_steps": way_steps,
         "beta": beta,
@@ -95,7 +97,9 @@ def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta):
 def load_high_actor(path, map_location="cpu"):
     """读 high_actor.pt,重建 HighActor(eval),返回 (model, info)。"""
     ckpt = torch.load(path, map_location=map_location, weights_only=False)
-    model = HighActor(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"])
+    model = HighActor(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"],
+                      log_std_min=ckpt.get("log_std_min", -5.0),
+                      log_std_max=ckpt.get("log_std_max", 2.0))
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("gc_value_ckpt", "way_steps", "beta")}
