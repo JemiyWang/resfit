@@ -21,7 +21,7 @@ from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import stage_entrie
 
 def build_parser():
     p = argparse.ArgumentParser(description="离线训练 HIQL 高层 π^h(Phase 2)")
-    p.add_argument("--hdf5", required=True)
+    p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True)
     p.add_argument("--stage_cache", required=True)
     p.add_argument("--state30_cache", default=None,
@@ -41,6 +41,9 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    if args.state30_cache is None:
+        import warnings
+        warnings.warn("--state30_cache 未设置,将触发完整 MuJoCo 回放(可能耗时数小时);建议指向 state30 缓存 npz", stacklevel=2)
     seqs = load_or_build_state30(args.hdf5, args.dataset, args.num_demos, args.state30_cache)
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
@@ -48,8 +51,10 @@ def main():
         f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)
     vf, info = load_gc_value(args.gc_value_ckpt)
+    assert info["dataset_id"] == args.dataset, \
+        f"gc_value 训练集 {info['dataset_id']!r} 与当前 --dataset {args.dataset!r} 不一致(异源 ckpt)"
     assert data["states"].shape[1] == vf.state_dim, \
-        f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(state_mode 须同源 eef_piece)"
+        f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps}")
     ha = train_high_actor(data, vf, way_steps=args.way_steps, beta=args.beta, lr=args.lr,
