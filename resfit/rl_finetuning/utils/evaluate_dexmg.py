@@ -28,6 +28,7 @@ def run_dexmg_evaluation(
     save_q_plots: bool = False,
     run_name: str | None = None,
     output_dir: str | Path | None = "outputs",
+    subgoal=None,
 ) -> tuple[dict[str, float], float]:
     """Extended evaluation to match the richer functionality available in
     the *residual_td3_dexmg* evaluator.  In particular, this version:
@@ -162,7 +163,21 @@ def run_dexmg_evaluation(
     all_frames: list[np.ndarray] | None = [] if save_video else None
 
     done_episodes = 0
-    obs, _ = env.reset()
+    obs, reset_info = env.reset()
+
+    # ------------------------------------------------------------------
+    # Subgoal injection (FIX A): if subgoal is not None, inject z into obs
+    # so that the Actor can index observation.subgoal.
+    # rel_piece comes from the per-step info dict (eef_piece eval env).
+    # ------------------------------------------------------------------
+    if subgoal is not None:
+        _eval_info = reset_info  # track latest info for rel_piece
+        obs["observation.subgoal"] = subgoal.subgoal_online(
+            obs["observation.state"],
+            _eval_info.get("rel_piece") if _eval_info is not None else None,
+        ).to(obs["observation.state"].device)
+    else:
+        _eval_info = None
 
     # Initialize progress display with dots
     progress_dots = ["."] * num_episodes
@@ -192,8 +207,16 @@ def run_dexmg_evaluation(
         # --------------------------------------------------------------
         # 2. Environment step ------------------------------------------
         # --------------------------------------------------------------
-        next_obs, reward, terminated, truncated, _ = env.step(actions)
+        next_obs, reward, terminated, truncated, step_info = env.step(actions)
         done_flags = terminated | truncated
+
+        # Inject subgoal into next_obs so the next iteration's act() works
+        if subgoal is not None:
+            _eval_info = step_info
+            next_obs["observation.subgoal"] = subgoal.subgoal_online(
+                next_obs["observation.state"],
+                _eval_info.get("rel_piece") if _eval_info is not None else None,
+            ).to(next_obs["observation.state"].device)
 
         # Capture frames ------------------------------------------------
         if save_video and frame_buffer is not None:
@@ -260,6 +283,7 @@ def run_dexmg_evaluation(
 
         # Prepare for next loop ----------------------------------------
         obs = next_obs
+        # _eval_info already updated above from step_info (subgoal path)
 
     print("Done")
 

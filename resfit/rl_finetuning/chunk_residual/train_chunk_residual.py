@@ -402,10 +402,12 @@ def main():
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
     print(f"[base-action] mode={args.base_action_mode}")
     print(f"[state-mode] env_state_mode={env_state_mode} "
-          f"(observation.state 仍 18 维;rel_piece 经 info 只喂 Φ)")
-    # eval 不加 shaping、不喂 Φ → 保持 eef(省每步 sim rel 开销)
+          f"(observation.state 仍 18 维;rel_piece 经 info 只喂 Φ/z)")
+    # eval 不加 shaping、不喂 Φ → 保持 eef(省每步 sim rel 开销);
+    # FIX A: --subgoal_conditioned 时需 eef_piece 让 eval info 携带 rel_piece 供 z 注入
+    eval_state_mode = "eef_piece" if args.subgoal_conditioned else "eef"
     eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
-                                     device=args.device)
+                                     device=args.device, state_mode=eval_state_mode)
     # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
     # 会互踩 queue。queue 模式给 eval 单独的 base_policy 实例(对齐原版 train_residual_td3 双实例)。
     eval_base_policy = (build_base_policy(args, args.device)
@@ -476,12 +478,18 @@ def main():
         assert env_state_mode == "eef_piece", "--subgoal_conditioned 需 env 透出 rel(eef_piece)"
         assert args.gc_value_ckpt and args.high_actor_ckpt, \
             "--subgoal_conditioned 需 --gc_value_ckpt 与 --high_actor_ckpt"
+        # FIX B: guard goal30 source — 至少有一个来源能构建 goal30
+        assert args.subgoal_state30_cache or args.offline_dataset_path, \
+            "--subgoal_conditioned 需 --subgoal_state30_cache 或 --offline_dataset_path(用于建 goal30)"
         from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal
         from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
         # goal30 = demo 末态(30 维)均值,作为在线高层的固定任务目标;用 state30 缓存避免回放
         _seqs30 = load_or_build_state30(args.offline_dataset_path, args.dataset,
                                         args.offline_num_demos, args.subgoal_state30_cache)
         goal30 = np.stack([np.asarray(s)[-1] for s in _seqs30], axis=0).mean(axis=0)
+        # FIX C: assert goal30 is 30-dim (eef_piece state)
+        assert goal30.shape[0] == 30, \
+            f"goal30 须 30 维(eef_piece),got {goal30.shape[0]};检查 state30 缓存是否来自 eef_piece"
         subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
                                          goal30=goal30, device=args.device)
         print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")
@@ -583,6 +591,7 @@ def main():
     last_diag = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
     while env_steps <= total:
+        next_rel = None   # FIX D: silence unbound-var lint; overwritten below when subgoal_conditioned
         if args.subgoal_conditioned:
             obs["observation.subgoal"] = subgoal.subgoal_online(
                 obs["observation.state"], cur_rel).to(obs["observation.state"].device)
@@ -657,7 +666,8 @@ def main():
                                          num_episodes=args.eval_num_episodes, device=args.device,
                                          global_step=env_steps, save_video=False,
                                          save_q_plots=False, run_name=f"chunk_{args.actor}",
-                                         output_dir=args.output_dir)
+                                         output_dir=args.output_dir,
+                                         subgoal=(subgoal if args.subgoal_conditioned else None))
             sr = m["eval/success_rate"]
             if sr > best_sr:
                 best_sr = sr
