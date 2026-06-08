@@ -22,11 +22,11 @@ class HighActor(nn.Module):
         self.hidden = hidden
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
-        self.mean = _mlp(2 * state_dim, hidden, rep_dim)
+        self.mean_net = _mlp(2 * state_dim, hidden, rep_dim)
         self.log_std = nn.Parameter(torch.zeros(rep_dim))
 
     def forward(self, s, g):
-        mean = self.mean(torch.cat([s, g], dim=-1))
+        mean = self.mean_net(torch.cat([s, g], dim=-1))
         std = self.log_std.clamp(self.log_std_min, self.log_std_max).exp()
         return torch.distributions.Normal(mean, std)
 
