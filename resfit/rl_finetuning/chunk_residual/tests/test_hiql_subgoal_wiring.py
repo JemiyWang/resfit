@@ -58,3 +58,27 @@ def test_qagent_critic_prop_subgoal():
     prop = QAgent._critic_prop(fake, obs)
     assert prop.shape == (3, 28)
     assert torch.equal(prop[:, 18:], torch.ones(3, 10))
+
+
+def test_hiql_subgoal_shapes(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF, save_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import HighActor, save_high_actor
+    from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal
+    gc = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=32)
+    gp = str(tmp_path / "gc.pt")
+    save_gc_value(gp, gc, v_stats={"min": -1, "max": 0, "mean": -0.5},
+                  mean=torch.zeros(18), std=torch.ones(18), dataset_id="ds",
+                  state_mode="eef_piece", rel_piece_stats=(np.zeros(12), np.ones(12)))
+    ha = HighActor(state_dim=30, rep_dim=10, hidden=32)
+    hp = str(tmp_path / "ha.pt")
+    save_high_actor(hp, ha, gc_value_ckpt=gp, way_steps=25, beta=1.0)
+
+    goal30 = torch.zeros(30)
+    sg = HiqlSubgoal.from_ckpts(gp, hp, goal30=goal30, device="cpu")
+    assert sg.rep_dim == 10
+    s30 = sg.build_state30(torch.zeros(2, 18), np.zeros((2, 12)))
+    assert s30.shape == (2, 30)
+    z = sg.subgoal_online(torch.zeros(2, 18), np.zeros((2, 12)))
+    assert z.shape == (2, 10)
+    zw = sg.subgoal_waypoint(torch.zeros(3, 30), torch.ones(3, 30))
+    assert zw.shape == (3, 10)
