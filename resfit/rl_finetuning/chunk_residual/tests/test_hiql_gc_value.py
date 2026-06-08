@@ -28,3 +28,11 @@ def test_goal_conditioned_vf_forward_and_phi():
     assert torch.allclose(z, vf.goal_encoder(g, s), atol=1e-6)
     (v1.sum() + v2.sum()).backward()
     assert any(p.grad is not None for p in vf.parameters())
+
+
+def test_stage_entries_from_instant():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import stage_entries_from_instant
+    instant = np.array([0, 0, 1, 1, 2, 1, 2, 3], dtype=np.int8)
+    entries = stage_entries_from_instant(instant)
+    assert entries.tolist() == [2, 4, 7]
+    assert stage_entries_from_instant(np.zeros(5, dtype=np.int8)).tolist() == []

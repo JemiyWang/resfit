@@ -59,3 +59,16 @@ class GoalConditionedVF(nn.Module):
     def forward(self, s, g):
         x = torch.cat([s, self.phi(s, g)], dim=-1)
         return self.v1(x).squeeze(-1), self.v2(x).squeeze(-1)
+
+
+def stage_entries_from_instant(instant_stages):
+    """逐帧瞬时 stage(int 数组) -> 各更高 stage 首次到达的下标(升序 int64 数组)。
+
+    用运行最大值 latch 消抖;入口=latch 比前一帧大的位置。全 0 返回空数组。
+    """
+    instant = np.asarray(instant_stages).astype(np.int64)
+    if len(instant) == 0:
+        return np.empty(0, dtype=np.int64)
+    latch = np.maximum.accumulate(instant)
+    inc = np.flatnonzero(np.diff(latch, prepend=latch[0] - (latch[0] > 0)) > 0)
+    return inc.astype(np.int64)
