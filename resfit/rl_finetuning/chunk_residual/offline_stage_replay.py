@@ -155,7 +155,7 @@ def precompute_stage_cache(dataset_path, out_path, num_demos=None) -> int:
 
 def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
-                         stage_cache=None, potential=None) -> int:
+                         stage_cache=None, potential=None, subgoal=None, way_steps=25) -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
     GT-as-base:obs.base_action 与 action 都用缩放后的 GT 动作(残差目标 = 0,把 actor
@@ -173,7 +173,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     added = 0
     # ③a' object-aware:eef_piece value 时,每 demo set_state replay 从 sim 算 raw rel_piece,
     # 喂 Φ 重算 reward(observation.state 仍存 18 维)。stage cache 命中也得起 env 算 rel。
-    need_rel = potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece"
+    need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or (subgoal is not None)
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
@@ -220,6 +220,15 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
                 nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
 
+                subgoal_z = None
+                if subgoal is not None:
+                    assert rel_seq is not None, "subgoal 模式需 eef_piece rel(env replay 已算)"
+                    rel_n = (torch.as_tensor(rel_seq, dtype=torch.float32) - subgoal.rel_mean.cpu()) \
+                        / subgoal.rel_std.cpu()
+                    s30 = torch.cat([state_n, rel_n[:T]], dim=-1)            # (T,30)
+                    way = np.minimum(np.arange(T) + way_steps, T - 1)        # k 步航点(裁到末态)
+                    subgoal_z = subgoal.subgoal_waypoint(s30, s30[way]).cpu()  # (T,10)
+
                 for t in range(T - 1):
                     curr = {"observation.state": state_n[t],
                             "observation.base_action": act_n[t],
@@ -227,6 +236,9 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                     nxt = {"observation.state": state_n[t + 1],
                            "observation.base_action": act_n[t + 1],
                            "observation.stage_id": nsid[t:t + 1]}
+                    if subgoal_z is not None:
+                        curr["observation.subgoal"] = subgoal_z[t]
+                        nxt["observation.subgoal"] = subgoal_z[min(t + 1, T - 1)]
                     for k in image_keys:
                         curr[k] = imgs[k][t]
                         nxt[k] = imgs[k][t + 1]
