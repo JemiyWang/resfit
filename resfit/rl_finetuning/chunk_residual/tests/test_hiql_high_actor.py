@@ -37,3 +37,24 @@ def test_awr_weight():
     assert float(w[3]) == 100.0
     w2 = awr_weight(adv, beta=0.5, clip=100.0)
     assert torch.allclose(w2[2], torch.exp(torch.tensor(0.5)), atol=1e-5)
+
+
+def test_train_high_actor_predicts_forward_waypoint():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=2000, batch_size=16, rep_dim=8, hidden=64,
+                           lr=1e-3, ema=0.01, seed=0)
+    ha = train_high_actor(data, vf, way_steps=5, beta=1.0, steps=2000,
+                          batch_size=16, hidden=64, lr=1e-3, seed=0)
+
+    states = data["states"]
+    st = states[2:3]
+    g = states[-1:].clone()
+    with torch.no_grad():
+        z_pred = ha(st, g).mean
+        z_fwd = vf.phi(st, states[7:8])
+        z_stay = vf.phi(st, st)
+    assert (z_pred - z_fwd).norm() < (z_pred - z_stay).norm()
