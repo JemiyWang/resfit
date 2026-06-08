@@ -25,3 +25,5 @@ def test_high_actor_forward_dist():
     assert z.shape == (6, 10)
     lp = dist.log_prob(z).sum(-1)
     assert lp.shape == (6,)
+    # std 与输入无关(log_std 是 nn.Parameter,不是 MLP 输出)
+    assert torch.allclose(dist.scale[0], dist.scale[1])

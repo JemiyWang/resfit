@@ -3,9 +3,6 @@
 AWR 从 Phase 1 冻结的 goal-conditioned value 抽取:输出 k 步后子目标潜表征 z=φ(s_t,s_{t+k})
 上的高斯。设计见 docs/superpowers/specs/2026-06-08-hiql-hierarchy-residual-design.md。
 """
-import copy
-
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -13,7 +10,7 @@ from resfit.rl_finetuning.chunk_residual.hiql_gc_value import _mlp, sample_gc_go
 
 
 class HighActor(nn.Module):
-    """π^h(z | s, g):concat(s,g) -> trunk -> mean(rep_dim);log_std 为 state-independent 参数。"""
+    """π^h(z | s, g):concat(s,g) -> _mlp -> mean(rep_dim);log_std 为 state-independent 参数。"""
 
     def __init__(self, state_dim, rep_dim=10, hidden=256, log_std_min=-5.0, log_std_max=2.0):
         super().__init__()
@@ -22,12 +19,10 @@ class HighActor(nn.Module):
         self.hidden = hidden
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
-        self.trunk = _mlp(2 * state_dim, hidden, hidden)
-        self.mean = nn.Linear(hidden, rep_dim)
+        self.mean = _mlp(2 * state_dim, hidden, rep_dim)
         self.log_std = nn.Parameter(torch.zeros(rep_dim))
 
     def forward(self, s, g):
-        h = torch.relu(self.trunk(torch.cat([s, g], dim=-1)))
-        mean = self.mean(h)
+        mean = self.mean(torch.cat([s, g], dim=-1))
         std = self.log_std.clamp(self.log_std_min, self.log_std_max).exp()
-        return torch.distributions.Normal(mean, std.expand_as(mean))
+        return torch.distributions.Normal(mean, std)
