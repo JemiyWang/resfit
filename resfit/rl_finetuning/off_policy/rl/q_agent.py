@@ -16,7 +16,7 @@ from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.off_policy.networks.encoder import VitEncoder
 from resfit.rl_finetuning.off_policy.rl.actor import Actor
 from resfit.rl_finetuning.off_policy.rl.critic import Critic
-from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage
+from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage, append_subgoal
 
 
 def bc_target(action, base_action, residual_actor):
@@ -36,6 +36,8 @@ class QAgent(nn.Module):
         stage_conditioned: bool = False,
         num_stages: int = 0,
         stage_budget: "list[float] | None" = None,
+        subgoal_conditioned: bool = False,
+        subgoal_dim: int = 0,
     ):
         """Initialize the Q-agent.
 
@@ -67,6 +69,8 @@ class QAgent(nn.Module):
         self.residual_actor = residual_actor
         self.stage_conditioned = stage_conditioned
         self.num_stages = num_stages
+        self.subgoal_conditioned = subgoal_conditioned
+        self.subgoal_dim = subgoal_dim
 
         # Build the per-camera encoders *after* `self.rl_cameras` is defined so
         # that the helper function can iterate over them.
@@ -88,7 +92,9 @@ class QAgent(nn.Module):
 
         # create critics & actor
         # stage-conditioned 时把 stage one-hot 作为额外 prop 维度喂给 critic
-        critic_prop_dim = prop_dim + (self.num_stages if self.stage_conditioned else 0)
+        critic_prop_dim = (prop_dim
+                           + (self.num_stages if self.stage_conditioned else 0)
+                           + (self.subgoal_dim if self.subgoal_conditioned else 0))
         self.critic = Critic(
             repr_dim=repr_dim,
             patch_repr_dim=patch_repr_dim,
@@ -99,7 +105,8 @@ class QAgent(nn.Module):
         self.actor = Actor(repr_dim, patch_repr_dim, prop_dim, action_dim, cfg.actor,
                            residual_actor=residual_actor,
                            stage_conditioned=self.stage_conditioned, num_stages=self.num_stages,
-                           stage_budget=stage_budget)
+                           stage_budget=stage_budget,
+                           subgoal_conditioned=self.subgoal_conditioned, subgoal_dim=self.subgoal_dim)
 
         self.critic_target = copy.deepcopy(self.critic)
         self.actor_target = copy.deepcopy(self.actor)
@@ -270,6 +277,8 @@ class QAgent(nn.Module):
         prop = obs["observation.state"]
         if self.stage_conditioned:
             prop = append_stage(prop, obs["observation.stage_id"], self.num_stages)
+        if self.subgoal_conditioned:
+            prop = append_subgoal(prop, obs["observation.subgoal"])
         return prop
 
     def act(self, obs: dict[str, torch.Tensor], *, eval_mode=False, stddev=0.0, cpu=True) -> torch.Tensor:

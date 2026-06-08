@@ -48,3 +48,13 @@ def test_actor_stage_and_subgoal_combined():
     }
     dist = a.forward(obs, std=0.1)
     assert dist.mean.shape == (2, 12)
+
+
+def test_qagent_critic_prop_subgoal():
+    from types import SimpleNamespace
+    from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+    fake = SimpleNamespace(stage_conditioned=False, subgoal_conditioned=True, num_stages=0)
+    obs = {"observation.state": torch.zeros(3, 18), "observation.subgoal": torch.ones(3, 10)}
+    prop = QAgent._critic_prop(fake, obs)
+    assert prop.shape == (3, 28)
+    assert torch.equal(prop[:, 18:], torch.ones(3, 10))
