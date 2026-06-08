@@ -36,3 +36,33 @@ def test_stage_entries_from_instant():
     entries = stage_entries_from_instant(instant)
     assert entries.tolist() == [2, 4, 7]
     assert stage_entries_from_instant(np.zeros(5, dtype=np.int8)).tolist() == []
+
+
+def test_build_gc_data_and_sample_goals():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, sample_gc_goals
+    seqs = [np.arange(8).reshape(4, 2).astype(np.float32),
+            (np.arange(6).reshape(3, 2) + 100).astype(np.float32)]
+    stage_entries = [np.array([2]), np.array([1])]
+    data = build_gc_data(seqs, stage_entries)
+    assert len(data["s_idx"]) == 5
+    assert data["states"].shape == (7, 2)
+    assert data["done"].tolist() == [0, 0, 1, 0, 1]
+    assert data["last_idx_of"][0] == 3
+    assert data["stage_entries_of"][0].tolist() == [2]
+    assert data["stage_entries_of"][1].tolist() == [4 + 1]
+
+    rng = np.random.default_rng(0)
+    s_i = data["s_idx"]
+    g = sample_gc_goals(s_i, data["traj_id"], data["last_idx_of"],
+                        data["stage_entries_of"], rng, n_total=7,
+                        p_curr=1.0, p_traj=0.0, p_rand=0.0)
+    assert g.tolist() == list(s_i)
+
+    g2 = sample_gc_goals(s_i, data["traj_id"], data["last_idx_of"],
+                         data["stage_entries_of"], rng, n_total=7,
+                         p_curr=0.0, p_traj=1.0, p_rand=0.0)
+    for i, gi in zip(s_i, g2):
+        d = data["traj_id"][list(s_i).index(i)]
+        allowed = set(data["stage_entries_of"][d][data["stage_entries_of"][d] >= i].tolist())
+        allowed.add(data["last_idx_of"][d])
+        assert gi in allowed
