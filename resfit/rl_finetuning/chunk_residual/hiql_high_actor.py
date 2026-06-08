@@ -77,3 +77,26 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
         loss.backward()
         opt.step()
     return ha
+
+
+def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta):
+    """存 high_actor.pt:权重 + 维度 + 关联的 gc_value_ckpt / way_steps / beta(供 Phase 3 校验)。"""
+    torch.save({
+        "state_dict": model.state_dict(),
+        "state_dim": model.state_dim,
+        "rep_dim": model.rep_dim,
+        "hidden": model.hidden,
+        "gc_value_ckpt": gc_value_ckpt,
+        "way_steps": way_steps,
+        "beta": beta,
+    }, path)
+
+
+def load_high_actor(path, map_location="cpu"):
+    """读 high_actor.pt,重建 HighActor(eval),返回 (model, info)。"""
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    model = HighActor(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"])
+    model.load_state_dict(ckpt["state_dict"])
+    model.eval()
+    info = {k: ckpt[k] for k in ("gc_value_ckpt", "way_steps", "beta")}
+    return model, info

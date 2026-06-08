@@ -58,3 +58,15 @@ def test_train_high_actor_predicts_forward_waypoint():
         z_fwd = vf.phi(st, states[7:8])
         z_stay = vf.phi(st, st)
     assert (z_pred - z_fwd).norm() < (z_pred - z_stay).norm()
+
+
+def test_high_actor_save_load_roundtrip(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import (
+        HighActor, save_high_actor, load_high_actor)
+    ha = HighActor(state_dim=30, rep_dim=10, hidden=64)
+    p = str(tmp_path / "high_actor.pt")
+    save_high_actor(p, ha, gc_value_ckpt="gc_value.pt", way_steps=25, beta=1.0)
+    ha2, info = load_high_actor(p)
+    s, g = torch.randn(3, 30), torch.randn(3, 30)
+    assert torch.allclose(ha(s, g).mean, ha2(s, g).mean, atol=1e-6)
+    assert info["way_steps"] == 25 and info["gc_value_ckpt"] == "gc_value.pt"
