@@ -2,6 +2,8 @@
 import numpy as np
 import torch
 
+torch.set_num_threads(1)  # 多核机上对微小张量默认开满线程会颠簸,单测里限 1 线程(只影响本测试进程)
+
 from resfit.rl_finetuning.chunk_residual.hiql_gc_value import RelativeGoalEncoder
 
 
@@ -91,3 +93,19 @@ def test_sample_gc_goals_pure_random():
     # 纯随机:每个 goal 都是合法全局下标 [0, n_total)
     assert g.shape == data["s_idx"].shape
     assert ((g >= 0) & (g < 5)).all()
+
+
+def test_train_gc_value_learns_progress():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    model, v_stats = train_gc_value(
+        data, gamma=0.99, expectile=0.7, ema=0.01, lr=1e-3,
+        batch_size=9, steps=2000, rep_dim=8, hidden=64, seed=0)
+    assert v_stats["max"] > v_stats["min"]
+    states = data["states"]
+    g = states[9].repeat(10, 1)
+    with torch.no_grad():
+        v1, v2 = model(states, g)
+        v = torch.minimum(v1, v2)
+    assert v[-3:].mean() > v[:3].mean()

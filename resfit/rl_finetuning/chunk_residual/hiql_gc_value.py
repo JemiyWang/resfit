@@ -134,3 +134,54 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
     goal = np.where(rng.random(B) < p_traj / denom, fut, goal)
     goal = np.where(rng.random(B) < p_curr, idx, goal)
     return goal.astype(np.int64)
+
+
+def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
+                   batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0):
+    """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
+
+    reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
+    双 critic 集成、target 取 min、EMA target。返回 (model, v_stats)。
+    """
+    torch.manual_seed(seed)
+    rng = np.random.default_rng(seed)
+    states = data["states"]
+    D = states.shape[1]
+    model = GoalConditionedVF(D, rep_dim, hidden)
+    target = copy.deepcopy(model)
+    for p in target.parameters():
+        p.requires_grad_(False)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    n = len(data["s_idx"])
+    bs = min(batch_size, n)
+    s_idx, sn_idx, traj_id = data["s_idx"], data["sn_idx"], data["traj_id"]
+    done_all = data["done"]
+    for _ in range(steps):
+        b = rng.integers(0, n, size=bs)
+        si, sni, tj = s_idx[b], sn_idx[b], traj_id[b]
+        gi = sample_gc_goals(si, tj, data["last_idx_of"], data["stage_entries_of"],
+                             rng, n_total=len(states))
+        s = states[si]
+        s_next = states[sni]
+        g = states[gi]
+        success = torch.tensor(si == gi, dtype=torch.float32)
+        reward = success - 1.0
+        mask = (1.0 - success) * (1.0 - done_all[b])
+        with torch.no_grad():
+            nv1, nv2 = target(s_next, g)
+            nv = torch.minimum(nv1, nv2)
+            y = reward + gamma * mask * nv
+        v1, v2 = model(s, g)
+        loss = expectile_loss(y - v1, expectile) + expectile_loss(y - v2, expectile)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        with torch.no_grad():
+            for tp, mp in zip(target.parameters(), model.parameters()):
+                tp.mul_(1.0 - ema).add_(ema * mp)
+    with torch.no_grad():
+        gl = np.array([data["last_idx_of"][int(d)] for d in traj_id], dtype=np.int64)
+        vv1, vv2 = model(states[s_idx], states[gl])
+        vv = torch.minimum(vv1, vv2)
+        v_stats = {"min": float(vv.min()), "max": float(vv.max()), "mean": float(vv.mean())}
+    return model, v_stats
