@@ -1,10 +1,18 @@
 # tests/test_hiql_gc_value.py
 import numpy as np
+import pytest
 import torch
 
-torch.set_num_threads(1)  # 多核机上对微小张量默认开满线程会颠簸,单测里限 1 线程(只影响本测试进程)
-
 from resfit.rl_finetuning.chunk_residual.hiql_gc_value import RelativeGoalEncoder
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _cap_torch_threads():
+    """多核机上 torch 对微小张量开满线程会颠簸;本模块测试限 1 线程,跑完恢复(避免泄漏到其它测试文件)。"""
+    prev = torch.get_num_threads()
+    torch.set_num_threads(1)
+    yield
+    torch.set_num_threads(prev)
 
 
 def test_relative_goal_encoder_shape_and_norm():
