@@ -66,3 +66,28 @@ def test_build_gc_data_and_sample_goals():
         allowed = set(data["stage_entries_of"][d][data["stage_entries_of"][d] >= i].tolist())
         allowed.add(data["last_idx_of"][d])
         assert gi in allowed
+
+
+def test_build_gc_data_skips_short_demos():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data
+    # demo 1 是 T=1(应被跳过),demo 0/2 正常
+    seqs = [np.zeros((3, 2), np.float32), np.zeros((1, 2), np.float32), np.ones((2, 2), np.float32)]
+    data = build_gc_data(seqs, [np.array([], np.int64), np.array([], np.int64), np.array([], np.int64)])
+    # 只有 demo 0(2 transition)+ demo 2(1 transition)= 3 transitions;T=1 的 demo 1 被跳过
+    assert len(data["s_idx"]) == 3
+    # 跳过的 demo(id=1)不出现在 traj_id 里,也不在 last_idx_of
+    assert 1 not in set(data["traj_id"].tolist())
+    assert 1 not in data["last_idx_of"]
+
+
+def test_sample_gc_goals_pure_random():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, sample_gc_goals
+    seq = np.arange(10).reshape(5, 2).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], np.int64)])
+    rng = np.random.default_rng(0)
+    g = sample_gc_goals(data["s_idx"], data["traj_id"], data["last_idx_of"],
+                        data["stage_entries_of"], rng, n_total=5,
+                        p_curr=0.0, p_traj=0.0, p_rand=1.0)
+    # 纯随机:每个 goal 都是合法全局下标 [0, n_total)
+    assert g.shape == data["s_idx"].shape
+    assert ((g >= 0) & (g < 5)).all()

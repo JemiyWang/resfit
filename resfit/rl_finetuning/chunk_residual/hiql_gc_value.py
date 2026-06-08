@@ -23,7 +23,7 @@ def _mlp(in_dim, hidden, out_dim, n_hidden=2):
 
 
 class RelativeGoalEncoder(nn.Module):
-    """φ([g,s]):concat(targets=g, bases=s) -> MLP -> rep_dim,再归一化到半径 sqrt(rep_dim)。"""
+    """φ([g,s]):concat([targets, bases]) -> MLP -> rep_dim,再归一化到半径 sqrt(rep_dim)。"""
 
     def __init__(self, state_dim, rep_dim=10, hidden=256):
         super().__init__()
@@ -31,8 +31,8 @@ class RelativeGoalEncoder(nn.Module):
         self.rep_dim = rep_dim
         self.net = _mlp(2 * state_dim, hidden, rep_dim)
 
-    def forward(self, g, s):
-        rep = self.net(torch.cat([g, s], dim=-1))
+    def forward(self, targets, bases):
+        rep = self.net(torch.cat([targets, bases], dim=-1))
         rep = rep / (rep.norm(dim=-1, keepdim=True) + 1e-8) * (self.rep_dim ** 0.5)
         return rep
 
@@ -65,6 +65,7 @@ def stage_entries_from_instant(instant_stages):
     """逐帧瞬时 stage(int 数组) -> 各更高 stage 首次到达的下标(升序 int64 数组)。
 
     用运行最大值 latch 消抖;入口=latch 比前一帧大的位置。全 0 返回空数组。
+    若 demo 首帧已处于 stage k>0,index 0 记为 stage k 入口;比 k 低的 stage 在本 demo 不存在,不产生条目。
     """
     instant = np.asarray(instant_stages).astype(np.int64)
     if len(instant) == 0:
@@ -118,7 +119,10 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 
     future = 同 demo 中 >= 当前下标的 stage 入口态里均匀取一个,无则取末态。
     idx/traj_id 为 (B,) np 数组。返回 (B,) goal 全局下标。
+    P(random) = 1 − p_curr − p_traj;三者必须和为 1(断言保证)。
     """
+    assert abs(p_curr + p_traj + p_rand - 1.0) < 1e-6, \
+        f"p_curr+p_traj+p_rand must sum to 1, got {p_curr}+{p_traj}+{p_rand}"
     B = len(idx)
     goal = rng.integers(0, n_total, size=B)
     fut = np.empty(B, dtype=np.int64)
