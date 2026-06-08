@@ -35,3 +35,27 @@ class RelativeGoalEncoder(nn.Module):
         rep = self.net(torch.cat([g, s], dim=-1))
         rep = rep / (rep.norm(dim=-1, keepdim=True) + 1e-8) * (self.rep_dim ** 0.5)
         return rep
+
+
+class GoalConditionedVF(nn.Module):
+    """V(s, φ([g,s])),双 critic 集成。
+
+    约定 phi(s, g) = goal_encoder(targets=g, bases=s):第一参恒为"基准状态",第二参为
+    "目标/子目标状态"。forward(s, g) -> (v1, v2)。
+    """
+
+    def __init__(self, state_dim, rep_dim=10, hidden=256):
+        super().__init__()
+        self.state_dim = state_dim
+        self.rep_dim = rep_dim
+        self.hidden = hidden
+        self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden)
+        self.v1 = _mlp(state_dim + rep_dim, hidden, 1)
+        self.v2 = _mlp(state_dim + rep_dim, hidden, 1)
+
+    def phi(self, s, g):
+        return self.goal_encoder(g, s)
+
+    def forward(self, s, g):
+        x = torch.cat([s, self.phi(s, g)], dim=-1)
+        return self.v1(x).squeeze(-1), self.v2(x).squeeze(-1)
