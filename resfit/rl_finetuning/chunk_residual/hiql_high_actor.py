@@ -26,3 +26,8 @@ class HighActor(nn.Module):
         mean = self.mean(torch.cat([s, g], dim=-1))
         std = self.log_std.clamp(self.log_std_min, self.log_std_max).exp()
         return torch.distributions.Normal(mean, std)
+
+
+def awr_weight(adv, beta, clip=100.0):
+    """AWR 权重 exp(beta·adv),上界 clip(防爆)。adv 为张量,返回同形状张量。"""
+    return torch.exp(beta * adv).clamp(max=clip)
