@@ -95,7 +95,7 @@ class Actor(nn.Module):
             self.prop_dim += num_stages
 
         if subgoal_conditioned:
-            # 子目标条件:潜 z 作为额外 prop 维度喂入(与 stage one-hot 同位置)
+            # 子目标条件:潜 z 作为额外 prop 维度喂入(追加在 stage one-hot 之后)
             self.prop_dim += subgoal_dim
 
         if cfg.spatial_emb > 0:
