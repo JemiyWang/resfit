@@ -117,3 +117,22 @@ def test_train_gc_value_learns_progress():
         v1, v2 = model(states, g)
         v = torch.minimum(v1, v2)
     assert v[-3:].mean() > v[:3].mean()
+
+
+def test_gc_value_save_load_roundtrip(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, save_gc_value, load_gc_value)
+    model = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64)
+    p = str(tmp_path / "gc_value.pt")
+    save_gc_value(p, model, v_stats={"min": -3.0, "max": 0.0, "mean": -1.0},
+                  mean=torch.zeros(30), std=torch.ones(30),
+                  dataset_id="ds", state_mode="eef_piece",
+                  rel_piece_stats=(np.zeros(12), np.ones(12)))
+    m2, info = load_gc_value(p)
+    s, g = torch.randn(4, 30), torch.randn(4, 30)
+    v1a, _ = model(s, g)
+    v1b, _ = m2(s, g)
+    assert torch.allclose(v1a, v1b, atol=1e-6)
+    assert info["state_mode"] == "eef_piece"
+    assert info["v_stats"]["min"] == -3.0
+    assert info["rel_piece_mean"] is not None

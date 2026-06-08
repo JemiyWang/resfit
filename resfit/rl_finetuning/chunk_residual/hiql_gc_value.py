@@ -185,3 +185,36 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         vv = torch.minimum(vv1, vv2)
         v_stats = {"min": float(vv.min()), "max": float(vv.max()), "mean": float(vv.mean())}
     return model, v_stats
+
+
+def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
+                  state_mode="eef_piece", rel_piece_stats=None):
+    """存 gc_value.pt:权重 + 维度 + v_stats + state mean/std + dataset_id + state_mode
+    (+ eef_piece 的 rel_piece mean/std,供 Phase 3 online 同源标准化)。"""
+    payload = {
+        "state_dict": model.state_dict(),
+        "state_dim": model.state_dim,
+        "rep_dim": model.rep_dim,
+        "hidden": model.hidden,
+        "v_stats": v_stats,
+        "mean": mean,
+        "std": std,
+        "dataset_id": dataset_id,
+        "state_mode": state_mode,
+    }
+    if rel_piece_stats is not None:
+        payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
+    torch.save(payload, path)
+
+
+def load_gc_value(path, map_location="cpu"):
+    """读 gc_value.pt,重建 GoalConditionedVF(eval),返回 (model, info)。"""
+    ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    model = GoalConditionedVF(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"])
+    model.load_state_dict(ckpt["state_dict"])
+    model.eval()
+    info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
+    info["state_mode"] = ckpt.get("state_mode", "eef_piece")
+    info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
+    info["rel_piece_std"] = ckpt.get("rel_piece_std")
+    return model, info
