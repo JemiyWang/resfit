@@ -19,6 +19,8 @@ import copy
 import json
 import os
 
+import numpy as np
+
 import wandb
 import torch
 from tensordict import TensorDict
@@ -198,6 +200,11 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
                                   if potential is not None else None)
         sig["value_state_mode"] = (getattr(potential, "state_mode", None)
                                    if potential is not None else None)
+    if args.subgoal_conditioned:
+        sig["subgoal"] = True
+        sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
+        sig["high_actor_ckpt"] = os.path.abspath(args.high_actor_ckpt)
+        sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
     return sig
 
 
@@ -260,6 +267,13 @@ def build_parser():
     p.add_argument("--stage_balanced", action="store_true", help="按 stage 配额采样(stage-balanced replay)")
     p.add_argument("--stage_conditioned", action="store_true",
                    help="把 stage_id one-hot 喂进 actor/critic（§22 分段修正；默认关=baseline）")
+    p.add_argument("--subgoal_conditioned", action="store_true",
+                   help="把 HIQL 潜子目标 z(10维)喂进 actor/critic(分层路 Phase 3;默认关=baseline)")
+    p.add_argument("--gc_value_ckpt", default=None, help="Phase 1 gc_value.pt(--subgoal_conditioned 需)")
+    p.add_argument("--high_actor_ckpt", default=None, help="Phase 2 high_actor.pt(在线提 z)")
+    p.add_argument("--subgoal_way_steps", type=int, default=25, help="offline 真航点 z 的 k 步")
+    p.add_argument("--subgoal_state30_cache", default=None,
+                   help="state30 缓存 npz(算 goal30,避免回放;建议设 outputs_chunk/three_piece_state30.npz)")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
     p.add_argument("--demo_bc_coef", type=float, default=0.0,
@@ -380,6 +394,8 @@ def main():
               f"state_mode={potential.state_mode} scale={potential.scale:.4f}")
     # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
     env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
+    if args.subgoal_conditioned:
+        env_state_mode = "eef_piece"   # 子目标在线需 env 经 info["rel_piece"] 透出 rel
 
     vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device,
                                     state_mode=env_state_mode)
@@ -432,6 +448,8 @@ def main():
     # --- 维度 ---
     image_keys = list(base_policy.config.image_features.keys())
     lowdim_keys = ["observation.state", "observation.base_action", "observation.stage_id"]
+    if args.subgoal_conditioned:
+        lowdim_keys.append("observation.subgoal")
     obs0, _ = env.reset()
     img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
     state_dim = obs0["observation.state"].shape[1]
@@ -451,11 +469,30 @@ def main():
     if stage_budget is not None:
         assert args.actor == "raw", "stage_budget 第一版只支持 --actor raw"
         assert args.task in NUM_STAGES, f"--stage_budget 需要 {args.task} 有 stage 检测器"
+
+    subgoal = None
+    if args.subgoal_conditioned:
+        assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
+        assert env_state_mode == "eef_piece", "--subgoal_conditioned 需 env 透出 rel(eef_piece)"
+        assert args.gc_value_ckpt and args.high_actor_ckpt, \
+            "--subgoal_conditioned 需 --gc_value_ckpt 与 --high_actor_ckpt"
+        from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal
+        from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
+        # goal30 = demo 末态(30 维)均值,作为在线高层的固定任务目标;用 state30 缓存避免回放
+        _seqs30 = load_or_build_state30(args.offline_dataset_path, args.dataset,
+                                        args.offline_num_demos, args.subgoal_state30_cache)
+        goal30 = np.stack([np.asarray(s)[-1] for s in _seqs30], axis=0).mean(axis=0)
+        subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
+                                         goal30=goal30, device=args.device)
+        print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")
+
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
                    cfg=cfg.agent, residual_actor=True,
                    stage_conditioned=args.stage_conditioned, num_stages=num_stages,
-                   stage_budget=stage_budget)
+                   stage_budget=stage_budget,
+                   subgoal_conditioned=args.subgoal_conditioned,
+                   subgoal_dim=(subgoal.rep_dim if subgoal is not None else 0),)
 
     # repr/patch 维(供 flow actor 构造,复用 QAgent 的算法)
     enc0 = agent.encoders[0]
@@ -510,7 +547,8 @@ def main():
                 action_scaler=action_scaler, state_standardizer=state_standardizer,
                 image_keys=image_keys, bonus=args.stage_reward_bonus,
                 mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
-                stage_cache=args.offline_stage_cache, potential=potential)
+                stage_cache=args.offline_stage_cache, potential=potential,
+                subgoal=subgoal, way_steps=args.subgoal_way_steps,)
             n_off = len(offline_rb)
             if cache_dir:
                 _save_offline_buffer(offline_rb, cache_dir, sig, n_off)
@@ -536,7 +574,8 @@ def main():
     # --- 训练循环(x 轴=环境步;每 chunk 计入 chunk_length 步)---
     run = init_wandb(args)
 
-    obs, _ = env.reset()
+    obs, reset_info = env.reset()
+    cur_rel = reset_info.get("rel_piece") if args.subgoal_conditioned else None
     env_steps = 0
     next_eval = 0
     next_log = args.learning_starts
@@ -544,9 +583,16 @@ def main():
     last_diag = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
     while env_steps <= total:
+        if args.subgoal_conditioned:
+            obs["observation.subgoal"] = subgoal.subgoal_online(
+                obs["observation.state"], cur_rel).to(obs["observation.state"].device)
         with torch.no_grad(), utils.eval_mode(agent):
             action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,480] 残差
         next_obs, reward, terminated, truncated, info = env.step(action)
+        if args.subgoal_conditioned:
+            next_rel = info.get("rel_piece")
+            next_obs["observation.subgoal"] = subgoal.subgoal_online(
+                next_obs["observation.state"], next_rel).to(next_obs["observation.state"].device)
         done = terminated | truncated
         add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
                              reward=reward, done=done, info=info, image_keys=image_keys,
@@ -561,6 +607,8 @@ def main():
                     # 收维(online_rb 有),若用 add 会留下前导 [1] 维 → 与 offline 混采 concat 报 3-vs-2。
                     relabel_rb.extend(e)
         obs = next_obs
+        if args.subgoal_conditioned:
+            cur_rel = next_rel
         env_steps += args.chunk_length
 
         if env_steps >= args.learning_starts and len(online_rb) > online_batch_size:
