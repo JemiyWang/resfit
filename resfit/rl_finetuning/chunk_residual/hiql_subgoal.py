@@ -29,6 +29,8 @@ class HiqlSubgoal:
         gc, info = load_gc_value(gc_value_ckpt, map_location=device)
         ha, _ = load_high_actor(high_actor_ckpt, map_location=device)
         assert info["state_mode"] == "eef_piece", "分层路 gc_value 须 eef_piece(object-aware)"
+        assert ha.rep_dim == gc.rep_dim, f"rep_dim 不一致: high_actor={ha.rep_dim} gc_value={gc.rep_dim}"
+        assert ha.state_dim == gc.state_dim, f"state_dim 不一致: high_actor={ha.state_dim} gc_value={gc.state_dim}"
         return cls(gc, ha, goal30, info["rel_piece_mean"], info["rel_piece_std"], device=device)
 
     def build_state30(self, state_std, rel_raw):
@@ -51,7 +53,14 @@ class HiqlSubgoal:
 
     @torch.no_grad()
     def subgoal_waypoint(self, s30_base, s30_target):
-        """离线:z = φ(base=s_t, target=s_{t+k})(真航点)。返回 [B, rep_dim]。"""
-        b = torch.as_tensor(s30_base, dtype=torch.float32, device=self.device)
-        t = torch.as_tensor(s30_target, dtype=torch.float32, device=self.device)
+        """离线:z = φ(base=s_t, target=s_{t+k})(真航点)。输入须是已拼好的 30 维 state
+        (来自 state30 缓存,18 std + 12 标准化 rel),不是 18 维原始 state。返回 [B, rep_dim]。"""
+        b = torch.as_tensor(np.asarray(s30_base), dtype=torch.float32, device=self.device)
+        t = torch.as_tensor(np.asarray(s30_target), dtype=torch.float32, device=self.device)
+        if b.ndim == 1:
+            b = b.unsqueeze(0)
+        if t.ndim == 1:
+            t = t.unsqueeze(0)
+        assert b.shape[-1] == self.vf.state_dim and t.shape[-1] == self.vf.state_dim, \
+            f"subgoal_waypoint 须传 {self.vf.state_dim} 维 state(已拼 rel),got {b.shape[-1]}/{t.shape[-1]}"
         return self.vf.phi(b, t)

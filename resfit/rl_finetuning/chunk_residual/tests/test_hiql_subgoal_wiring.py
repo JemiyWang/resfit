@@ -82,3 +82,6 @@ def test_hiql_subgoal_shapes(tmp_path):
     assert z.shape == (2, 10)
     zw = sg.subgoal_waypoint(torch.zeros(3, 30), torch.ones(3, 30))
     assert zw.shape == (3, 10)
+    # 1-D 单步在线调用(典型 rollout 形态)-> (1, rep_dim)
+    z1 = sg.subgoal_online(torch.zeros(18), np.zeros(12))
+    assert z1.shape == (1, 10)
