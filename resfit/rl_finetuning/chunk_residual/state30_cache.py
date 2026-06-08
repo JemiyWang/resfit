@@ -34,6 +34,8 @@ def load_or_build_state30(hdf5_path, dataset_id, num_demos, cache_path):
         return seqs[:num_demos] if num_demos is not None else seqs
     from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
     seqs, _, _ = read_per_demo_states(hdf5_path, dataset_id, "eef_piece", num_demos=num_demos)
+    # 注意:num_demos 非 None 时这里写的是"部分缓存"(只前 N 条)。若之后用更大的 num_demos
+    # 复用,会命中此缓存却件数不足而静默少返回。实运用应以 num_demos=None(全量)建一次缓存。
     if cache_path:
         save_state30_cache(cache_path, seqs)
     return seqs
