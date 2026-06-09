@@ -51,6 +51,41 @@ def _make_tiny_hdf5(path, T=4):
     return T
 
 
+def _build(tmp_path, base_mode, base_policy):
+    hdf5 = str(tmp_path / "tiny.hdf5")
+    T = _make_tiny_hdf5(hdf5)
+    stage_cache = str(tmp_path / "stages.npz")
+    save_stage_cache(stage_cache, {"demo_0": np.arange(T, dtype=np.int8)})
+    rb = _FakeRb()
+    osr.build_offline_buffer(
+        rb, hdf5, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+        image_keys=["observation.images.agentview"], bonus=1.0, mode="staged",
+        gamma=0.99, stage_cache=stage_cache, potential=None,
+        base_policy=base_policy, base_mode=base_mode, base_device="cpu")
+    return rb, T
+
+
+def test_base_policy_mode_anchors_to_base_not_gt(tmp_path):
+    fake = _FakeBase(action_dim=7)
+    rb, T = _build(tmp_path, base_mode="base_policy", base_policy=fake)
+    # GT actions 全 0 → act(=GT)=0;base_action 应为 fake 的 (t+1),≠ GT
+    for t in range(T - 1):
+        ba = rb.items[t]["obs"]["observation.base_action"]
+        act = rb.items[t]["action"]
+        assert torch.allclose(act, torch.zeros(7))                  # action 仍存 GT(0)
+        assert torch.allclose(ba, torch.full((7,), float(t + 1)))   # base_action = base policy 现算
+        bc_target = act - ba                                        # 隐含残差目标 ≠ 0
+        assert not torch.allclose(bc_target, torch.zeros(7))
+
+
+def test_gt_mode_byte_equivalent_base_equals_action(tmp_path):
+    rb, T = _build(tmp_path, base_mode="gt", base_policy=None)
+    for t in range(T - 1):
+        ba = rb.items[t]["obs"]["observation.base_action"]
+        act = rb.items[t]["action"]
+        assert torch.allclose(ba, act)                              # GT-as-base:base==action(逐位等价)
+
+
 def test_demo_base_actions_order_reset_format_scale(tmp_path):
     hdf5 = str(tmp_path / "tiny.hdf5")
     T = _make_tiny_hdf5(hdf5)

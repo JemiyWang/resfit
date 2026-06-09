@@ -185,7 +185,8 @@ def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
 
 def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
-                         stage_cache=None, potential=None, subgoal=None, way_steps=25) -> int:
+                         stage_cache=None, potential=None, subgoal=None, way_steps=25,
+                         base_policy=None, base_mode="gt", base_device="cpu") -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
     GT-as-base:obs.base_action 与 action 都用缩放后的 GT 动作(残差目标 = 0,把 actor
@@ -247,6 +248,13 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                                         rel_piece_seq=rel_seq)
                 act_n = action_scaler.scale(
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
+                if base_mode == "base_policy":
+                    if base_policy is None:
+                        raise ValueError("base_mode='base_policy' 需传 base_policy")
+                    base_n = _demo_base_actions(base_policy, grp, image_keys,
+                                                action_scaler, base_device)  # (T,D) base 现算
+                else:
+                    base_n = act_n                                            # gt:GT-as-base(逐位等价)
                 imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])
                         .permute(0, 3, 1, 2).contiguous() for k in image_keys}  # (T,3,84,84)
                 sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
@@ -264,10 +272,10 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
 
                 for t in range(T - 1):
                     curr = {"observation.state": state_n[t],
-                            "observation.base_action": act_n[t],
+                            "observation.base_action": base_n[t],
                             "observation.stage_id": sid[t:t + 1]}
                     nxt = {"observation.state": state_n[t + 1],
-                           "observation.base_action": act_n[t + 1],
+                           "observation.base_action": base_n[t + 1],
                            "observation.stage_id": nsid[t:t + 1]}
                     if subgoal_z is not None:
                         curr["observation.subgoal"] = subgoal_z[t]
