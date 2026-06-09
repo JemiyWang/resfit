@@ -165,6 +165,8 @@ def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
     state_raw = assemble_state18({k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS})  # (T,18) 原始
     state_t = torch.as_tensor(np.asarray(state_raw), dtype=torch.float32)
     T = state_t.shape[0]
+    if T == 0:
+        raise ValueError("_demo_base_actions: demo group is empty (T=0)")
     imgs = {}
     for k in image_keys:
         arr = np.asarray(grp[f"obs/{_hdf5_image_key(k)}"][()])          # (T,H,W,3) uint8
@@ -176,7 +178,7 @@ def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
         for k in image_keys:
             raw_obs[k] = imgs[k][t:t + 1].to(device)
         a_raw = base_policy.select_action(raw_obs)                      # (1, action_dim) 原始尺度
-        out.append(a_raw.detach().to("cpu"))
+        out.append(a_raw.to("cpu"))
     base_raw = torch.cat(out, dim=0)                                    # (T, action_dim)
     return action_scaler.scale(base_raw)                               # (T, action_dim)
 

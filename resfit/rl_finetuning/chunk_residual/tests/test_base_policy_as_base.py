@@ -12,6 +12,7 @@ class _IdScaler:
     def unscale(self, a): return a
 
 
+# _IdStd / _FakeRb(下方)与 save_stage_cache import 供后续 Task 2 的 build_offline_buffer 测试复用
 class _IdStd:
     def standardize(self, s): return torch.as_tensor(s, dtype=torch.float32)
 
@@ -27,10 +28,12 @@ class _FakeBase:
         self.reset_calls = 0
         self.select_calls = 0
         self.seen_keys = []
+        self.seen_obs = []
         self.action_dim = action_dim
     def reset(self): self.reset_calls += 1
     def select_action(self, raw_obs):
         self.seen_keys.append(set(raw_obs.keys()))
+        self.seen_obs.append({k: v.clone() for k, v in raw_obs.items()})
         i = self.select_calls
         self.select_calls += 1
         return torch.full((1, self.action_dim), float(i + 1))
@@ -67,3 +70,11 @@ def test_demo_base_actions_order_reset_format_scale(tmp_path):
     for keys in fake.seen_keys:
         assert "observation.state" in keys
         assert "observation.images.agentview" in keys
+    # obs 格式:state=(1,18) float32 原始;图像=(1,3,H,W) float32 ∈[0,1]
+    obs0 = fake.seen_obs[0]
+    assert obs0["observation.state"].shape == (1, 18)
+    assert obs0["observation.state"].dtype == torch.float32
+    img = obs0["observation.images.agentview"]
+    assert img.shape == (1, 3, 4, 4)              # tiny hdf5 图像是 4x4
+    assert img.dtype == torch.float32
+    assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0
