@@ -124,3 +124,41 @@ def test_base_policy_mode_requires_base_policy(tmp_path):
 def test_unknown_base_mode_raises(tmp_path):
     with pytest.raises(ValueError, match="未知 base_mode"):
         _build(tmp_path, base_mode="bogus", base_policy=None)
+
+
+# ── Task 3:CLI flag + 缓存签名条件键 ────────────────────────────────────────
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+    build_parser, _offline_buffer_signature)
+
+
+def _sig_args(extra):
+    base = ["--task", "TwoArmThreePieceAssembly", "--offline_dataset_path", "/tmp/x.hdf5"]
+    return build_parser().parse_args(base + extra)
+
+
+def test_cli_offline_base_mode_default_gt():
+    assert build_parser().parse_args([]).offline_base_mode == "gt"
+
+
+def test_cli_offline_base_mode_parses():
+    assert build_parser().parse_args(["--offline_base_mode", "base_policy"]).offline_base_mode \
+        == "base_policy"
+
+
+def test_signature_gt_has_no_base_mode_key():
+    img = ["observation.images.agentview"]
+    s = _offline_buffer_signature(_sig_args([]), img, 100, "staged")
+    assert "offline_base_mode" not in s          # gt 默认 → 不加键 → 旧缓存向后兼容
+
+
+def test_signature_base_policy_keys_and_distinguish_base():
+    img = ["observation.images.agentview"]
+    sa = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_wandb_id", "/tmp/baseA"]),
+        img, 100, "staged")
+    sb = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_wandb_id", "/tmp/baseB"]),
+        img, 100, "staged")
+    assert sa.get("offline_base_mode") == "base_policy"
+    assert "base_wandb_id" in sa
+    assert sa != sb                              # 换 base → 不同签名 → 强制重建

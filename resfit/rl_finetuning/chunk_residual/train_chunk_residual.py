@@ -205,6 +205,12 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
         sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
         sig["high_actor_ckpt"] = os.path.abspath(args.high_actor_ckpt)
         sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
+    if args.offline_base_mode != "gt":
+        sig["offline_base_mode"] = args.offline_base_mode
+        sig["base_policy_type"] = getattr(args, "base_policy_type", "act")
+        sig["base_wandb_id"] = (os.path.abspath(args.base_wandb_id)
+                                if args.base_wandb_id and os.path.isdir(args.base_wandb_id)
+                                else args.base_wandb_id)
     return sig
 
 
@@ -276,6 +282,10 @@ def build_parser():
                    help="state30 缓存 npz(算 goal30,避免回放;建议设 outputs_chunk/three_piece_state30.npz)")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
+    p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="gt",
+                   help="离线 buffer 的 base_action 来源:gt(默认,逐位等价=GT-as-base,残差目标0)|"
+                        "base_policy(冻结 base 现算 base_action,action 仍存 GT;bc_target=GT-base,"
+                        "锚向专家 + critic offline 锚对齐在线流形)。base_policy 需 queue 模式。")
     p.add_argument("--demo_bc_coef", type=float, default=0.0,
                    help="残差 actor 的 demo-BC 权重(模块②a);0=关(逐位等价 baseline)。"
                         ">0 需 offline_fraction>0(bc_batch 取自 offline_rb)、--actor raw")
@@ -556,7 +566,9 @@ def main():
                 image_keys=image_keys, bonus=args.stage_reward_bonus,
                 mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
                 stage_cache=args.offline_stage_cache, potential=potential,
-                subgoal=subgoal, way_steps=args.subgoal_way_steps,)
+                subgoal=subgoal, way_steps=args.subgoal_way_steps,
+                base_policy=base_policy, base_mode=args.offline_base_mode,
+                base_device=args.device,)
             n_off = len(offline_rb)
             if cache_dir:
                 _save_offline_buffer(offline_rb, cache_dir, sig, n_off)
