@@ -224,7 +224,7 @@ def _validate_offline_base_mode(args):
     if args.offline_base_mode != "base_policy":
         return
     assert args.base_action_mode == "queue" and args.chunk_length == 1, \
-        ("--offline_base_mode base_policy 需 queue 模式"
+        ("--offline_base_mode base_policy 需 queue 模式 "
          "(--base_action_mode queue --chunk_length 1);当前 "
          f"base_action_mode={args.base_action_mode!r} chunk_length={args.chunk_length}")
     if args.base_policy_type == "pi05":
@@ -400,6 +400,7 @@ def main():
             "pi05/pi0 基座是 step 级(select_action),只支持 --base_action_mode queue(且 --chunk_length 1)"
     if args.base_action_mode == "queue":
         assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
+    _validate_offline_base_mode(args)
     base_policy = build_base_policy(args, args.device)
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
@@ -542,9 +543,6 @@ def main():
         alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority",
         transform=MultiStepTransform(n_steps=args.n_step, gamma=args.gamma),
         pin_memory=True, prefetch=4, batch_size=args.batch_size)
-
-    # --- 参数一致性校验(在构建 buffer 之前)---
-    _validate_offline_base_mode(args)
 
     # --- offline demo 锚 buffer(方案 A;offline_fraction=0 时整段跳过,行为同改造前)---
     online_batch_size = int(args.batch_size * (1 - args.offline_fraction))

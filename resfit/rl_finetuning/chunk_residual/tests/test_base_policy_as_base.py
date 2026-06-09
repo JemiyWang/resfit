@@ -190,6 +190,13 @@ def test_base_policy_mode_requires_queue():
         _validate_offline_base_mode(a)
 
 
+def test_base_policy_mode_requires_queue_wrong_mode_only():
+    a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--base_action_mode", "replan", "--chunk_length", "1"])
+    with pytest.raises(AssertionError):
+        _validate_offline_base_mode(a)
+
+
 def test_base_policy_mode_ok_with_queue():
     a = _sig_args(["--offline_base_mode", "base_policy",
                    "--base_action_mode", "queue", "--chunk_length", "1"])
