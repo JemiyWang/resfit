@@ -153,6 +153,34 @@ def precompute_stage_cache(dataset_path, out_path, num_demos=None) -> int:
     return len(stages)
 
 
+def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
+    """逐帧顺序复现在线 queue 语义,返回 scale 后的 base_action (T, action_dim)。
+
+    与在线 chunk_env_wrapper._base_chunk_flat(queue,:94-97)对齐:每 demo 先 base_policy.reset()
+    清 ACT action queue,再按帧顺序调 select_action(内部自管队列,空了才前向、否则弹队列),
+    故必须顺序、不可批。raw_obs 严格对齐 env 运行时 _process_obs:observation.state=原始18维
+    float32(未标准化);图像 uint8 HWC → float32 CHW /255。action_scaler.scale 把原始尺度 base
+    动作转到与 act_n 同一缩放空间。
+    """
+    state_raw = assemble_state18({k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS})  # (T,18) 原始
+    state_t = torch.as_tensor(np.asarray(state_raw), dtype=torch.float32)
+    T = state_t.shape[0]
+    imgs = {}
+    for k in image_keys:
+        arr = np.asarray(grp[f"obs/{_hdf5_image_key(k)}"][()])          # (T,H,W,3) uint8
+        imgs[k] = torch.as_tensor(arr, dtype=torch.float32).permute(0, 3, 1, 2) / 255.0  # (T,3,H,W)
+    base_policy.reset()
+    out = []
+    for t in range(T):
+        raw_obs = {"observation.state": state_t[t:t + 1].to(device)}
+        for k in image_keys:
+            raw_obs[k] = imgs[k][t:t + 1].to(device)
+        a_raw = base_policy.select_action(raw_obs)                      # (1, action_dim) 原始尺度
+        out.append(a_raw.detach().to("cpu"))
+    base_raw = torch.cat(out, dim=0)                                    # (T, action_dim)
+    return action_scaler.scale(base_raw)                               # (T, action_dim)
+
+
 def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
                          stage_cache=None, potential=None, subgoal=None, way_steps=25) -> int:
