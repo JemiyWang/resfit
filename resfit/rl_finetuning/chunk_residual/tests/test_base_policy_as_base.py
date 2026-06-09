@@ -1,4 +1,5 @@
 """base-policy-as-base 离线模式:base_action 由冻结 base policy 现算(非 GT-as-base)。"""
+import pytest
 import h5py
 import numpy as np
 import torch
@@ -113,3 +114,13 @@ def test_demo_base_actions_order_reset_format_scale(tmp_path):
     assert img.shape == (1, 3, 4, 4)              # tiny hdf5 图像是 4x4
     assert img.dtype == torch.float32
     assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0
+
+
+def test_base_policy_mode_requires_base_policy(tmp_path):
+    with pytest.raises(ValueError, match="需传 base_policy"):
+        _build(tmp_path, base_mode="base_policy", base_policy=None)
+
+
+def test_unknown_base_mode_raises(tmp_path):
+    with pytest.raises(ValueError, match="未知 base_mode"):
+        _build(tmp_path, base_mode="bogus", base_policy=None)

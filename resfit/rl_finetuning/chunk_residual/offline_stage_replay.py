@@ -196,7 +196,15 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
 
     stage_cache 命中则读缓存(不起 env、不 replay);缺失的 demo 才懒建 env replay,并把
     新算的补回缓存。
+
+    base_mode="base_policy" 时 observation.base_action 由冻结 base_policy 逐帧现算(base_device 指定
+    推理设备),action 仍存 GT → bc_target=GT-base(锚向专家);默认 base_mode="gt" 保持 GT-as-base
+    逐位等价(base_action=action,bc_target=0)。
     """
+    if base_mode not in ("gt", "base_policy"):
+        raise ValueError(f"未知 base_mode={base_mode!r},支持 'gt' / 'base_policy'")
+    if base_mode == "base_policy" and base_policy is None:
+        raise ValueError("base_mode='base_policy' 需传 base_policy")
     cached = load_stage_cache(stage_cache) if (stage_cache and os.path.exists(stage_cache)) else None
     env = None
     detector = None
@@ -249,8 +257,6 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 act_n = action_scaler.scale(
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
                 if base_mode == "base_policy":
-                    if base_policy is None:
-                        raise ValueError("base_mode='base_policy' 需传 base_policy")
                     base_n = _demo_base_actions(base_policy, grp, image_keys,
                                                 action_scaler, base_device)  # (T,D) base 现算
                 else:
