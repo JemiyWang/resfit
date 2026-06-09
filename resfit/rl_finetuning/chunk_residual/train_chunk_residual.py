@@ -207,10 +207,15 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
         sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
     if args.offline_base_mode != "gt":
         sig["offline_base_mode"] = args.offline_base_mode
-        sig["base_policy_type"] = getattr(args, "base_policy_type", "act")
+        sig["base_policy_type"] = args.base_policy_type
         sig["base_wandb_id"] = (os.path.abspath(args.base_wandb_id)
                                 if args.base_wandb_id and os.path.isdir(args.base_wandb_id)
                                 else args.base_wandb_id)
+        if args.base_policy_type == "pi05":
+            # pi05 身份由 serve 连接参数决定(base_wandb_id 对它无意义),换 serve 必须重建
+            sig["pi0_host"] = args.pi0_host
+            sig["pi0_port"] = args.pi0_port
+            sig["pi0_prompt"] = args.pi0_prompt
     return sig
 
 

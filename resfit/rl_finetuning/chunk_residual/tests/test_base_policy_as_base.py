@@ -162,3 +162,18 @@ def test_signature_base_policy_keys_and_distinguish_base():
     assert sa.get("offline_base_mode") == "base_policy"
     assert "base_wandb_id" in sa
     assert sa != sb                              # 换 base → 不同签名 → 强制重建
+
+
+def test_signature_includes_base_policy_type_and_pi05_identity():
+    img = ["observation.images.agentview"]
+    s_act = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_wandb_id", "/tmp/b"]),
+        img, 100, "staged")
+    assert s_act.get("base_policy_type") == "act"      # 默认 base 类型入签名
+    assert "pi0_host" not in s_act                     # act 不带 pi05 连接键
+    s_pi = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_policy_type", "pi05"]),
+        img, 100, "staged")
+    assert s_pi.get("base_policy_type") == "pi05"
+    assert "pi0_host" in s_pi                           # pi05 把连接身份纳入签名
+    assert s_act != s_pi                                # 换 base 类型 → 不同签名 → 强制重建
