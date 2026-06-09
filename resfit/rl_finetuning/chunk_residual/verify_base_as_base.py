@@ -25,7 +25,7 @@ def main():
         "--offline_dataset_path", HDF5, "--device", "cuda",
     ])
     base_policy = build_base_policy(args, device="cuda")
-    base_policy.config.n_action_steps = 10
+    base_policy.config.n_action_steps = args.base_n_action_steps  # 与 parse_args 列表对齐(=10)
     image_keys = list(base_policy.config.image_features.keys())
     # 与训练同款 action_scaler(train_chunk_residual.py:363-365)
     from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
@@ -42,8 +42,9 @@ def main():
             base_n = osr._demo_base_actions(base_policy, grp, image_keys, action_scaler, "cuda")
             gt = action_scaler.scale(torch.as_tensor(grp["actions"][()], dtype=torch.float32))
             bc = (gt - base_n)                          # 隐含残差目标 = GT - base
-            assert torch.isfinite(base_n).all(), f"{ep}: base_n 非有限"
             assert base_n.shape == gt.shape, f"{ep}: shape {base_n.shape} vs GT {gt.shape}"
+            assert torch.isfinite(base_n).all(), f"{ep}: base_n 非有限"
+            assert bc.abs().max() < 3.0, f"{ep}: bc_target 幅度异常 {bc.abs().max():.3f}(格式可能错)"
             print(f"{ep} T={len(base_n)} base|mean|={base_n.abs().mean():.4f} "
                   f"bc_target|mean|={bc.abs().mean():.4f} bc_target|max|={bc.abs().max():.4f}")
             assert bc.abs().mean() > 1e-4, f"{ep}: bc_target ~0(base≈GT?格式可能错或 base 完美)"
