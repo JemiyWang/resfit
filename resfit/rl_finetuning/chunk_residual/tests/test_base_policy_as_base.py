@@ -177,3 +177,25 @@ def test_signature_includes_base_policy_type_and_pi05_identity():
     assert s_pi.get("base_policy_type") == "pi05"
     assert "pi0_host" in s_pi                           # pi05 把连接身份纳入签名
     assert s_act != s_pi                                # 换 base 类型 → 不同签名 → 强制重建
+
+
+# ── Task 4:_validate_offline_base_mode 断言 ─────────────────────────────────
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import _validate_offline_base_mode
+
+
+def test_base_policy_mode_requires_queue():
+    a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--base_action_mode", "replan", "--chunk_length", "2"])
+    with pytest.raises(AssertionError):
+        _validate_offline_base_mode(a)
+
+
+def test_base_policy_mode_ok_with_queue():
+    a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--base_action_mode", "queue", "--chunk_length", "1"])
+    _validate_offline_base_mode(a)        # 不抛
+
+
+def test_gt_mode_skips_validation():
+    a = _sig_args(["--base_action_mode", "replan", "--chunk_length", "2"])
+    _validate_offline_base_mode(a)        # gt 默认 → 不校验、不抛

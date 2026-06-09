@@ -219,6 +219,19 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
     return sig
 
 
+def _validate_offline_base_mode(args):
+    """base_policy 模式需 queue(chunk_length==1 且 base_action_mode=="queue");gt 模式跳过。"""
+    if args.offline_base_mode != "base_policy":
+        return
+    assert args.base_action_mode == "queue" and args.chunk_length == 1, \
+        ("--offline_base_mode base_policy 需 queue 模式"
+         "(--base_action_mode queue --chunk_length 1);当前 "
+         f"base_action_mode={args.base_action_mode!r} chunk_length={args.chunk_length}")
+    if args.base_policy_type == "pi05":
+        print("[offline-base] WARN: pi05 base 走 websocket 逐帧推理(~23.8 万次),"
+              "首次建 buffer 很慢;--offline_buffer_cache 缓存后秒读")
+
+
 def _offline_cache_valid(cache_dir, sig):
     """缓存目录存在、meta 完整且签名完全匹配才算命中。"""
     meta = os.path.join(cache_dir, "buffer_meta.json")
@@ -529,6 +542,9 @@ def main():
         alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority",
         transform=MultiStepTransform(n_steps=args.n_step, gamma=args.gamma),
         pin_memory=True, prefetch=4, batch_size=args.batch_size)
+
+    # --- 参数一致性校验(在构建 buffer 之前)---
+    _validate_offline_base_mode(args)
 
     # --- offline demo 锚 buffer(方案 A;offline_fraction=0 时整段跳过,行为同改造前)---
     online_batch_size = int(args.batch_size * (1 - args.offline_fraction))
