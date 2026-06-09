@@ -206,3 +206,15 @@ def test_base_policy_mode_ok_with_queue():
 def test_gt_mode_skips_validation():
     a = _sig_args(["--base_action_mode", "replan", "--chunk_length", "2"])
     _validate_offline_base_mode(a)        # gt 默认 → 不校验、不抛
+
+
+def test_signature_distinguishes_base_n_action_steps():
+    img = ["observation.images.agentview"]
+    s10 = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_n_action_steps", "10"]),
+        img, 100, "staged")
+    s5 = _offline_buffer_signature(
+        _sig_args(["--offline_base_mode", "base_policy", "--base_n_action_steps", "5"]),
+        img, 100, "staged")
+    assert s10.get("base_n_action_steps") == 10
+    assert s10 != s5                       # 换队列步幅 → 不同签名 → 强制重建(否则复用错缓存)
