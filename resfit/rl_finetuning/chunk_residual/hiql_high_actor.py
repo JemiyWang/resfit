@@ -36,6 +36,27 @@ def awr_weight(adv, beta, clip=100.0):
     return torch.exp(beta * adv).clamp(max=clip)
 
 
+def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
+                            n_total, high_p_randomgoal=0.0):
+    """HIQL GCSDataset 高段(逐字照 gc_dataset.py:122-135),返回 (goal_idx, target_idx)。
+
+    traj goal: 线性插值 round(min(si+1,final)·d + final·(1−d)) ∈ [si+1, final],永不命中 current;
+    traj target = min(si+way, traj_goal)。random goal(prob high_p_randomgoal)的 target=min(si+way, final)。
+    """
+    si = np.asarray(s_idx, dtype=np.int64)
+    B = len(si)
+    final = np.array([last_idx_of[int(t)] for t in traj_id], dtype=np.int64)
+    dist = rng.random(B)
+    traj_goal = np.round(np.minimum(si + 1, final) * dist + final * (1 - dist)).astype(np.int64)
+    traj_target = np.minimum(si + way_steps, traj_goal)
+    rand_goal = rng.integers(0, n_total, size=B)
+    rand_target = np.minimum(si + way_steps, final)
+    pick = rng.random(B) < high_p_randomgoal
+    goal = np.where(pick, rand_goal, traj_goal)
+    target = np.where(pick, rand_target, traj_target)
+    return goal.astype(np.int64), target.astype(np.int64)
+
+
 def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                      batch_size=256, steps=50_000, hidden=256, seed=0):
     """AWR 抽高层 π^h。vf:冻结 GoalConditionedVF。复用 Phase 1 的 data(build_gc_data)。

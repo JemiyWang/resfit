@@ -71,3 +71,30 @@ def test_high_actor_save_load_roundtrip(tmp_path):
     assert torch.allclose(ha(s, g).mean, ha2(s, g).mean, atol=1e-6)
     assert info["way_steps"] == 25 and info["gc_value_ckpt"] == "gc_value.pt"
     assert info["beta"] == 1.0
+
+
+def test_sample_high_goal_target_traj_branch():
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import sample_high_goal_target
+    last_idx_of = {0: 99}
+    si = np.zeros(3000, dtype=np.int64)          # 全从 t=0 出发
+    tj = np.zeros(3000, dtype=np.int64)
+    rng = np.random.default_rng(0)
+    goal, target = sample_high_goal_target(si, tj, last_idx_of, rng,
+                                           way_steps=25, n_total=100, high_p_randomgoal=0.0)
+    # traj goal ∈ [si+1, final],永不命中 current(=si=0)
+    assert goal.min() >= 1 and goal.max() <= 99
+    # target = min(si+way, goal) = min(25, goal)
+    assert np.all(target == np.minimum(25, goal))
+    assert np.all(target <= goal)
+
+def test_sample_high_goal_target_random_branch():
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import sample_high_goal_target
+    last_idx_of = {0: 99}
+    si = np.full(4000, 10, dtype=np.int64)
+    tj = np.zeros(4000, dtype=np.int64)
+    rng = np.random.default_rng(1)
+    goal, target = sample_high_goal_target(si, tj, last_idx_of, rng,
+                                           way_steps=25, n_total=100, high_p_randomgoal=1.0)
+    # 全 random:goal ∈ [0,100),target = min(10+25, 99) = 35(恒定)
+    assert goal.min() >= 0 and goal.max() < 100
+    assert np.all(target == 35)
