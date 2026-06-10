@@ -36,6 +36,11 @@ def build_parser():
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--target_mode", choices=["fixed_waypoint", "clamp_to_goal"],
+                   default="fixed_waypoint",
+                   help="高层 AWR 航点:fixed_waypoint(原口径,恒 +way)| clamp_to_goal(HIQL,近 goal 塌到 goal)")
+    p.add_argument("--high_p_randomgoal", type=float, default=0.0,
+                   help="clamp_to_goal 下高层 goal 取 random 的概率(HIQL 默认 0)")
     return p
 
 
@@ -56,12 +61,14 @@ def main():
     assert data["states"].shape[1] == vf.state_dim, \
         f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
-          f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps}")
+          f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} target_mode={args.target_mode}")
     ha = train_high_actor(data, vf, way_steps=args.way_steps, beta=args.beta, lr=args.lr,
                           batch_size=args.batch_size, steps=args.steps, hidden=args.hidden,
-                          seed=args.seed)
+                          seed=args.seed, target_mode=args.target_mode,
+                          high_p_randomgoal=args.high_p_randomgoal)
     save_high_actor(args.output, ha, gc_value_ckpt=args.gc_value_ckpt,
-                    way_steps=args.way_steps, beta=args.beta)
+                    way_steps=args.way_steps, beta=args.beta,
+                    target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal)
     print(f"[hiql_high] saved {args.output}")
 
 
