@@ -227,6 +227,10 @@ def test_expectile_loss_weighted_gates_on_adv():
 
 
 def test_train_gc_value_loss_mode_default_equiv_and_hiql_differs():
+    # 注意:此处验证的是底层函数 train_gc_value 的**签名默认**(shared_min),
+    # 与 Task1 改动的 **CLI argparse 默认**(hiql)是两个层面、互不影响。
+    # CLI 入口(train_hiql_gc_value.py)现在默认 hiql,但底层函数签名未变仍默认 shared_min,
+    # 因此这里断言"不传 value_loss_mode == 显式传 shared_min"依然正确。
     from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
     seq = np.arange(12).reshape(12, 1).astype(np.float32)
     data = build_gc_data([seq], [np.array([], dtype=np.int64)])
