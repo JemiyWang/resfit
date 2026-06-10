@@ -296,5 +296,7 @@ def critic_divergence(model, seqs):
         v1s.append(a.numpy())
         v2s.append(b.numpy())
     v1, v2 = np.concatenate(v1s), np.concatenate(v2s)
+    if len(v1) < 2:
+        return {"corr": float("nan"), "mean_abs_diff": float(np.abs(v1 - v2).mean())}
     return {"corr": float(np.corrcoef(v1, v2)[0, 1]),
             "mean_abs_diff": float(np.abs(v1 - v2).mean())}

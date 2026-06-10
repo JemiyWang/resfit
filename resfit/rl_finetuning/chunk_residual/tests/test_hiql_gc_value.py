@@ -299,4 +299,5 @@ def test_critic_divergence_keys_and_range():
     d = critic_divergence(vf, seqs)
     assert set(d) == {"corr", "mean_abs_diff"}
     assert -1.0 <= d["corr"] <= 1.0
+    assert np.isfinite(d["corr"])
     assert d["mean_abs_diff"] >= 0.0

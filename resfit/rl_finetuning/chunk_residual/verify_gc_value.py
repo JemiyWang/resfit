@@ -62,10 +62,10 @@ def main():
 
     res = evaluate(model, seqs, args.gamma)
     div = critic_divergence(model, seqs)
+    report(res, len(seqs))
     print(f"⑥ 双 critic 分化度 [hiql 应更分化]: corr(v1,v2)={div['corr']:.4f} "
           f"mean|v1-v2|={div['mean_abs_diff']:.4f}  "
           f"(value_loss_mode={info.get('value_loss_mode', 'shared_min')})")
-    report(res, len(seqs))
 
 
 def _resync(seq, mean_n, std_n, mean_tr, std_tr):
