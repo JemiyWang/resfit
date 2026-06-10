@@ -70,6 +70,10 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
     """
     if target_mode not in ("fixed_waypoint", "clamp_to_goal"):
         raise ValueError(f"unknown target_mode: {target_mode!r}")
+    if high_p_randomgoal != 0.0 and target_mode != "clamp_to_goal":
+        raise ValueError(
+            f"high_p_randomgoal={high_p_randomgoal} 仅在 target_mode='clamp_to_goal' 下生效;"
+            f"当前 target_mode={target_mode!r} 会静默忽略它")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     vf = copy.deepcopy(vf).eval()

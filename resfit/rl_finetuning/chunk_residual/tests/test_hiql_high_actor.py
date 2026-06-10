@@ -109,6 +109,19 @@ def test_train_high_actor_rejects_bad_target_mode():
     with pytest.raises(ValueError):
         train_high_actor(data, vf, steps=1, batch_size=8, hidden=16, target_mode="bogus")
 
+
+def test_train_high_actor_rejects_random_goal_in_fixed_mode():
+    """fixed_waypoint 下 high_p_randomgoal 无效,传非 0 应 fail-fast(防静默 no-op 污染 A/B)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=1, batch_size=8, rep_dim=4, hidden=16, seed=0)
+    with pytest.raises(ValueError):
+        train_high_actor(data, vf, steps=1, batch_size=8, hidden=16,
+                         target_mode="fixed_waypoint", high_p_randomgoal=0.3)
+
+
 def test_train_high_actor_clamp_collapses_to_near_goal():
     """clamp_to_goal:goal 近(dist<way)时子目标应收敛到 goal 而非固定 +way 航点。"""
     from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
