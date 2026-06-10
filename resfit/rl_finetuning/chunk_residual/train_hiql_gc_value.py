@@ -61,6 +61,9 @@ def build_parser():
                         "几何分布取任意未来帧,覆盖中间态、填洞)")
     p.add_argument("--use_layer_norm", type=int, choices=[0, 1], default=0,
                    help="value/rep 用 LN+GELU(1,对齐 HIQL LayerNormMLP)| 裸 ReLU(0,现状)")
+    p.add_argument("--value_loss_mode", choices=["shared_min", "hiql"], default="shared_min",
+                   help="value 损失:shared_min(现状,两 critic 钉 min 共享目标 + 残差 expectile)| "
+                        "hiql(对齐参考,per-critic 目标不取 min + adv 门控两参 expectile)")
     return p
 
 
@@ -76,15 +79,17 @@ def main():
     data = build_gc_data(seqs, stage_entries)
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
-          f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)}")
+          f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)} "
+          f"value_loss_mode={args.value_loss_mode}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
         hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
-        use_layer_norm=bool(args.use_layer_norm))
+        use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode)
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
-                  dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats)
+                  dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats,
+                  value_loss_mode=args.value_loss_mode)
     print(f"[hiql_gc] saved {args.output}; v_stats={v_stats}")
 
 
