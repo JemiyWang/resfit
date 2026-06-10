@@ -10,6 +10,19 @@ import numpy as np
 PIECE_ROOT_BODIES = ("piece_1_root", "piece_2_root")
 
 
+def get_object_root_bodies(env):
+    """按 env 实际物体属性解析 object-aware 用的 root body 名(无写死字符串)。
+
+    threading: (needle, tripod);three_piece: (piece_1, piece_2);都没有则回退 PIECE_ROOT_BODIES。
+    online(_rel_piece_info)与所有 offline 路径都不传 bodies → 统一在此解析,保证同源。
+    """
+    if hasattr(env, "needle") and hasattr(env, "tripod"):
+        return (env.needle.root_body, env.tripod.root_body)
+    if hasattr(env, "piece_1") and hasattr(env, "piece_2"):
+        return (env.piece_1.root_body, env.piece_2.root_body)
+    return PIECE_ROOT_BODIES
+
+
 def eef_rel_piece(eef_pos_by_arm, piece_pos_by_idx):
     """纯逻辑:双臂 eef 相对各 piece 的世界系位置差。
 
@@ -45,12 +58,14 @@ def read_eef_positions(env):
             np.asarray(env._eef1_xpos, dtype=np.float32).copy()]
 
 
-def compute_eef_rel_piece_from_env(env, piece_root_bodies=PIECE_ROOT_BODIES):
-    """从 env 读 eef(双臂,sim 实时)+ piece(sim) → rel_piece(12,)。
+def compute_eef_rel_piece_from_env(env, piece_root_bodies=None):
+    """从 env 读 eef(双臂,sim 实时)+ object(sim) → rel_piece(12,)。
 
-    online(dexmg._rel_piece_info → info["rel_piece"])与 offline(replay)**共用此函数** → 严格同源,
-    不依赖 obs 刷新行为。③a' object-aware 的同源命门。
+    piece_root_bodies=None(默认,所有现有调用点都这么调)→ get_object_root_bodies(env) 自动解析。
+    online/offline **共用此函数** → 严格同源。
     """
+    if piece_root_bodies is None:
+        piece_root_bodies = get_object_root_bodies(env)
     eefs = read_eef_positions(env)
     pieces = read_piece_positions(env.sim, piece_root_bodies)
     return eef_rel_piece(eefs, pieces)
