@@ -15,3 +15,10 @@ def test_value_defaults_aligned_to_golden():
     assert b.chunk_length == 20
     assert b.actor_lr == 5e-6
     assert b.base_action_mode == "replan"
+
+
+def test_stage_balanced_default_on():
+    """stage_balanced 默认 True;--no_stage_balanced 可关;--stage_balanced 仍可显式开。"""
+    assert build_parser().parse_args([]).stage_balanced is True
+    assert build_parser().parse_args(["--no_stage_balanced"]).stage_balanced is False
+    assert build_parser().parse_args(["--stage_balanced"]).stage_balanced is True

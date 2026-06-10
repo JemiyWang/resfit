@@ -290,7 +290,10 @@ def build_parser():
     p.add_argument("--eval_num_envs", type=int, default=8)
     p.add_argument("--eval_num_episodes", type=int, default=50)
     p.add_argument("--smoke", action="store_true", help="少量步数冒烟")
-    p.add_argument("--stage_balanced", action="store_true", help="按 stage 配额采样(stage-balanced replay)")
+    p.add_argument("--stage_balanced", dest="stage_balanced", action="store_true", default=True,
+                   help="按 stage 配额采样(stage-balanced replay;默认开)")
+    p.add_argument("--no_stage_balanced", dest="stage_balanced", action="store_false",
+                   help="关闭 stage-balanced 采样(回退旧行为)")
     p.add_argument("--stage_conditioned", action="store_true",
                    help="把 stage_id one-hot 喂进 actor/critic（§22 分段修正；默认关=baseline）")
     p.add_argument("--subgoal_conditioned", action="store_true",
