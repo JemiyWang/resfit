@@ -241,8 +241,10 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
 
 
 def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
-                  state_mode="eef_piece", rel_piece_stats=None):
+                  state_mode="eef_piece", rel_piece_stats=None,
+                  value_loss_mode="shared_min"):
     """存 gc_value.pt:权重 + 维度 + v_stats + state mean/std + dataset_id + state_mode
+    + value_loss_mode(provenance,旧档无此键时 load_gc_value 回退 'shared_min')
     (+ eef_piece 的 rel_piece mean/std,供 Phase 3 online 同源标准化)。"""
     payload = {
         "state_dict": model.state_dict(),
@@ -255,6 +257,7 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         "std": std,
         "dataset_id": dataset_id,
         "state_mode": state_mode,
+        "value_loss_mode": value_loss_mode,
     }
     if rel_piece_stats is not None:
         payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
@@ -270,6 +273,7 @@ def load_gc_value(path, map_location="cpu"):
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
     info["state_mode"] = ckpt.get("state_mode", "eef_piece")
+    info["value_loss_mode"] = ckpt.get("value_loss_mode", "shared_min")
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     return model, info

@@ -267,3 +267,23 @@ def test_train_gc_value_rejects_bad_loss_mode():
     with pytest.raises(ValueError):
         train_gc_value(data, steps=1, batch_size=4, rep_dim=4, hidden=16,
                        value_loss_mode="bogus", seed=0)
+
+
+def test_gc_value_save_load_value_loss_mode(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, save_gc_value, load_gc_value)
+    import torch as _t
+    model = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64)
+    p = str(tmp_path / "gc_vlm.pt")
+    save_gc_value(p, model, v_stats={"min": -3.0, "max": 0.0, "mean": -1.0},
+                  mean=_t.zeros(30), std=_t.ones(30), dataset_id="ds",
+                  state_mode="eef_piece", rel_piece_stats=(np.zeros(12), np.ones(12)),
+                  value_loss_mode="hiql")
+    _m, info = load_gc_value(p)
+    assert info["value_loss_mode"] == "hiql"
+    # 旧档(无该键)回退 shared_min
+    ckpt = _t.load(p, weights_only=False)
+    del ckpt["value_loss_mode"]
+    _t.save(ckpt, p)
+    _m2, info2 = load_gc_value(p)
+    assert info2["value_loss_mode"] == "shared_min"
