@@ -13,10 +13,13 @@ import torch.nn as nn
 from resfit.rl_finetuning.chunk_residual.hiql_value import expectile_loss
 
 
-def _mlp(in_dim, hidden, out_dim, n_hidden=2):
+def _mlp(in_dim, hidden, out_dim, n_hidden=2, use_layer_norm=False):
+    act = nn.GELU if use_layer_norm else nn.ReLU
     layers, d = [], in_dim
     for _ in range(n_hidden):
-        layers += [nn.Linear(d, hidden), nn.ReLU()]
+        layers += [nn.Linear(d, hidden), act()]
+        if use_layer_norm:
+            layers += [nn.LayerNorm(hidden)]
         d = hidden
     layers += [nn.Linear(d, out_dim)]
     return nn.Sequential(*layers)
@@ -25,11 +28,11 @@ def _mlp(in_dim, hidden, out_dim, n_hidden=2):
 class RelativeGoalEncoder(nn.Module):
     """φ([g,s]):concat([targets, bases]) -> MLP -> rep_dim,再归一化到半径 sqrt(rep_dim)。"""
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False):
         super().__init__()
         self.state_dim = state_dim
         self.rep_dim = rep_dim
-        self.net = _mlp(2 * state_dim, hidden, rep_dim)
+        self.net = _mlp(2 * state_dim, hidden, rep_dim, use_layer_norm=use_layer_norm)
 
     def forward(self, targets, bases):
         rep = self.net(torch.cat([targets, bases], dim=-1))
@@ -44,14 +47,15 @@ class GoalConditionedVF(nn.Module):
     "目标/子目标状态"。forward(s, g) -> (v1, v2)。
     """
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False):
         super().__init__()
         self.state_dim = state_dim
         self.rep_dim = rep_dim
         self.hidden = hidden
-        self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden)
-        self.v1 = _mlp(state_dim + rep_dim, hidden, 1)
-        self.v2 = _mlp(state_dim + rep_dim, hidden, 1)
+        self.use_layer_norm = use_layer_norm
+        self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden, use_layer_norm=use_layer_norm)
+        self.v1 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
+        self.v2 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
 
     def phi(self, s, g):
         return self.goal_encoder(g, s)
@@ -151,7 +155,7 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
-                   future_mode="stage_entry"):
+                   future_mode="stage_entry", use_layer_norm=False):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
@@ -162,7 +166,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     rng = np.random.default_rng(seed)
     states = data["states"]
     D = states.shape[1]
-    model = GoalConditionedVF(D, rep_dim, hidden)
+    model = GoalConditionedVF(D, rep_dim, hidden, use_layer_norm=use_layer_norm)
     target = copy.deepcopy(model)
     for p in target.parameters():
         p.requires_grad_(False)
@@ -212,6 +216,7 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         "state_dim": model.state_dim,
         "rep_dim": model.rep_dim,
         "hidden": model.hidden,
+        "use_layer_norm": model.use_layer_norm,
         "v_stats": v_stats,
         "mean": mean,
         "std": std,
@@ -226,7 +231,8 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
 def load_gc_value(path, map_location="cpu"):
     """读 gc_value.pt,重建 GoalConditionedVF(eval),返回 (model, info)。"""
     ckpt = torch.load(path, map_location=map_location, weights_only=False)
-    model = GoalConditionedVF(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"])
+    model = GoalConditionedVF(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"],
+                              use_layer_norm=ckpt.get("use_layer_norm", False))
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}

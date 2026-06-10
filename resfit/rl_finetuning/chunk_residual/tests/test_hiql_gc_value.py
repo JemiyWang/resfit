@@ -169,3 +169,39 @@ def test_gc_value_save_load_roundtrip(tmp_path):
     assert info["state_mode"] == "eef_piece"
     assert info["v_stats"]["min"] == -3.0
     assert info["rel_piece_mean"] is not None
+
+
+def test_mlp_layer_norm_modules_present():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import _mlp
+    m_plain = _mlp(8, 16, 4, use_layer_norm=False)
+    m_ln = _mlp(8, 16, 4, use_layer_norm=True)
+    has = lambda m, t: any(isinstance(x, t) for x in m.modules())
+    assert not has(m_plain, torch.nn.LayerNorm) and has(m_plain, torch.nn.ReLU)
+    assert has(m_ln, torch.nn.LayerNorm) and has(m_ln, torch.nn.GELU)
+    x = torch.randn(3, 8)
+    assert m_ln(x).shape == (3, 4)            # 前向 shape 不变
+
+def test_gc_value_layer_norm_forward_and_phi_sphere():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    vf = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, use_layer_norm=True)
+    assert vf.use_layer_norm is True
+    s, g = torch.randn(5, 30), torch.randn(5, 30)
+    v1, v2 = vf(s, g)
+    assert v1.shape == (5,) and v2.shape == (5,)
+    z = vf.phi(s, g)
+    assert torch.allclose(z.norm(dim=-1), torch.full((5,), float(np.sqrt(10))), atol=1e-4)
+
+def test_gc_value_layer_norm_save_load_roundtrip(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, save_gc_value, load_gc_value)
+    model = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, use_layer_norm=True)
+    p = str(tmp_path / "gc_ln.pt")
+    save_gc_value(p, model, v_stats={"min": -3.0, "max": 0.0, "mean": -1.0},
+                  mean=torch.zeros(30), std=torch.ones(30),
+                  dataset_id="ds", state_mode="eef_piece",
+                  rel_piece_stats=(np.zeros(12), np.ones(12)))
+    m2, _ = load_gc_value(p)                  # 须按 use_layer_norm=True 重建,否则 load_state_dict 失配报错
+    assert m2.use_layer_norm is True
+    s, g = torch.randn(4, 30), torch.randn(4, 30)
+    v1a, _ = model(s, g); v1b, _ = m2(s, g)
+    assert torch.allclose(v1a, v1b, atol=1e-6)
