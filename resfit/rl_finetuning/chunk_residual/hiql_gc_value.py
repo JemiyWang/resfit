@@ -13,6 +13,18 @@ import torch.nn as nn
 from resfit.rl_finetuning.chunk_residual.hiql_value import expectile_loss
 
 
+def expectile_loss_weighted(adv, diff, expectile):
+    """两参 expectile(逐字照 HIQL hiql.py:20-22):门控看 adv 符号,平方的是 diff。
+
+    weight = tau      if adv >= 0   # adv=q-V_target,正=该转移是赚的 -> 把 V 往上拉
+    weight = 1 - tau  if adv <  0
+    与单参 expectile_loss 的区别:门控量(adv)与被平方量(diff)解耦。adv==diff 时两者等价。
+    返回标量(.mean())。
+    """
+    weight = torch.where(adv >= 0, expectile, 1.0 - expectile)
+    return (weight * diff.pow(2)).mean()
+
+
 def _mlp(in_dim, hidden, out_dim, n_hidden=2, use_layer_norm=False):
     act = nn.GELU if use_layer_norm else nn.ReLU
     layers, d = [], in_dim

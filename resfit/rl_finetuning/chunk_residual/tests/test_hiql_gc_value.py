@@ -205,3 +205,22 @@ def test_gc_value_layer_norm_save_load_roundtrip(tmp_path):
     s, g = torch.randn(4, 30), torch.randn(4, 30)
     v1a, _ = model(s, g); v1b, _ = m2(s, g)
     assert torch.allclose(v1a, v1b, atol=1e-6)
+
+
+def test_expectile_loss_weighted_gates_on_adv():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import expectile_loss_weighted
+    from resfit.rl_finetuning.chunk_residual.hiql_value import expectile_loss
+    tau = 0.7
+    # 门控用 adv:正/负/0(0 归入 >=0 -> tau),平方的是 diff
+    adv = torch.tensor([1.0, -1.0, 0.0])
+    diff = torch.tensor([2.0, 2.0, 2.0])
+    out = expectile_loss_weighted(adv, diff, tau)
+    expected = (0.7 * 4 + 0.3 * 4 + 0.7 * 4) / 3       # weight=[.7,.3,.7], diff²=4, 取 mean
+    assert abs(float(out) - expected) < 1e-6
+    # adv 与 diff 异号时,与"用 diff 自门控"的单参版不同(证明门控真的看 adv)
+    adv2, diff2 = torch.tensor([-1.0]), torch.tensor([2.0])
+    assert abs(float(expectile_loss_weighted(adv2, diff2, tau)) - 1.2) < 1e-6   # 0.3*4
+    assert abs(float(expectile_loss(diff2, tau)) - 2.8) < 1e-6                  # 0.7*4
+    # adv==diff 时退化为标准 expectile,两者一致
+    z = torch.tensor([1.5, -0.5, 2.0])
+    assert torch.allclose(expectile_loss_weighted(z, z, tau), expectile_loss(z, tau), atol=1e-7)
