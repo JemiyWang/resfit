@@ -272,7 +272,7 @@ def build_parser():
     p.add_argument("--task", default="TwoArmBoxCleanup")
     p.add_argument("--base_wandb_id", default="dexmg-boxcleanup-bc/d59wny58")
     p.add_argument("--dataset", default="ankile/dexmg-two-arm-box-cleanup")
-    p.add_argument("--chunk_length", type=int, default=20)
+    p.add_argument("--chunk_length", type=int, default=1)
     p.add_argument("--action_scale", type=float, default=0.2)
     p.add_argument("--min_range_per_dim", type=float, default=0.1)
     p.add_argument("--total_env_steps", type=int, default=500_000)
@@ -283,7 +283,7 @@ def build_parser():
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--buffer_size", type=int, default=200_000)
     p.add_argument("--batch_size", type=int, default=256)
-    p.add_argument("--actor_lr", type=float, default=5e-6)
+    p.add_argument("--actor_lr", type=float, default=1e-6)
     p.add_argument("--critic_lr", type=float, default=1e-4)
     p.add_argument("--stddev", type=float, default=0.05)
     p.add_argument("--ae_ckpt", default=None)   # M2 flow 用
@@ -336,7 +336,7 @@ def build_parser():
                    help="hiql Φ 的额外缩放乘子(在 auto_scale 之上;默认 1.0)")
     p.add_argument("--output_dir", default="outputs_chunk",
                    help="ckpt / eval 产物目录(并行 run 用不同目录避免抢 best.pt)")
-    p.add_argument("--base_action_mode", choices=["replan", "queue"], default="replan",
+    p.add_argument("--base_action_mode", choices=["replan", "queue"], default="queue",
                    help="基座动作来源:replan(每边界重跑模型取前chunk步)|queue(ACT原生action queue,仅cl=1,复刻原版step级)")
     # --- 基座类型开关(act 默认行为不变;pi05=pi0/pi05 经 websocket 连 openpi serve)---
     p.add_argument("--base_policy_type", choices=["act", "pi05"], default="act",
@@ -353,7 +353,7 @@ def build_parser():
                    help="kai0 仓路径(供 import resfit_pi05.pi05_policy_adapter;本机=kai0_new4090)")
     p.add_argument("--pi0_image_key_map", default=None,
                    help="JSON: env obs 图像键->pi0 槽位(base/left_wrist/right_wrist);缺省=three-piece 默认映射")
-    p.add_argument("--base_n_action_steps", type=int, default=None,
+    p.add_argument("--base_n_action_steps", type=int, default=10,
                    help="覆盖基座 ACT 的 n_action_steps(每多少步重规划;默认用 checkpoint 的 20)。"
                         "≤chunk_size;设 10 即基座预测20步但只执行前10就重推理")
     p.add_argument("--device", default="cuda")
