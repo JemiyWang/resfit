@@ -11,6 +11,7 @@ from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualE
 from resfit.rl_finetuning.chunk_residual.stage_detectors import (
     NUM_STAGES,
     get_stage_detector,
+    threading_stage,
     threepiece_stage,
 )
 
@@ -313,9 +314,6 @@ def test_wrapper_potential_terminal_zeroes_phi():
 
 
 # ---------- threading 3 段检测器契约 ----------
-from resfit.rl_finetuning.chunk_residual.stage_detectors import threading_stage
-
-
 class _FakeNeedle:
     contact_geoms = ["ndl0", "ndl1"]
 
