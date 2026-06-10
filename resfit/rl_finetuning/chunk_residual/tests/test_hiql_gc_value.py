@@ -224,3 +224,46 @@ def test_expectile_loss_weighted_gates_on_adv():
     # adv==diff 时退化为标准 expectile,两者一致
     z = torch.tensor([1.5, -0.5, 2.0])
     assert torch.allclose(expectile_loss_weighted(z, z, tau), expectile_loss(z, tau), atol=1e-7)
+
+
+def test_train_gc_value_loss_mode_default_equiv_and_hiql_differs():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(12).reshape(12, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(gamma=0.99, expectile=0.7, ema=0.01, lr=1e-3,
+              batch_size=8, steps=300, rep_dim=8, hidden=32, seed=0)
+    # 默认 == 显式 shared_min,逐张量 atol=0(证明默认分支没被动过)
+    m_def, _ = train_gc_value(data, **kw)
+    m_sm, _ = train_gc_value(data, value_loss_mode="shared_min", **kw)
+    for k, a in m_def.state_dict().items():
+        assert torch.equal(a, m_sm.state_dict()[k]), f"default vs shared_min 不等: {k}"
+    # hiql 模式确实走了不同分支 -> 权重与 shared_min 不同
+    m_hi, _ = train_gc_value(data, value_loss_mode="hiql", **kw)
+    diff = max(float((m_hi.state_dict()[k] - m_sm.state_dict()[k]).abs().max())
+               for k in m_sm.state_dict())
+    assert diff > 1e-6, "hiql 与 shared_min 应训出不同权重"
+
+
+def test_train_gc_value_hiql_learns_progress():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    model, v_stats = train_gc_value(
+        data, gamma=0.99, expectile=0.7, ema=0.01, lr=1e-3,
+        batch_size=9, steps=2000, rep_dim=8, hidden=64, seed=0, value_loss_mode="hiql")
+    assert v_stats["max"] > v_stats["min"]
+    states = data["states"]
+    g = states[9].repeat(10, 1)
+    with torch.no_grad():
+        v1, v2 = model(states, g)
+        v = torch.minimum(v1, v2)
+    assert v[-3:].mean() > v[:3].mean()
+
+
+def test_train_gc_value_rejects_bad_loss_mode():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    with pytest.raises(ValueError):
+        train_gc_value(data, steps=1, batch_size=4, rep_dim=4, hidden=16,
+                       value_loss_mode="bogus", seed=0)

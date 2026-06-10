@@ -167,13 +167,20 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
-                   future_mode="stage_entry", use_layer_norm=False):
+                   future_mode="stage_entry", use_layer_norm=False,
+                   value_loss_mode="shared_min"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
-    双 critic 集成、target 取 min、EMA target。返回 (model, v_stats)。
-    future_mode 透传给 sample_gc_goals(geometric 采样的 discount 复用 gamma,与 HIQL 同源)。
+    EMA target。返回 (model, v_stats)。future_mode 透传给 sample_gc_goals。
+    value_loss_mode:
+      - 'shared_min'(默认,现状):两 critic 都回归 y=r+γ·mask·min(nv1,nv2),残差自门控 expectile。
+      - 'hiql'(对齐参考):per-critic 目标 q_i=r+γ·mask·nv_i(不取 min)、adv=q−V_target 门控的
+        两参 expectile、当前态 V 走 target 网。复刻 HIQL compute_value_loss 的 expectile+双 critic
+        两处(mask 仍含 (1-done),done-mask 不在本轮范围)。
     """
+    if value_loss_mode not in ("shared_min", "hiql"):
+        raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     states = data["states"]
@@ -199,12 +206,26 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         success = torch.tensor(si == gi, dtype=torch.float32)
         reward = success - 1.0
         mask = (1.0 - success) * (1.0 - done_all[b])
-        with torch.no_grad():
-            nv1, nv2 = target(s_next, g)
-            nv = torch.minimum(nv1, nv2)
-            y = reward + gamma * mask * nv
-        v1, v2 = model(s, g)
-        loss = expectile_loss(y - v1, expectile) + expectile_loss(y - v2, expectile)
+        if value_loss_mode == "shared_min":
+            with torch.no_grad():
+                nv1, nv2 = target(s_next, g)
+                nv = torch.minimum(nv1, nv2)
+                y = reward + gamma * mask * nv
+            v1, v2 = model(s, g)
+            loss = expectile_loss(y - v1, expectile) + expectile_loss(y - v2, expectile)
+        else:  # "hiql"
+            with torch.no_grad():
+                nv1, nv2 = target(s_next, g)
+                nv = torch.minimum(nv1, nv2)
+                q = reward + gamma * mask * nv
+                v1t, v2t = target(s, g)            # 当前态 V 走 target 网
+                v_t = 0.5 * (v1t + v2t)
+                adv = q - v_t
+                q1 = reward + gamma * mask * nv1   # per-critic 目标,不取 min
+                q2 = reward + gamma * mask * nv2
+            v1, v2 = model(s, g)
+            loss = (expectile_loss_weighted(adv, q1 - v1, expectile)
+                    + expectile_loss_weighted(adv, q2 - v2, expectile))
         opt.zero_grad()
         loss.backward()
         opt.step()
