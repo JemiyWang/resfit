@@ -310,7 +310,7 @@ def build_parser():
                    help="关闭 online z 投球面(回到旧版逐位行为)")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
-    p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="gt",
+    p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="base_policy",
                    help="离线 buffer 的 base_action 来源:gt(默认,逐位等价=GT-as-base,残差目标0)|"
                         "base_policy(冻结 base 现算 base_action,action 仍存 GT;bc_target=GT-base,"
                         "锚向专家 + critic offline 锚对齐在线流形)。base_policy 需 queue 模式。")

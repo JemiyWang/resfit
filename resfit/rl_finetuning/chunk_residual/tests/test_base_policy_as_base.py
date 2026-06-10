@@ -136,8 +136,10 @@ def _sig_args(extra):
     return build_parser().parse_args(base + extra)
 
 
-def test_cli_offline_base_mode_default_gt():
-    assert build_parser().parse_args([]).offline_base_mode == "gt"
+def test_cli_offline_base_mode_default_base_policy():
+    assert build_parser().parse_args([]).offline_base_mode == "base_policy"
+    # 旧值可显式回退(回退 chunk_length 时须一并回退,见 test_validate_* 耦合测试)
+    assert build_parser().parse_args(["--offline_base_mode", "gt"]).offline_base_mode == "gt"
 
 
 def test_cli_offline_base_mode_parses():
@@ -147,8 +149,8 @@ def test_cli_offline_base_mode_parses():
 
 def test_signature_gt_has_no_base_mode_key():
     img = ["observation.images.agentview"]
-    s = _offline_buffer_signature(_sig_args([]), img, 100, "staged")
-    assert "offline_base_mode" not in s          # gt 默认 → 不加键 → 旧缓存向后兼容
+    s = _offline_buffer_signature(_sig_args(["--offline_base_mode", "gt"]), img, 100, "staged")
+    assert "offline_base_mode" not in s          # gt 时 → 不加键 → 旧缓存向后兼容
 
 
 def test_signature_base_policy_keys_and_distinguish_base():
@@ -204,8 +206,8 @@ def test_base_policy_mode_ok_with_queue():
 
 
 def test_gt_mode_skips_validation():
-    a = _sig_args(["--base_action_mode", "replan", "--chunk_length", "2"])
-    _validate_offline_base_mode(a)        # gt 默认 → 不校验、不抛
+    a = _sig_args(["--offline_base_mode", "gt", "--base_action_mode", "replan", "--chunk_length", "2"])
+    _validate_offline_base_mode(a)        # 显式 gt → 不校验、不抛
 
 
 def test_signature_distinguishes_base_n_action_steps():
@@ -218,3 +220,21 @@ def test_signature_distinguishes_base_n_action_steps():
         img, 100, "staged")
     assert s10.get("base_n_action_steps") == 10
     assert s10 != s5                       # 换队列步幅 → 不同签名 → 强制重建(否则复用错缓存)
+
+
+def test_validate_default_combo_passes():
+    """默认(base_policy + chunk_length 1 + queue)满足 base_policy 约束,不抛。"""
+    _validate_offline_base_mode(build_parser().parse_args([]))
+
+
+def test_validate_chunk_length_rollback_alone_fails():
+    """单独回退 --chunk_length 20(base_policy 默认仍在)→ assert fail-fast。"""
+    args = build_parser().parse_args(["--chunk_length", "20"])
+    with pytest.raises(AssertionError):
+        _validate_offline_base_mode(args)
+
+
+def test_validate_chunk_length_with_gt_rollback_passes():
+    """同时回退 --chunk_length 20 --offline_base_mode gt → gt 跳过校验,不抛。"""
+    _validate_offline_base_mode(
+        build_parser().parse_args(["--chunk_length", "20", "--offline_base_mode", "gt"]))
