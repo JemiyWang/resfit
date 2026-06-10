@@ -85,3 +85,51 @@ def test_hiql_subgoal_shapes(tmp_path):
     # 1-D 单步在线调用(典型 rollout 形态)-> (1, rep_dim)
     z1 = sg.subgoal_online(torch.zeros(18), np.zeros(12))
     assert z1.shape == (1, 10)
+
+
+def test_representative_goal30_is_real_medoid():
+    """goal30 应取离均值最近的真实末态(medoid),而非算术均值——保证 on-manifold、
+    不糊掉 object(rel_piece)部分。HIQL 用真实 goal 态、从不平均(2026-06-09 讨论)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_subgoal import representative_goal30
+    # 三条变长 demo,末态 A=[0,0]、B=[1,1]、C=[5,5];均值=[2,2],离均值最近的真实末态=B
+    seqs = [
+        np.array([[9.0, 9.0], [0.0, 0.0]], dtype=np.float32),            # 末态 A=[0,0]
+        np.array([[8.0, 8.0], [7.0, 7.0], [1.0, 1.0]], dtype=np.float32),  # 末态 B=[1,1]
+        np.array([[5.0, 5.0]], dtype=np.float32),                       # 末态 C=[5,5]
+    ]
+    finals = np.stack([s[-1] for s in seqs])
+    g = np.asarray(representative_goal30(seqs))
+    assert g.shape == (2,)
+    # 必须等于某条真实末态(on-manifold),且就是离均值最近的 B,而不是均值 [2,2]
+    assert any(np.allclose(g, f) for f in finals), "goal30 必须是真实末态之一,不能是均值"
+    assert np.allclose(g, [1.0, 1.0]), f"应为离均值最近的真实末态 B=[1,1],got {g}"
+    assert not np.allclose(g, finals.mean(0)), "不应是算术均值 [2,2]"
+
+
+def test_subgoal_online_renorm_projects_to_sphere():
+    """renorm_subgoal=True:在线子目标 z 投到半径 sqrt(rep_dim)(对齐 HIQL eval);
+    默认 False 保持取 .mean 原值(范数一般 != sqrt(rep))。"""
+    import numpy as np
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import HighActor
+    from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal
+
+    torch.manual_seed(0)
+    vf = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=32)
+    ha = HighActor(state_dim=30, rep_dim=10, hidden=32)
+    # 让 mean 明显偏离球面:放大 mean_net 末层权重
+    with torch.no_grad():
+        ha.mean_net[-1].weight.mul_(5.0)
+    goal30, rel_mean, rel_std = np.zeros(30, np.float32), np.zeros(12, np.float32), np.ones(12, np.float32)
+
+    sg_off = HiqlSubgoal(vf, ha, goal30, rel_mean, rel_std)                       # 默认 False
+    sg_on = HiqlSubgoal(vf, ha, goal30, rel_mean, rel_std, renorm_subgoal=True)
+    state_std, rel_raw = np.ones((4, 18), np.float32), np.ones((4, 12), np.float32)
+
+    z_on = sg_on.subgoal_online(state_std, rel_raw)
+    z_off = sg_off.subgoal_online(state_std, rel_raw)
+    sqrt_rep = float(np.sqrt(10))
+    assert torch.allclose(z_on.norm(dim=-1), torch.full((4,), sqrt_rep), atol=1e-4)
+    # 关掉时范数不被强制贴球面(本构造下明显偏离)
+    assert (z_off.norm(dim=-1) - sqrt_rep).abs().max() > 1e-2
