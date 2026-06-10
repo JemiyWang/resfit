@@ -59,6 +59,8 @@ def build_parser():
     p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="stage_entry",
                    help="未来目标采样:stage_entry(原口径,只锚 stage 入口)| geometric(HIQL 口径,"
                         "几何分布取任意未来帧,覆盖中间态、填洞)")
+    p.add_argument("--use_layer_norm", type=int, default=0,
+                   help="value/rep 用 LN+GELU(1,对齐 HIQL LayerNormMLP)| 裸 ReLU(0,现状)")
     return p
 
 
@@ -74,11 +76,12 @@ def main():
     data = build_gc_data(seqs, stage_entries)
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
-          f"goal_future_mode={args.goal_future_mode}")
+          f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
-        hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode)
+        hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
+        use_layer_norm=bool(args.use_layer_norm))
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
                   dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats)
