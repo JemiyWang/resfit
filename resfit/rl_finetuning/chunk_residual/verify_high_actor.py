@@ -101,8 +101,8 @@ def evaluate_near(ha, vf, seqs, way_steps, n_per_demo, rng):
         if T < 4:
             continue
         ts = np.unique(np.linspace(0, T - 2, min(T - 1, n_per_demo)).astype(int))
-        for t in ts:
-            t = int(t)
+        for t0 in ts:
+            t = int(t0)
             dist = int(rng.integers(1, 2 * way_steps + 1))
             gj = min(t + dist, T - 1)
             z = predict_z(ha, seq[t:t + 1], seq[gj:gj + 1])[0]
@@ -111,21 +111,30 @@ def evaluate_near(ha, vf, seqs, way_steps, n_per_demo, rng):
             jstar = int(np.linalg.norm(phi - z, axis=-1).argmin())
             rows.append(dict(demo=di, t=t, T=int(T), gj=int(gj), dist=int(gj - t),
                              jstar=jstar, off=int(jstar - t),
-                             expected_off=int(min(way_steps, gj - t))))
+                             expected_off=int(min(way_steps, gj - t)),
+                             clamped=bool(t + dist > T - 1)))
     return rows
 
 
 def report_near(rows, way_steps):
-    near = [r for r in rows if r["dist"] < way_steps]
-    far = [r for r in rows if r["dist"] >= way_steps]
-    near_err = np.array([abs(r["off"] - r["dist"]) for r in near]) if near else np.array([np.nan])
-    far_off = np.array([r["off"] for r in far]) if far else np.array([np.nan])
+    """clamp-to-goal 近 goal 塌缩诊断。剔除末尾 clamp 到末态的退化样本(非真 near/far),
+    near(dist<way)看 |off−dist|≈0(子目标塌到 goal),far(dist>=way)看 off≈way(落 +way 航点)。"""
+    clean = [r for r in rows if not r["clamped"]]
+    dropped = len(rows) - len(clean)
+    near = [r for r in clean if r["dist"] < way_steps]
+    far = [r for r in clean if r["dist"] >= way_steps]
     print("\n============ ② clamp-to-goal 近 goal 塌缩诊断 ============")
-    print(f"采样 {len(rows)} 个 (t, goal@dist);near(dist<{way_steps})={len(near)} far(dist>={way_steps})={len(far)}")
-    print(f"近 goal: |off − dist| median={np.nanmedian(near_err):.1f}(≈0 表示子目标落在 goal 上)")
-    print(f"远 goal: off median={np.nanmedian(far_off):.1f}(≈way_steps={way_steps} 表示落 +way 航点)")
-    ok = (np.nanmedian(near_err) <= max(2, 0.25 * way_steps)) and \
-         (abs(np.nanmedian(far_off) - way_steps) <= max(3, 0.3 * way_steps))
+    print(f"采样 {len(rows)} 个;剔除末尾 clamp 样本 {dropped} 个(goal 被截到末态,非真 near/far);"
+          f"剩 near(dist<{way_steps})={len(near)} far(dist>={way_steps})={len(far)}")
+    if not near or not far:
+        print("WARNING: near 或 far 桶为空,诊断无效(demo 太短或起点太少)")
+        return False
+    near_err = np.array([abs(r["off"] - r["dist"]) for r in near])
+    far_off = np.array([r["off"] for r in far])
+    print(f"近 goal: |off − dist| median={np.median(near_err):.1f}(≈0 表示子目标落在 goal 上)")
+    print(f"远 goal: off median={np.median(far_off):.1f}(≈way_steps={way_steps} 表示落 +way 航点)")
+    ok = bool((np.median(near_err) <= max(2, 0.25 * way_steps)) and
+              (abs(np.median(far_off) - way_steps) <= max(3, 0.3 * way_steps)))
     print(f"clamp 诊断: {'PASS' if ok else 'FAIL'}(近 goal 塌到 goal & 远 goal 落 +way)")
     return ok
 
@@ -238,7 +247,7 @@ def main():
     if args.goal_mode == "near":
         rng = np.random.default_rng(0)
         rows = evaluate_near(ha, vf, seqs, hinfo["way_steps"], args.n_per_demo, rng)
-        report_near(rows, hinfo["way_steps"])
+        ok = report_near(rows, hinfo["way_steps"])
     else:
         rows, z_norms = evaluate(ha, vf, seqs, hinfo["way_steps"], args.n_per_demo)
         ok, off, off_room, ratio, room = report(rows, z_norms, hinfo["way_steps"], vf.rep_dim)

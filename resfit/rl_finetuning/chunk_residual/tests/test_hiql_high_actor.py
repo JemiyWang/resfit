@@ -157,3 +157,30 @@ def test_evaluate_near_expected_off_is_clamped():
         assert r["dist"] == r["gj"] - r["t"]
         assert r["expected_off"] == min(10, r["dist"])     # clamp 期望偏移
         assert 0 <= r["jstar"] <= r["T"] - 1
+
+
+def test_report_near_excludes_clamped_tail_samples():
+    """末尾 clamp 到末态的样本不得进入 near 桶,否则会掩盖真·近 goal 未塌缩 -> 假 PASS。"""
+    from resfit.rl_finetuning.chunk_residual.verify_high_actor import report_near
+    way = 10
+    far = [dict(dist=15, off=10, clamped=False, t=0, gj=15, T=40, jstar=10, expected_off=10),
+           dict(dist=18, off=10, clamped=False, t=0, gj=18, T=40, jstar=10, expected_off=10)]
+    genuine_near_bad = [dict(dist=2, off=12, clamped=False, t=0, gj=2, T=40, jstar=12, expected_off=2)]
+    clamped_near_easy = [dict(dist=1, off=1, clamped=True, t=38, gj=39, T=40, jstar=39, expected_off=1)
+                         for _ in range(3)]
+    rows = far + genuine_near_bad + clamped_near_easy
+    # 排除 clamp 样本后,near 桶只剩那条 off 远离 goal 的坏样本 -> 应 FAIL
+    assert report_near(rows, way) is False
+
+def test_report_near_passes_on_clean_collapse():
+    from resfit.rl_finetuning.chunk_residual.verify_high_actor import report_near
+    way = 10
+    near = [dict(dist=d, off=d, clamped=False, t=0, gj=d, T=40, jstar=d, expected_off=d) for d in (2, 3, 4)]
+    far = [dict(dist=d, off=way, clamped=False, t=0, gj=d, T=40, jstar=way, expected_off=way) for d in (15, 20)]
+    assert report_near(near + far, way) is True
+
+def test_report_near_empty_bucket_is_invalid():
+    from resfit.rl_finetuning.chunk_residual.verify_high_actor import report_near
+    # 只有一条 clamp 样本 -> 剔除后两桶皆空 -> 诊断无效,返回 False
+    rows = [dict(dist=2, off=2, clamped=True, t=38, gj=39, T=40, jstar=39, expected_off=1)]
+    assert report_near(rows, 10) is False
