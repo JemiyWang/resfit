@@ -3,7 +3,7 @@ import pytest
 
 from resfit.rl_finetuning.chunk_residual.object_state import (
     eef_rel_piece, rel_piece_stats, compute_eef_rel_piece, PIECE_ROOT_BODIES,
-    read_eef_positions, compute_eef_rel_piece_from_env)
+    read_eef_positions, compute_eef_rel_piece_from_env, get_object_root_bodies)
 
 
 def test_piece_root_bodies_constant():
@@ -85,8 +85,6 @@ def test_compute_eef_rel_piece_from_env():
 
 
 # ---- object-aware 物体名从 env 解析(threading/three_piece/fallback)----
-from resfit.rl_finetuning.chunk_residual.object_state import get_object_root_bodies
-
 
 class _Obj:
     def __init__(self, root): self.root_body = root
@@ -118,7 +116,6 @@ def test_get_object_root_bodies_fallback_to_constant():
 class _ThreadingFullEnv:
     """mock threading env:_eefN_xpos(sim 实时)+ sim.data.get_body_xpos + needle/tripod 属性。"""
     def __init__(self):
-        import numpy as np
         self.needle = _Obj("needle_obj_root")
         self.tripod = _Obj("tripod_obj_root")
         self._eef0_xpos = np.array([1., 0., 0.])
@@ -139,3 +136,23 @@ def test_compute_from_env_resolves_threading_bodies_no_arg():
     np.testing.assert_allclose(out[3:6], [1, 0, -1])   # eef0 - tripod
     np.testing.assert_allclose(out[6:9], [0, 2, 0])    # eef1 - needle
     np.testing.assert_allclose(out[9:12], [0, 2, -1])  # eef1 - tripod
+
+
+class _PartialEnv:
+    def __init__(self):
+        self.needle = _Obj("needle_obj_root")   # 没有 tripod
+
+def test_get_object_root_bodies_partial_attrs_falls_back():
+    assert get_object_root_bodies(_PartialEnv()) == PIECE_ROOT_BODIES
+
+
+def test_compute_from_env_explicit_bodies_override_resolution():
+    env = _ThreadingFullEnv()
+    # 显式传入(交换顺序:tripod 在前、needle 在后)→ 应按显式 bodies 算,而非 env 自动解析的 needle/tripod 顺序
+    out = compute_eef_rel_piece_from_env(env, piece_root_bodies=("tripod_obj_root", "needle_obj_root"))
+    assert out.shape == (12,)
+    # 顺序变成 [eef0-tripod, eef0-needle, eef1-tripod, eef1-needle]
+    np.testing.assert_allclose(out[0:3], [1, 0, -1])   # eef0 - tripod (tripod at [0,0,1])
+    np.testing.assert_allclose(out[3:6], [1, 0, 0])    # eef0 - needle (needle at [0,0,0])
+    np.testing.assert_allclose(out[6:9], [0, 2, -1])   # eef1 - tripod
+    np.testing.assert_allclose(out[9:12], [0, 2, 0])   # eef1 - needle
