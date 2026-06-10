@@ -98,3 +98,32 @@ def test_sample_high_goal_target_random_branch():
     # 全 random:goal ∈ [0,100),target = min(10+25, 99) = 35(恒定)
     assert goal.min() >= 0 and goal.max() < 100
     assert np.all(target == 35)
+
+
+def test_train_high_actor_rejects_bad_target_mode():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=1, batch_size=8, rep_dim=4, hidden=16, seed=0)
+    with pytest.raises(ValueError):
+        train_high_actor(data, vf, steps=1, batch_size=8, hidden=16, target_mode="bogus")
+
+def test_train_high_actor_clamp_collapses_to_near_goal():
+    """clamp_to_goal:goal 近(dist<way)时子目标应收敛到 goal 而非固定 +way 航点。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+    seq = np.arange(40).reshape(40, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=3000, batch_size=32, rep_dim=8, hidden=64,
+                           lr=1e-3, ema=0.01, seed=0)
+    ha = train_high_actor(data, vf, way_steps=10, beta=1.0, steps=4000, batch_size=32,
+                          hidden=64, lr=1e-3, seed=0, target_mode="clamp_to_goal")
+    states = data["states"]
+    st = states[5:6]
+    g_near = states[8:9]          # dist=3 < way=10 -> 子目标应≈goal(states[8])
+    with torch.no_grad():
+        z_pred = ha(st, g_near).mean
+        z_goal = vf.phi(st, states[8:9])     # 落 goal
+        z_way = vf.phi(st, states[15:16])    # 固定 +10 航点
+    assert (z_pred - z_goal).norm() < (z_pred - z_way).norm()

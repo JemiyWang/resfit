@@ -42,6 +42,7 @@ def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
 
     traj goal: 线性插值 round(min(si+1,final)·d + final·(1−d)) ∈ [si+1, final],永不命中 current;
     traj target = min(si+way, traj_goal)。random goal(prob high_p_randomgoal)的 target=min(si+way, final)。
+    前置:每个 si < last_idx_of[traj_id](build_gc_data 保证);否则 si==final 时 traj_goal 退化为 current。
     """
     si = np.asarray(s_idx, dtype=np.int64)
     B = len(si)
@@ -58,12 +59,17 @@ def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
 
 
 def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
-                     batch_size=256, steps=50_000, hidden=256, seed=0):
+                     batch_size=256, steps=50_000, hidden=256, seed=0,
+                     target_mode="fixed_waypoint", high_p_randomgoal=0.0):
     """AWR 抽高层 π^h。vf:冻结 GoalConditionedVF。复用 Phase 1 的 data(build_gc_data)。
 
-    优势 Ã^h = min V(s_{t+k},g) − min V(s_t,g);回归目标 z=vf.phi(s_t, s_{t+k})。
-    k 步航点 way=min(s_idx+k, demo末);goal 混采 sample_gc_goals。返回训练后的 HighActor。
+    优势 Ã^h = min V(s_{t+k},g) − min V(s_t,g);回归目标 z=vf.phi(s_t, s_{t+k})。返回训练后的 HighActor。
+    target_mode:
+      - 'fixed_waypoint'(默认):wi=min(si+way,demo末),goal 混采 sample_gc_goals(与现状逐位等价)。
+      - 'clamp_to_goal':HIQL GCSDataset 高段——goal 线性插值轨迹态,wi=min(si+way, goal)。
     """
+    if target_mode not in ("fixed_waypoint", "clamp_to_goal"):
+        raise ValueError(f"unknown target_mode: {target_mode!r}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     vf = copy.deepcopy(vf).eval()
@@ -81,9 +87,14 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
     for _ in range(steps):
         b = rng.integers(0, n, size=bs)
         si, tj = s_idx[b], traj_id[b]
-        wi = np.minimum(si + way_steps, last_arr[b])
-        gi = sample_gc_goals(si, tj, data["last_idx_of"], data["stage_entries_of"],
-                             rng, n_total=len(states))
+        if target_mode == "fixed_waypoint":
+            wi = np.minimum(si + way_steps, last_arr[b])
+            gi = sample_gc_goals(si, tj, data["last_idx_of"], data["stage_entries_of"],
+                                 rng, n_total=len(states))
+        else:
+            gi, wi = sample_high_goal_target(si, tj, data["last_idx_of"], rng,
+                                             way_steps=way_steps, n_total=len(states),
+                                             high_p_randomgoal=high_p_randomgoal)
         s, sw, g = states[si], states[wi], states[gi]
         with torch.no_grad():
             vs1, vs2 = vf(s, g)
@@ -100,8 +111,9 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
     return ha
 
 
-def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta):
-    """存 high_actor.pt:权重 + 维度 + 关联的 gc_value_ckpt / way_steps / beta(供 Phase 3 校验)。"""
+def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta,
+                    target_mode="fixed_waypoint", high_p_randomgoal=0.0):
+    """存 high_actor.pt:权重 + 维度 + gc_value_ckpt/way_steps/beta + target_mode/high_p_randomgoal。"""
     torch.save({
         "state_dict": model.state_dict(),
         "state_dim": model.state_dim,
@@ -112,6 +124,8 @@ def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta):
         "gc_value_ckpt": gc_value_ckpt,
         "way_steps": way_steps,
         "beta": beta,
+        "target_mode": target_mode,
+        "high_p_randomgoal": high_p_randomgoal,
     }, path)
 
 
@@ -124,4 +138,6 @@ def load_high_actor(path, map_location="cpu"):
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("gc_value_ckpt", "way_steps", "beta")}
+    info["target_mode"] = ckpt.get("target_mode", "fixed_waypoint")
+    info["high_p_randomgoal"] = ckpt.get("high_p_randomgoal", 0.0)
     return model, info
