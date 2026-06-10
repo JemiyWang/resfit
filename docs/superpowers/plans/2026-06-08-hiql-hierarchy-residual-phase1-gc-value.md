@@ -704,3 +704,21 @@ git commit -m "feat(hiql-gc): train_hiql_gc_value 离线训练 CLI(eef_piece + s
 - **Spec 覆盖**：本 plan 覆盖 spec §4.1 的 GC value + φ、§4.2 的 goal 混采与 stage 入口锚、§4.6 的 `hiql_gc_value.py`/`train_hiql_gc_value.py` 两文件、§5 的 V 单测、§4.7 Phase 1 与其 gate。Phase 2/3（高层、低层接线）属后续 plan，spec 已标注分阶段。
 - **占位符**：无 TBD/TODO；每步含完整代码或精确命令。
 - **类型一致**：`phi(s, g)`/`forward(s, g)` 参数序（base 在前、target 在后）在 Task 2/5/Gate 一致；`sample_gc_goals` 的 keyword-only `n_total`/`p_*` 在 Task 4/5 调用一致；`build_gc_data` 返回键（`states/s_idx/sn_idx/done/traj_id/last_idx_of/stage_entries_of`）在 Task 4/5/7 一致；`save_gc_value`/`load_gc_value` 字段（含 `rep_dim`）在 Task 6 自洽。
+
+---
+
+## A/B-① LayerNorm 离线验证（2026-06-10，HIQL 对齐三改之①）
+
+承 `docs/superpowers/specs/2026-06-10-hiql-alignment-deltas-design.md`。`three_piece_gc_value_geom_ln.pt`（`--use_layer_norm 1 --goal_future_mode geometric`，其余同 geom 基线）vs geom 基线 `three_piece_gc_value_geom.pt`，`verify_gc_value`（40 demo）。**两者 Gate 均 PASS**，逐项：
+
+| 指标 | geom 基线 | LN | 谁好 |
+|---|---|---|---|
+| ① 状态侧 spearman mean | 0.993（min 0.941） | 0.995（min 0.961） | LN 微胜 |
+| ⑤ 目标侧 spearman mean | -0.999 | -1.000 | LN 微胜 |
+| ④ 折扣量级 vs 解析(-90.62) | -82.05 | **-87.59** | LN 更准 |
+| ② V(末态,末态) mean | -0.264 | -0.244 | 近似 |
+| ③ **V(s,g=s) min / std** | **-0.96 / 0.17** | **-3.20 / 0.31** | **geom 明显更好** |
+
+LN 在单调性/距离/折扣量级（更贴解析）边际更好，但**它本想改善的 V(s,g=s)≈0 反而退步**（负尾 -0.96→-3.20、std 0.17→0.31）。在 LN value 上重训的 `three_piece_high_actor_geom_ln.pt`（fixed_waypoint，隔离 LN 单变量）final gate 仍干净 PASS（z 范数 3.13、前向 median 25.0 IQR[24,26]、前向 100%、塌末态 0/948、off/expected 1.00）——**LN 没把高层带崩**。
+
+**结论：LN 非清晰离线增益（geom 基线已足够好且 V(s,g=s) 更干净）→ ① 暂不纳入默认；若后续在线 rollout 显示 value 平滑度/量级精度重要可再启。** 日志 `three_piece_gc_value_geom_ln.verify.log` / `three_piece_gc_value_geom.verify.log` / `three_piece_high_actor_geom_ln.verify.log`；产物 `_ln.pt` 保留作对照，不删。

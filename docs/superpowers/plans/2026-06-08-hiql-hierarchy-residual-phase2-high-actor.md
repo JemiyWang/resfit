@@ -451,3 +451,16 @@ git commit -m "feat(hiql-high): train_hiql_high_actor 离线训练 CLI"
 - **Spec 覆盖**：覆盖 spec §4.1 高层、§4.3 AWR 训练（式 6、β、clip 100、回归目标 φ(s_t,s_{t+k})）、§4.6 的 `hiql_high_actor.py`/`train_hiql_high_actor.py`、§5 高层单测、§4.7 Phase 2 gate。
 - **占位符**：无；每步完整代码/命令。
 - **类型一致**：`vf.phi(s, g)`（base 在前）与 Phase 1 一致；`build_gc_data` 返回键、`sample_gc_goals(..., n_total=)` 签名复用 Phase 1 一致；`HighActor(state_dim, rep_dim, hidden)` 构造在 Task 1/3/4 一致；`awr_weight(adv, beta, clip)` 在 Task 2/3 一致；`save_high_actor(..., gc_value_ckpt=, way_steps=, beta=)` 与 `load_high_actor` 字段一致；`stage_entries_aligned` 复用 Phase 1 Task 7 定义。
+
+---
+
+## A/B-② clamp-to-goal 离线验证（2026-06-10，HIQL 对齐三改之②）
+
+承 `docs/superpowers/specs/2026-06-10-hiql-alignment-deltas-design.md`。在现 geom value 上重训 `three_piece_high_actor_geom_clamp.pt`（`--target_mode clamp_to_goal`，其余同 geom 基线），用 `verify_high_actor --goal_mode near`（40 demo、1200 采样、剔 133 末尾 clamp 退化样本，near 517 / far 550）对照 fixed 基线 `three_piece_high_actor_geom.pt`：
+
+| 模型 | 近 goal `\|off−dist\|` median | 远 goal `off` median | 判决 |
+|---|---|---|---|
+| **clamp（新）** | **1.0**（子目标真塌到 goal） | 25.0（落 +way） | **PASS** |
+| fixed（基线） | **12.0**（死贴 +25，不塌） | 25.0 | **FAIL** |
+
+**结论：clamp 解掉本 plan gate ⚠️ 自陈的"回归目标恒固定 +25 步"局限——近 goal 时子目标正确收敛到 goal。② 纳入 Phase 3 默认两件套（与 Phase 1 geom value 配）。** 日志 `three_piece_high_actor_geom_clamp.near.log` / `three_piece_high_actor_geom.near.log`。

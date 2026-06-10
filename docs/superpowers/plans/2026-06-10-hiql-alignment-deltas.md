@@ -763,3 +763,15 @@ git commit -m "docs(hiql-align): A/B 离线 gate 证据回填(clamp near 诊断 
 - **类型一致**:`sample_high_goal_target(s_idx,traj_id,last_idx_of,rng,*,way_steps,n_total,high_p_randomgoal)` 在 Task 2 定义、Task 3 调用一致;`train_high_actor(...,target_mode,high_p_randomgoal)` Task 3 定义、Task 4 调用一致;`save_high_actor(...,target_mode=,high_p_randomgoal=)` Task 3 定义、Task 4 调用一致;`_mlp(...,use_layer_norm=)`、`GoalConditionedVF(...,use_layer_norm=)`、`train_gc_value(...,use_layer_norm=)` Task 5 定义、Task 6 调用一致;`HiqlSubgoal(...,renorm_subgoal=)`、`from_ckpts(...,renorm_subgoal=)` Task 1 内一致;`evaluate_near`/`report_near` Task 7 定义、`predict_z`/`phi_of` 复用现有。
 - **向后兼容**:`save_high_actor`/`save_gc_value` 新参带默认,旧 caller(现有单测)不破;`load_*` 用 `get(默认老值)` 兼容旧 ckpt。
 - **默认等价**:②`fixed_waypoint` 保持 `wi`先`gi`后的 RNG 顺序;①`use_layer_norm=False` 走原 `Linear→ReLU`;③`renorm_subgoal=False` 取 `.mean` 原值——三者默认逐位等价现状。
+
+---
+
+## A/B 结论（2026-06-10,离线 gate）
+
+Task1-7 落码完成(subagent 两段审查 + 整体复审 Ready,33 单测绿,默认等价实测参数差=0.0)。Task8 A/B 重训 + 离线 gate 重验已跑完(detached,各限 8 线程防抢核;driver `run_hiql_align_ab.sh` + 看门狗 `run_hiql_align_verify.sh`)。
+
+- **② clamp-to-goal —— 纳入 Phase 3 默认。** near 诊断 `|off−dist|` median:**clamp 1.0 vs fixed 基线 12.0**(远 goal 都 25.0);clamp PASS、基线 FAIL。解掉"恒 +25"局限。证据写回 phase2 plan gate 段。
+- **① LayerNorm —— 暂不纳入。** LN value 与 geom 基线 Gate 均 PASS;LN 在状态/目标单调性、折扣量级(-87.6 比 -82.1 更贴解析 -90.6)边际更好,但 **V(s,g=s)≈0 负尾反而更深(-0.96→-3.20、std 0.17→0.31)**;LN 上重训 high_actor final gate 仍 PASS(没带崩高层)。离线证据不足以换默认,留待在线 rollout 再议。证据写回 phase1 plan gate 段。
+- **③ renorm —— 纯运行时开关 + 单测已落,接进 rollout 属 Phase 3。**
+
+**Phase 3 默认两件套(本轮结论):** `three_piece_gc_value_geom.pt`(① 维持 geom、不 LN)+ `three_piece_high_actor_geom_clamp.pt`(② clamp)。`_ln` 三件产物保留作对照,不删。
