@@ -133,3 +133,11 @@ def test_subgoal_online_renorm_projects_to_sphere():
     assert torch.allclose(z_on.norm(dim=-1), torch.full((4,), sqrt_rep), atol=1e-4)
     # 关掉时范数不被强制贴球面(本构造下明显偏离)
     assert (z_off.norm(dim=-1) - sqrt_rep).abs().max() > 1e-2
+
+
+def test_cli_renorm_subgoal_default_on():
+    """对齐 HIQL eval:不带 flag 时 online z 默认投球面(renorm 默认 True);--no_renorm_subgoal 可关。"""
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    assert build_parser().parse_args([]).renorm_subgoal is True
+    assert build_parser().parse_args(["--no_renorm_subgoal"]).renorm_subgoal is False
+    assert build_parser().parse_args(["--renorm_subgoal"]).renorm_subgoal is True

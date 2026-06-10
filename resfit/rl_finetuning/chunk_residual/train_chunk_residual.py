@@ -300,6 +300,11 @@ def build_parser():
     p.add_argument("--subgoal_way_steps", type=int, default=25, help="offline 真航点 z 的 k 步")
     p.add_argument("--subgoal_state30_cache", default=None,
                    help="state30 缓存 npz(算 goal30,避免回放;建议设 outputs_chunk/three_piece_state30.npz)")
+    p.add_argument("--renorm_subgoal", dest="renorm_subgoal", action="store_true", default=True,
+                   help="online z 投回半径 sqrt(rep_dim) 的球面,对齐 offline φ 与 HIQL eval(evaluation.py:113-114);"
+                        "只动模长不动方向。默认开=对齐 HIQL(实测偏差仅 1-2%,clamp 版尾部 ±10-20%)")
+    p.add_argument("--no_renorm_subgoal", dest="renorm_subgoal", action="store_false",
+                   help="关闭 online z 投球面(回到旧版逐位行为)")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
     p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="gt",
@@ -524,8 +529,10 @@ def main():
         assert goal30.shape[0] == 30, \
             f"goal30 须 30 维(eef_piece),got {goal30.shape[0]};检查 state30 缓存是否来自 eef_piece"
         subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
-                                         goal30=goal30, device=args.device)
-        print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")
+                                         goal30=goal30, device=args.device,
+                                         renorm_subgoal=args.renorm_subgoal)
+        print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} renorm={args.renorm_subgoal} "
+              f"gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")
 
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
