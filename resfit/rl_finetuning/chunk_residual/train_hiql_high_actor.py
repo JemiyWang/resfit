@@ -61,7 +61,8 @@ def main():
     assert data["states"].shape[1] == vf.state_dim, \
         f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
-          f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} target_mode={args.target_mode}")
+          f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} "
+          f"target_mode={args.target_mode} high_p_randomgoal={args.high_p_randomgoal}")
     ha = train_high_actor(data, vf, way_steps=args.way_steps, beta=args.beta, lr=args.lr,
                           batch_size=args.batch_size, steps=args.steps, hidden=args.hidden,
                           seed=args.seed, target_mode=args.target_mode,
