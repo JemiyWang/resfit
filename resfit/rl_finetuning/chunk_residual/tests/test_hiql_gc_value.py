@@ -287,3 +287,16 @@ def test_gc_value_save_load_value_loss_mode(tmp_path):
     _t.save(ckpt, p)
     _m2, info2 = load_gc_value(p)
     assert info2["value_loss_mode"] == "shared_min"
+
+
+def test_critic_divergence_keys_and_range():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, critic_divergence)
+    torch.manual_seed(0)
+    vf = GoalConditionedVF(state_dim=4, rep_dim=4, hidden=16)
+    seqs = [np.random.RandomState(1).randn(6, 4).astype(np.float32),
+            np.random.RandomState(2).randn(5, 4).astype(np.float32)]
+    d = critic_divergence(vf, seqs)
+    assert set(d) == {"corr", "mean_abs_diff"}
+    assert -1.0 <= d["corr"] <= 1.0
+    assert d["mean_abs_diff"] >= 0.0

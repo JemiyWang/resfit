@@ -277,3 +277,24 @@ def load_gc_value(path, map_location="cpu"):
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     return model, info
+
+
+@torch.no_grad()
+def critic_divergence(model, seqs):
+    """双 critic 在真态上的分化度诊断:corr(v1, v2) 与 mean|v1−v2|。
+
+    g 取各 demo 末态(与 verify 状态侧同口径)。corr 越低、|Δ| 越大 = 两 critic 越分化 =
+    min(v1,v2) ensemble 越有意义。shared_min 下两 critic 易趋同(corr→1);hiql per-critic 目标应更分化。
+    返回 {'corr': float, 'mean_abs_diff': float}。
+    """
+    v1s, v2s = [], []
+    for seq in seqs:
+        s = torch.as_tensor(np.ascontiguousarray(seq), dtype=torch.float32)
+        g = torch.as_tensor(np.ascontiguousarray(np.broadcast_to(seq[-1], seq.shape)),
+                            dtype=torch.float32)
+        a, b = model(s, g)
+        v1s.append(a.numpy())
+        v2s.append(b.numpy())
+    v1, v2 = np.concatenate(v1s), np.concatenate(v2s)
+    return {"corr": float(np.corrcoef(v1, v2)[0, 1]),
+            "mean_abs_diff": float(np.abs(v1 - v2).mean())}

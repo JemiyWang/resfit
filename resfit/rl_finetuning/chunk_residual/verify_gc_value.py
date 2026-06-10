@@ -18,7 +18,7 @@ import argparse
 import numpy as np
 import torch
 
-from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value
+from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value, critic_divergence
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
 
 
@@ -61,6 +61,10 @@ def main():
         print(f"[data] demos={len(seqs)}  WARNING: 无 rel_piece 训练 stats,跳过同源修正(评估可能失真)")
 
     res = evaluate(model, seqs, args.gamma)
+    div = critic_divergence(model, seqs)
+    print(f"⑥ 双 critic 分化度 [hiql 应更分化]: corr(v1,v2)={div['corr']:.4f} "
+          f"mean|v1-v2|={div['mean_abs_diff']:.4f}  "
+          f"(value_loss_mode={info.get('value_loss_mode', 'shared_min')})")
     report(res, len(seqs))
 
 
