@@ -56,14 +56,14 @@ def build_parser():
     p.add_argument("--rep_dim", type=int, default=10)
     p.add_argument("--value_hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="stage_entry",
-                   help="未来目标采样:stage_entry(原口径,只锚 stage 入口)| geometric(HIQL 口径,"
-                        "几何分布取任意未来帧,覆盖中间态、填洞)")
-    p.add_argument("--use_layer_norm", type=int, choices=[0, 1], default=0,
-                   help="value/rep 用 LN+GELU(1,对齐 HIQL LayerNormMLP)| 裸 ReLU(0,现状)")
-    p.add_argument("--value_loss_mode", choices=["shared_min", "hiql"], default="shared_min",
-                   help="value 损失:shared_min(现状,两 critic 钉 min 共享目标 + 残差 expectile)| "
-                        "hiql(对齐参考,per-critic 目标不取 min + adv 门控两参 expectile)")
+    p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="geometric",
+                   help="未来目标采样:geometric(默认,HIQL 口径,几何分布取任意未来帧,覆盖中间态、填洞)| "
+                        "stage_entry(旧口径,只锚 stage 入口)")
+    p.add_argument("--use_layer_norm", type=int, choices=[0, 1], default=1,
+                   help="value/rep 用 LN+GELU(1,默认,对齐 HIQL LayerNormMLP)| 裸 ReLU(0,旧口径)")
+    p.add_argument("--value_loss_mode", choices=["shared_min", "hiql"], default="hiql",
+                   help="value 损失:hiql(默认,对齐参考,per-critic 目标不取 min + adv 门控两参 expectile)| "
+                        "shared_min(旧口径,两 critic 钉 min 共享目标 + 残差 expectile)")
     return p
 
 

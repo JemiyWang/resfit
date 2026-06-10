@@ -301,3 +301,20 @@ def test_critic_divergence_keys_and_range():
     assert -1.0 <= d["corr"] <= 1.0
     assert np.isfinite(d["corr"])
     assert d["mean_abs_diff"] >= 0.0
+
+
+def test_gc_value_parser_defaults_aligned_to_hiql():
+    """对齐 HIQL:不带 flag 时 CLI 默认 = geometric / LN 开 / hiql 口径;旧选项仍可显式回退。"""
+    from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser
+    req = ["--hdf5", "x.hdf5", "--dataset", "some/ds", "--stage_cache", "s.npz"]
+    a = build_parser().parse_args(req)
+    assert a.goal_future_mode == "geometric"
+    assert a.use_layer_norm == 1
+    assert a.value_loss_mode == "hiql"
+    # 旧口径仍可显式回退
+    b = build_parser().parse_args(req + ["--goal_future_mode", "stage_entry",
+                                         "--use_layer_norm", "0",
+                                         "--value_loss_mode", "shared_min"])
+    assert b.goal_future_mode == "stage_entry"
+    assert b.use_layer_norm == 0
+    assert b.value_loss_mode == "shared_min"
