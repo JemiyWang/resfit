@@ -50,11 +50,26 @@ def threepiece_stage(env) -> int:
     return 0
 
 
+def threading_stage(env) -> int:
+    """TwoArmThreading 3 段:0 起步 / 1 脚架与针都被抓起 / 2 成功(针穿入环)。
+
+    threading 无 env 内置子阶段谓词(只有 _check_success),故中间段用双物体 grasp 里程碑。
+    闩锁(max-so-far)由 wrapper 负责,这里只判瞬时阶段。
+    """
+    if env._check_success():
+        return 2
+    if _grasped(env, env.needle) and _grasped(env, env.tripod):
+        return 1
+    return 0
+
+
 STAGE_DETECTORS = {
     "TwoArmThreePieceAssembly": threepiece_stage,
+    "TwoArmThreading": threading_stage,
 }
 NUM_STAGES = {
     "TwoArmThreePieceAssembly": 5,
+    "TwoArmThreading": 3,
 }
 
 

@@ -310,3 +310,57 @@ def test_wrapper_potential_terminal_zeroes_phi():
     _, reward, term, _, _ = w.step(torch.zeros(1, L * D))
     assert term.item() is True
     assert float(reward[0]) == pytest.approx(-2.0)
+
+
+# ---------- threading 3 段检测器契约 ----------
+from resfit.rl_finetuning.chunk_residual.stage_detectors import threading_stage
+
+
+class _FakeNeedle:
+    contact_geoms = ["ndl0", "ndl1"]
+
+class _FakeTripod:
+    contact_geoms = ["trp0", "trp1"]
+
+def _is_tripod(object_geoms):
+    return "trp0" in object_geoms
+
+
+class _FakeThreadEnv:
+    """list-gripper fake;grasp_needle / grasp_tripod 独立控制。"""
+    def __init__(self, success=False, grasp_needle=False, grasp_tripod=False):
+        self._success = success
+        self._gn, self._gt = grasp_needle, grasp_tripod
+        self.robots = [_FakeRobot()]          # 复用本文件已有的 _FakeRobot(gripper=[_FakeGripper()])
+        self.needle = _FakeNeedle()
+        self.tripod = _FakeTripod()
+
+    def _check_success(self):
+        return self._success
+
+    def _check_grasp(self, gripper, object_geoms):
+        return self._gt if _is_tripod(object_geoms) else self._gn
+
+
+def test_threading_stage_success_is_2():
+    assert threading_stage(_FakeThreadEnv(success=True)) == 2
+
+def test_threading_stage_both_grasped_is_1():
+    assert threading_stage(_FakeThreadEnv(grasp_needle=True, grasp_tripod=True)) == 1
+
+def test_threading_stage_only_needle_is_0():
+    # 仅抓针、未抓脚架 → 仍 0(stage 1 要求两物都抓)
+    assert threading_stage(_FakeThreadEnv(grasp_needle=True)) == 0
+
+def test_threading_stage_only_tripod_is_0():
+    assert threading_stage(_FakeThreadEnv(grasp_tripod=True)) == 0
+
+def test_threading_stage_start_is_0():
+    assert threading_stage(_FakeThreadEnv()) == 0
+
+def test_threading_stage_priority_success_over_grasp():
+    assert threading_stage(_FakeThreadEnv(success=True, grasp_needle=True, grasp_tripod=True)) == 2
+
+def test_threading_registered():
+    assert NUM_STAGES["TwoArmThreading"] == 3
+    assert get_stage_detector("TwoArmThreading") is threading_stage
