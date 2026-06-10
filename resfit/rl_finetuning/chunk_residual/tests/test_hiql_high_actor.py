@@ -140,3 +140,20 @@ def test_train_high_actor_clamp_collapses_to_near_goal():
         z_goal = vf.phi(st, states[8:9])     # 落 goal
         z_way = vf.phi(st, states[15:16])    # 固定 +10 航点
     assert (z_pred - z_goal).norm() < (z_pred - z_way).norm()
+
+
+def test_evaluate_near_expected_off_is_clamped():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import HighActor
+    from resfit.rl_finetuning.chunk_residual.verify_high_actor import evaluate_near
+    vf = GoalConditionedVF(state_dim=2, rep_dim=4, hidden=16)
+    ha = HighActor(state_dim=2, rep_dim=4, hidden=16)
+    seqs = [np.stack([np.arange(30), np.arange(30)], axis=1).astype(np.float32)]  # 一条 T=30 demo
+    rng = np.random.default_rng(0)
+    rows = evaluate_near(ha, vf, seqs, way_steps=10, n_per_demo=20, rng=rng)
+    assert len(rows) > 0
+    for r in rows:
+        assert r["gj"] <= r["T"] - 1
+        assert r["dist"] == r["gj"] - r["t"]
+        assert r["expected_off"] == min(10, r["dist"])     # clamp 期望偏移
+        assert 0 <= r["jstar"] <= r["T"] - 1

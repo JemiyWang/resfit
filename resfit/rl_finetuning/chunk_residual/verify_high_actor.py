@@ -43,6 +43,8 @@ def build_parser():
     p.add_argument("--dataset", default="ankile/dexmg-two-arm-three-piece-assembly")
     p.add_argument("--num_demos", type=int, default=40)
     p.add_argument("--n_per_demo", type=int, default=30, help="每条 demo 采样多少个起点 t")
+    p.add_argument("--goal_mode", choices=["final", "near"], default="final",
+                   help="final(原 gate,g=末态)| near(clamp-to-goal 近 goal 塌缩诊断)")
     p.add_argument("--out", default="outputs_chunk/high_actor_verify.png")
     return p
 
@@ -88,6 +90,44 @@ def evaluate(ha, vf, seqs, way_steps, n_per_demo):
                              exp=int(min(way_steps, T - 1 - int(t))),
                              room=bool(t + way_steps < T)))
     return rows, np.concatenate(z_norms)
+
+
+def evaluate_near(ha, vf, seqs, way_steps, n_per_demo, rng):
+    """近 goal 塌缩诊断:每个起点 t 取距离 dist∈[1,2·way] 的 goal=s_{min(t+dist,末)},
+    求子目标 z 的 demo 内 φ 最近邻 j*;clamp-to-goal 期望 off=j*-t ≈ min(way, dist)。"""
+    rows = []
+    for di, seq in enumerate(seqs):
+        T = len(seq)
+        if T < 4:
+            continue
+        ts = np.unique(np.linspace(0, T - 2, min(T - 1, n_per_demo)).astype(int))
+        for t in ts:
+            t = int(t)
+            dist = int(rng.integers(1, 2 * way_steps + 1))
+            gj = min(t + dist, T - 1)
+            z = predict_z(ha, seq[t:t + 1], seq[gj:gj + 1])[0]
+            base = np.broadcast_to(seq[t], (T, seq.shape[1]))
+            phi = phi_of(vf, base, seq)
+            jstar = int(np.linalg.norm(phi - z, axis=-1).argmin())
+            rows.append(dict(demo=di, t=t, T=int(T), gj=int(gj), dist=int(gj - t),
+                             jstar=jstar, off=int(jstar - t),
+                             expected_off=int(min(way_steps, gj - t))))
+    return rows
+
+
+def report_near(rows, way_steps):
+    near = [r for r in rows if r["dist"] < way_steps]
+    far = [r for r in rows if r["dist"] >= way_steps]
+    near_err = np.array([abs(r["off"] - r["dist"]) for r in near]) if near else np.array([np.nan])
+    far_off = np.array([r["off"] for r in far]) if far else np.array([np.nan])
+    print("\n============ ② clamp-to-goal 近 goal 塌缩诊断 ============")
+    print(f"采样 {len(rows)} 个 (t, goal@dist);near(dist<{way_steps})={len(near)} far(dist>={way_steps})={len(far)}")
+    print(f"近 goal: |off − dist| median={np.nanmedian(near_err):.1f}(≈0 表示子目标落在 goal 上)")
+    print(f"远 goal: off median={np.nanmedian(far_off):.1f}(≈way_steps={way_steps} 表示落 +way 航点)")
+    ok = (np.nanmedian(near_err) <= max(2, 0.25 * way_steps)) and \
+         (abs(np.nanmedian(far_off) - way_steps) <= max(3, 0.3 * way_steps))
+    print(f"clamp 诊断: {'PASS' if ok else 'FAIL'}(近 goal 塌到 goal & 远 goal 落 +way)")
+    return ok
 
 
 def report(rows, z_norms, way_steps, rep_dim):
@@ -195,9 +235,14 @@ def main():
     else:
         print(f"[data] demos={len(seqs)}  WARNING: 无 rel_piece 训练 stats,跳过同源修正(评估可能失真)")
 
-    rows, z_norms = evaluate(ha, vf, seqs, hinfo["way_steps"], args.n_per_demo)
-    ok, off, off_room, ratio, room = report(rows, z_norms, hinfo["way_steps"], vf.rep_dim)
-    make_plot(rows, off, off_room, ratio, room, seqs, hinfo["way_steps"], args.out)
+    if args.goal_mode == "near":
+        rng = np.random.default_rng(0)
+        rows = evaluate_near(ha, vf, seqs, hinfo["way_steps"], args.n_per_demo, rng)
+        report_near(rows, hinfo["way_steps"])
+    else:
+        rows, z_norms = evaluate(ha, vf, seqs, hinfo["way_steps"], args.n_per_demo)
+        ok, off, off_room, ratio, room = report(rows, z_norms, hinfo["way_steps"], vf.rep_dim)
+        make_plot(rows, off, off_room, ratio, room, seqs, hinfo["way_steps"], args.out)
 
 
 if __name__ == "__main__":
