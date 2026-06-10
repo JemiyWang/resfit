@@ -353,7 +353,7 @@ def build_parser():
                    help="kai0 仓路径(供 import resfit_pi05.pi05_policy_adapter;本机=kai0_new4090)")
     p.add_argument("--pi0_image_key_map", default=None,
                    help="JSON: env obs 图像键->pi0 槽位(base/left_wrist/right_wrist);缺省=three-piece 默认映射")
-    p.add_argument("--base_n_action_steps", type=int, default=10,
+    p.add_argument("--base_n_action_steps", type=int, default=None,
                    help="覆盖基座 ACT 的 n_action_steps(每多少步重规划;默认用 checkpoint 的 20)。"
                         "≤chunk_size;设 10 即基座预测20步但只执行前10就重推理")
     p.add_argument("--device", default="cuda")
