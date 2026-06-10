@@ -37,10 +37,10 @@ def build_parser():
     p.add_argument("--hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--target_mode", choices=["fixed_waypoint", "clamp_to_goal"],
-                   default="fixed_waypoint",
-                   help="高层 AWR 航点:fixed_waypoint(原口径,恒 +way)| clamp_to_goal(HIQL,近 goal 塌到 goal)")
-    p.add_argument("--high_p_randomgoal", type=float, default=0.0,
-                   help="clamp_to_goal 下高层 goal 取 random 的概率(HIQL 默认 0)")
+                   default="clamp_to_goal",
+                   help="高层 AWR 航点:clamp_to_goal(默认,HIQL,近 goal 塌到 goal)| fixed_waypoint(旧口径,恒 +way)")
+    p.add_argument("--high_p_randomgoal", type=float, default=0.3,
+                   help="clamp_to_goal 下高层 goal 取 random 的概率(HIQL 默认 0.3;fixed_waypoint 下须为 0)")
     return p
 
 

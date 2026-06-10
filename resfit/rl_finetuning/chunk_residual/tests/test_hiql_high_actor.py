@@ -184,3 +184,18 @@ def test_report_near_empty_bucket_is_invalid():
     # 只有一条 clamp 样本 -> 剔除后两桶皆空 -> 诊断无效,返回 False
     rows = [dict(dist=2, off=2, clamped=True, t=38, gj=39, T=40, jstar=39, expected_off=1)]
     assert report_near(rows, 10) is False
+
+
+def test_high_actor_parser_defaults_aligned_to_hiql():
+    """对齐 HIQL:不带 flag 时 CLI 默认 = clamp_to_goal / high_p_randomgoal=0.3;旧选项仍可显式回退。"""
+    from resfit.rl_finetuning.chunk_residual.train_hiql_high_actor import build_parser
+    req = ["--hdf5", "x.hdf5", "--dataset", "some/ds", "--stage_cache", "s.npz",
+           "--gc_value_ckpt", "v.pt"]
+    a = build_parser().parse_args(req)
+    assert a.target_mode == "clamp_to_goal"
+    assert a.high_p_randomgoal == 0.3
+    # 旧口径仍可显式回退(fixed_waypoint 须配 0.0)
+    b = build_parser().parse_args(req + ["--target_mode", "fixed_waypoint",
+                                         "--high_p_randomgoal", "0.0"])
+    assert b.target_mode == "fixed_waypoint"
+    assert b.high_p_randomgoal == 0.0
