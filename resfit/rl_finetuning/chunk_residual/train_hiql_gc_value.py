@@ -59,7 +59,7 @@ def build_parser():
     p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="stage_entry",
                    help="未来目标采样:stage_entry(原口径,只锚 stage 入口)| geometric(HIQL 口径,"
                         "几何分布取任意未来帧,覆盖中间态、填洞)")
-    p.add_argument("--use_layer_norm", type=int, default=0,
+    p.add_argument("--use_layer_norm", type=int, choices=[0, 1], default=0,
                    help="value/rep 用 LN+GELU(1,对齐 HIQL LayerNormMLP)| 裸 ReLU(0,现状)")
     return p
 
