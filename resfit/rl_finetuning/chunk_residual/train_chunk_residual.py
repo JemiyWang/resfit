@@ -512,12 +512,14 @@ def main():
         # FIX B: guard goal30 source — 至少有一个来源能构建 goal30
         assert args.subgoal_state30_cache or args.offline_dataset_path, \
             "--subgoal_conditioned 需 --subgoal_state30_cache 或 --offline_dataset_path(用于建 goal30)"
-        from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal
+        from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal, representative_goal30
         from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
-        # goal30 = demo 末态(30 维)均值,作为在线高层的固定任务目标;用 state30 缓存避免回放
+        # goal30 = demo 末态的 medoid(离均值最近的真实末态),作为在线高层的固定任务目标。
+        # 不用算术均值:均值是 off-manifold 虚构质心、会糊掉散得最厉害的 rel_piece 物体信息,且
+        # high_actor 训练时只见过真实态当 goal(2026-06-09 讨论);用 state30 缓存避免回放。
         _seqs30 = load_or_build_state30(args.offline_dataset_path, args.dataset,
                                         args.offline_num_demos, args.subgoal_state30_cache)
-        goal30 = np.stack([np.asarray(s)[-1] for s in _seqs30], axis=0).mean(axis=0)
+        goal30 = representative_goal30(_seqs30)
         # FIX C: assert goal30 is 30-dim (eef_piece state)
         assert goal30.shape[0] == 30, \
             f"goal30 须 30 维(eef_piece),got {goal30.shape[0]};检查 state30 缓存是否来自 eef_piece"

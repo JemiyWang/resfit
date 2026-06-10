@@ -431,11 +431,18 @@ git commit -m "feat(hiql-high): train_hiql_high_actor 离线训练 CLI"
 
 ## Phase 2 验证 Gate（进入 Phase 3 前）
 
-- [ ] 4 个单测全绿：`conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_hiql_high_actor.py -q`
-- [ ] 正式训练产出 `three_piece_high_actor.pt`，可被 `load_high_actor` 载入。
-- [ ] 子目标合理性手验（spec §4.7 Phase 2 gate）：对若干 demo 起点 state + 末态 g，`π^h` 输出 z 的最近邻 state（在 demo 内按 `‖φ(s_t,·)−z‖` 找）落在 s_t 前方约 k 步附近，而非原地或末态——印证高层学到了"前向 k 步子目标"。
+- [x] 4 个单测全绿：2026-06-09 复跑 `pytest test_hiql_high_actor.py -q` → **4 passed**。
+- [x] 正式训练产出 `three_piece_high_actor.pt`（06-08 19:26），`load_high_actor` 载入正常：info 挂在 `gc_value_ckpt=outputs_chunk/three_piece_gc_value.pt`、`way_steps=25`、`beta=1.0`，forward 输出 (B,10) 高斯（log_std≈0.1 量级合理）。
+- [x] 子目标合理性手验（spec §4.7 Phase 2 gate）：2026-06-09 用 `verify_high_actor.py` 在 40 条真 demo（1200 采样点、同源 rel_piece 重标准化，std 漂移 ~12% 已修）上验证，**Gate 第3条 PASS**：
+  - ⓪ 子目标 z 范数 mean=3.10 ≈ √rep=3.16 → z 落在 φ 流形上；
+  - ① 前向步数 `j*−t`（room 态）median=**25.0** mean=25.2 IQR=[24,26]，几乎精确命中 way_steps=25；
+  - ② 前向占比 **100%**、原地 0%、倒退 0%；③ 远离末态却塌末端 **0/948=0%**；④ off/expected median=**1.00**。
+  - 复验脚本：`resfit/rl_finetuning/chunk_residual/verify_high_actor.py`（一键复跑）；可视化 `outputs_chunk/high_actor_verify.png`。
+  - ⚠️ 局限：AWR 回归目标恒为"固定 k=25 步航点"，故"落在 +25"**主要证明回归收敛 + 权重非退化可用**（Gate 第3条所求）；**未单独证明优势加权是否偏向高价值航点**（回归项盖过该信号，离线难测，留 Phase 3 在线 rollout 成功率验）。
+  - ✅ **已全面切 geometric（2026-06-09）**：Phase 1 改用 geometric 版 V（`three_piece_gc_value_geom.pt`，对比证实目标侧早期尖坑 7→0、V(s,g=s) 负尾 −19.2→−0.96、状态侧不退化），high_actor 已连带重训为 **`three_piece_high_actor_geom.pt`**（挂 geom V，info 已确认），并用 `verify_high_actor.py` 复验 **Gate 第3条 PASS**：z 范数 3.11、前向步数 median=25.0 IQR[24,26]、前向 100%、塌末态 0/948、off/expected median=mean=1.00。可视化 `outputs_chunk/high_actor_verify_geom.png`。
+  - 旧版（stage_entry）`three_piece_gc_value.pt` / `three_piece_high_actor.pt` / `high_actor_verify.png` 保留作对照,未删。**后续 Phase 3 一律用 `_geom` 两件套。**
 
-通过后进入 Phase 3（低层子目标条件化 + offline buffer 接线 + 执行接线，另出一份 plan，依赖本阶段 `high_actor.pt` 与 Phase 1 `gc_value.pt`）。
+**Gate 已于 2026-06-09 带证据通过（已切 geometric）。** 通过后进入 Phase 3（低层子目标条件化 + offline buffer 接线 + 执行接线，另出一份 plan，依赖本阶段 `three_piece_high_actor_geom.pt` 与 Phase 1 `three_piece_gc_value_geom.pt`）。
 
 ---
 

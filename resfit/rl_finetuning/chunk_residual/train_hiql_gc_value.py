@@ -56,6 +56,9 @@ def build_parser():
     p.add_argument("--rep_dim", type=int, default=10)
     p.add_argument("--value_hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="stage_entry",
+                   help="未来目标采样:stage_entry(原口径,只锚 stage 入口)| geometric(HIQL 口径,"
+                        "几何分布取任意未来帧,覆盖中间态、填洞)")
     return p
 
 
@@ -70,11 +73,12 @@ def main():
         f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
-          f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim}")
+          f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
+          f"goal_future_mode={args.goal_future_mode}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
-        hidden=args.value_hidden, seed=args.seed)
+        hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode)
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
                   dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats)

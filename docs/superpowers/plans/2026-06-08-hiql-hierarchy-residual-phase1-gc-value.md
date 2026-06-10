@@ -686,11 +686,16 @@ git commit -m "feat(hiql-gc): train_hiql_gc_value 离线训练 CLI(eef_piece + s
 
 ## Phase 1 验证 Gate（进入 Phase 2 前）
 
-- [ ] 6 个单测全绿：`conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual/tests/test_hiql_gc_value.py -q`
-- [ ] 正式训练产出 `three_piece_gc_value.pt`，`v_stats.max > v_stats.min`（V 对不同 g 有区分度）。
-- [ ] 手验单调性：载入 `gc_value.pt`，沿一条成功 demo 取 state、g=该 demo 末态，`V(s,g)` 大致随接近末态递增（与 Task 5 测试同口径，真数据上肉眼/脚本确认）。
+- [x] 单测全绿（实现时由 6 增至 8）：2026-06-09 复跑 `pytest test_hiql_gc_value.py -q` → **8 passed**。
+- [x] 正式训练产出 `three_piece_gc_value.pt`（1006 demo / 238821 transition / state_dim=30），`v_stats={min:-88.19, max:0.007, mean:-55.93}`，`max > min` ✅。
+- [x] 手验单调性：2026-06-09 用 `verify_gc_value.py` 在 40 条真 demo(同源 rel_piece 重标准化)上验证，**Gate PASS**：
+  - ① 状态侧 `spearman(t, V(s,g=末态))` mean=0.995、40/40 demo >0.9；
+  - ⑤ 目标侧 `spearman(g距离, V(起始,g))` mean=−0.984、40/40 <−0.9（φ 编码了到 g 的距离）；
+  - ② `V(末态,末态)` mean=−0.28≈0；④ `V(起始,末态)`=−82.5 vs 解析 −90.6（expectile 0.7 偏乐观,合理）。
+  - ⚠️ 小瑕疵：③ `V(s,g=s)` 有负向长尾(min≈−19)，少数态没学到"自指=0"；高层用优势之差,影响有限。
+  - 复验脚本:`resfit/rl_finetuning/chunk_residual/verify_gc_value.py`（一键复跑）。
 
-通过后进入 Phase 2（高层 AWR `π^h`，将另出一份 plan，依赖本阶段产出的 `gc_value.pt` 与其 `phi`）。
+通过后进入 Phase 2（高层 AWR `π^h`，将另出一份 plan，依赖本阶段产出的 `gc_value.pt` 与其 `phi`）。**Gate 已于 2026-06-09 带证据通过。**
 
 ---
 

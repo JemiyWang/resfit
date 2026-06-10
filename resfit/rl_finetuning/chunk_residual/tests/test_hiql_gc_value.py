@@ -103,6 +103,39 @@ def test_sample_gc_goals_pure_random():
     assert ((g >= 0) & (g < 5)).all()
 
 
+def test_sample_gc_goals_geometric_future_covers_intermediate():
+    """future_mode='geometric'(HIQL geom_sample=1 口径):未来目标按几何分布落在 [idx, last]
+    内任意帧,覆盖到非 stage 入口的中间态——补 stage_entry 采样'目标空间留洞'的关键。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import sample_gc_goals
+    # 单 demo:全局下标 0..99;stage 入口只有末态(模拟无中间里程碑 -> stage_entry 会把未来全堆到 99)
+    last_idx_of = {0: 99}
+    stage_entries_of = {0: np.array([99], dtype=np.int64)}
+    idx = np.zeros(2000, dtype=np.int64)         # 全部从起始态 0 出发
+    traj = np.zeros(2000, dtype=np.int64)
+    rng = np.random.default_rng(0)
+    g = sample_gc_goals(idx, traj, last_idx_of, stage_entries_of, rng,
+                        n_total=100, p_curr=0.0, p_traj=1.0, p_rand=0.0,
+                        future_mode="geometric", discount=0.9)
+    # 全落在本 demo 内、>= 起始
+    assert g.min() >= 0 and g.max() <= 99
+    # 关键:铺开到大量中间帧(不像 stage_entry 那样全堆末态 99)
+    assert len(np.unique(g)) > 20
+    assert np.mean(g == 99) < 0.5
+    # 几何均值 offset ≈ 1/(1-0.9)=10(从 idx=0 出发 -> goal≈offset)
+    assert 5.0 < g.mean() < 20.0
+
+
+def test_train_gc_value_passes_future_mode_through():
+    """train_gc_value 要把 future_mode 透传到 sample_gc_goals:非法 mode 应在采样时抛 ValueError
+    (若没透传,会是 TypeError/不报错)——以此证明开关真的接通,而非被忽略。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    with pytest.raises(ValueError):
+        train_gc_value(data, steps=1, batch_size=4, rep_dim=4, hidden=16,
+                       future_mode="bogus_mode", seed=0)
+
+
 def test_train_gc_value_learns_progress():
     from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
     seq = np.arange(10).reshape(10, 1).astype(np.float32)

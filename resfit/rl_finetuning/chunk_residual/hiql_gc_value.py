@@ -114,22 +114,35 @@ def build_gc_data(seqs, stage_entries):
 
 
 def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
-                    *, n_total, p_curr=0.2, p_traj=0.5, p_rand=0.3):
-    """HIQL 混采 + stage 入口锚:current(p_curr)/future(p_traj)/random(p_rand)。
+                    *, n_total, p_curr=0.2, p_traj=0.5, p_rand=0.3,
+                    future_mode="stage_entry", discount=0.99):
+    """HIQL 混采:current(p_curr)/future(p_traj)/random(p_rand)。
 
-    future = 同 demo 中 >= 当前下标的 stage 入口态里均匀取一个,无则取末态。
+    future_mode 决定"未来目标"怎么从同 demo 里取:
+      - 'stage_entry'(默认,本项目原口径):>= 当前下标的 stage 入口态里均匀取一个,无则末态。
+        语义清晰(里程碑),但只覆盖入口帧,中间态作为目标几乎没被训到 -> V 在那留洞。
+      - 'geometric'(HIQL geom_sample=1 口径):同 demo 内按几何分布(参数 1-discount)取
+        min(idx + Geom, 末态),覆盖全部中间态、不留洞,更贴论文。
     idx/traj_id 为 (B,) np 数组。返回 (B,) goal 全局下标。
     P(random) = 1 − p_curr − p_traj;三者必须和为 1(断言保证)。
     """
     assert abs(p_curr + p_traj + p_rand - 1.0) < 1e-6, \
         f"p_curr+p_traj+p_rand must sum to 1, got {p_curr}+{p_traj}+{p_rand}"
+    idx = np.asarray(idx, dtype=np.int64)
     B = len(idx)
     goal = rng.integers(0, n_total, size=B)
-    fut = np.empty(B, dtype=np.int64)
-    for j in range(B):
-        ent = stage_entries_of[int(traj_id[j])]
-        cand = ent[ent >= idx[j]]
-        fut[j] = int(rng.choice(cand)) if len(cand) else last_idx_of[int(traj_id[j])]
+    final = np.array([last_idx_of[int(t)] for t in traj_id], dtype=np.int64)
+    if future_mode == "geometric":
+        offset = np.ceil(np.log(1.0 - rng.random(B)) / np.log(discount)).astype(np.int64)
+        fut = np.minimum(idx + offset, final)
+    elif future_mode == "stage_entry":
+        fut = np.empty(B, dtype=np.int64)
+        for j in range(B):
+            ent = stage_entries_of[int(traj_id[j])]
+            cand = ent[ent >= idx[j]]
+            fut[j] = int(rng.choice(cand)) if len(cand) else final[j]
+    else:
+        raise ValueError(f"unknown future_mode: {future_mode!r}")
     denom = max(1.0 - p_curr, 1e-8)
     goal = np.where(rng.random(B) < p_traj / denom, fut, goal)
     goal = np.where(rng.random(B) < p_curr, idx, goal)
@@ -137,11 +150,13 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 
 
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
-                   batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0):
+                   batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
+                   future_mode="stage_entry"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
     双 critic 集成、target 取 min、EMA target。返回 (model, v_stats)。
+    future_mode 透传给 sample_gc_goals(geometric 采样的 discount 复用 gamma,与 HIQL 同源)。
     """
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
@@ -160,7 +175,8 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         b = rng.integers(0, n, size=bs)
         si, sni, tj = s_idx[b], sn_idx[b], traj_id[b]
         gi = sample_gc_goals(si, tj, data["last_idx_of"], data["stage_entries_of"],
-                             rng, n_total=len(states))
+                             rng, n_total=len(states),
+                             future_mode=future_mode, discount=gamma)
         s = states[si]
         s_next = states[sni]
         g = states[gi]
