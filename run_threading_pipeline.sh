@@ -29,6 +29,9 @@ COMMON=(
   --action_scale 0.05 --offline_fraction 0.5
 )
 
+# OMP/MKL 限线程:防 CPU 侧(offline buffer 的 base forward / 小算子)开满核霸占机器
+# (train_hiql_value 曾因此 352 线程霸 81 核;主训虽 GPU 为主,buffer build 仍有重 CPU 段)
+export OMP_NUM_THREADS=16 MKL_NUM_THREADS=16 OPENBLAS_NUM_THREADS=16 NUMEXPR_NUM_THREADS=16
 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl CUDA_VISIBLE_DEVICES="$GPU" HF_HUB_OFFLINE=1
 
 if [ "$MODE" = "smoke" ]; then
