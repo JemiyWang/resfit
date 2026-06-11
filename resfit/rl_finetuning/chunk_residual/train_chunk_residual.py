@@ -32,6 +32,7 @@ os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 from resfit.dexmg.environments.dexmg import create_vectorized_env
 from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_policy
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+from resfit.rl_finetuning.chunk_residual.bc_schedule import linear_bc_coef
 from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
@@ -317,6 +318,10 @@ def build_parser():
     p.add_argument("--demo_bc_coef", type=float, default=0.0,
                    help="残差 actor 的 demo-BC 权重(模块②a);0=关(逐位等价 baseline)。"
                         ">0 需 offline_fraction>0(bc_batch 取自 offline_rb)、--actor raw")
+    p.add_argument("--bc_coef_final", type=float, default=None,
+                   help="demo-BC 系数线性衰减的终值(floor);不传=固定 demo_bc_coef(逐位等价)。"
+                        "传值 v 则 bc_loss_coef 从 demo_bc_coef 线性降到 v(区间 0→total_env_steps)。"
+                        "需 demo_bc_coef>0 且 0<=v<=demo_bc_coef")
     p.add_argument("--relabel", action="store_true",
                    help="在线 relay relabeling(模块②b):harvest 产出前缀段进 relabel buffer,"
                         "bc_batch 改 relabel+demo 50/50 混采。默认关=逐位等价 ②a。"
@@ -478,6 +483,11 @@ def main():
         assert args.actor == "raw", "demo_bc 第一版只支持 --actor raw"
         assert args.offline_fraction > 0, \
             "demo_bc_coef>0 需 offline_fraction>0(bc_batch 取自 offline_rb)"
+    if args.bc_coef_final is not None:
+        assert args.demo_bc_coef > 0, \
+            "--bc_coef_final 需 --demo_bc_coef>0(BC 未开则衰减无意义)"
+        assert 0.0 <= args.bc_coef_final <= args.demo_bc_coef, \
+            f"--bc_coef_final 需在 [0, demo_bc_coef={args.demo_bc_coef}] 内,得到 {args.bc_coef_final}"
 
     env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
                                   chunk_length=args.chunk_length,
@@ -680,6 +690,10 @@ def main():
                 update_actor = ((i + 1) % args.utd == 0)
                 bc_batch = None
                 if args.demo_bc_coef > 0 and update_actor and offline_rb is not None:
+                    if args.bc_coef_final is not None:
+                        agent.cfg.bc_loss_coef = linear_bc_coef(
+                            env_steps, c0=args.demo_bc_coef,
+                            c_final=args.bc_coef_final, total_steps=args.total_env_steps)
                     if args.relabel:
                         bc_batch = sample_bc_batch(relabel_rb, offline_rb, args.batch_size, args.device)
                     else:
@@ -702,7 +716,9 @@ def main():
                 buf_sizes = {"online": len(online_rb),
                              "offline": len(offline_rb) if offline_rb else 0,
                              "relabel": len(relabel_rb) if relabel_rb else 0}
-                wandb.log(build_train_log_dict(m_upd, lrs, buf_sizes), step=env_steps)
+                log_dict = build_train_log_dict(m_upd, lrs, buf_sizes)
+                log_dict["rft/bc_coef_cur"] = agent.cfg.bc_loss_coef
+                wandb.log(log_dict, step=env_steps)
                 next_log += args.log_freq
 
         if env_steps >= next_eval:

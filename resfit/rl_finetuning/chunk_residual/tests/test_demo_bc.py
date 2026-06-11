@@ -106,3 +106,13 @@ def test_cli_demo_bc_coef_default_zero():
 def test_cli_demo_bc_coef_parses():
     from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
     assert build_parser().parse_args(["--demo_bc_coef", "0.1"]).demo_bc_coef == 0.1
+
+
+def test_cli_bc_coef_final_default_none():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    assert build_parser().parse_args([]).bc_coef_final is None
+
+
+def test_cli_bc_coef_final_parses():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    assert build_parser().parse_args(["--bc_coef_final", "0.01"]).bc_coef_final == 0.01
