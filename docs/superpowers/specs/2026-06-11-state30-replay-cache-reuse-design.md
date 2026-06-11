@@ -76,3 +76,4 @@ return seqs30, standardizer, rel_stats
 - standardizer 重建与缓存时不一致 → 由 `dataset_id` 校验 + "同 dataset 确定性" 兜底;若仍担心可在测试里对比 state18 部分。
 - 旧缓存被误当 v2 → 由"缺 rel_mean 键 → rel_stats=None → 不命中"保证。
 - 不影响任何在跑实验(默认 None;改动只在新进程显式传 flag 时生效)。
+- **缓存不随 hdf5 变化失效(既有行为,非本次引入)**:`state30_cache_reuse` 只校验 `num_demos is None` + dataset_id,不比对 hdf5 实际 demo 数。若 hdf5 在建缓存后被重生成/扩充(同路径同 dataset),复用会静默返回旧(更短)demo 集,下游 `zip` 截断不报错。整个 `*_state30.npz` 方案都有此盲信特性。规避:**hdf5 重生成后手动删旧缓存重建**。(若要兜底:在复用前开 hdf5 数 `sorted_demo_keys` 并要求 `len(seqs)==该数`,代价是 chokepoint 多一次 hdf5 open。)

@@ -55,6 +55,9 @@ def state30_cache_reuse(cache_path, *, dataset_id, num_demos):
 
     规则:缓存存在 且 num_demos is None(只有全量与新鲜 replay 严格等价,因 rel_stats
     是对全量 raw rel 算的)且 v2(有 rel_stats)且 dataset_id 一致。
+
+    注意:不比对 hdf5 实际 demo 数——hdf5 重生成后缓存不会自动失效(会静默返回旧 demo 集)。
+    hdf5 变了请手动删旧缓存重建。
     """
     if not (cache_path and os.path.exists(cache_path)):
         return None
