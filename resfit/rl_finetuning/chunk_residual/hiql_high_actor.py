@@ -60,7 +60,8 @@ def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
 
 def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                      batch_size=256, steps=50_000, hidden=256, seed=0,
-                     target_mode="fixed_waypoint", high_p_randomgoal=0.0):
+                     target_mode="fixed_waypoint", high_p_randomgoal=0.0,
+                     adv_agg="min"):
     """AWR 抽高层 π^h。vf:冻结 GoalConditionedVF。复用 Phase 1 的 data(build_gc_data)。
 
     优势 Ã^h = min V(s_{t+k},g) − min V(s_t,g);回归目标 z=vf.phi(s_t, s_{t+k})。返回训练后的 HighActor。
@@ -70,6 +71,8 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
     """
     if target_mode not in ("fixed_waypoint", "clamp_to_goal"):
         raise ValueError(f"unknown target_mode: {target_mode!r}")
+    if adv_agg not in ("min", "mean"):
+        raise ValueError(f"unknown adv_agg: {adv_agg!r}")
     if high_p_randomgoal != 0.0 and target_mode != "clamp_to_goal":
         raise ValueError(
             f"high_p_randomgoal={high_p_randomgoal} 仅在 target_mode='clamp_to_goal' 下生效;"
@@ -103,7 +106,10 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
         with torch.no_grad():
             vs1, vs2 = vf(s, g)
             vw1, vw2 = vf(sw, g)
-            adv = torch.minimum(vw1, vw2) - torch.minimum(vs1, vs2)
+            if adv_agg == "min":
+                adv = torch.minimum(vw1, vw2) - torch.minimum(vs1, vs2)
+            else:  # "mean"
+                adv = 0.5 * (vw1 + vw2) - 0.5 * (vs1 + vs2)
             w = awr_weight(adv, beta)
             z_tgt = vf.phi(s, sw)
         dist = ha(s, g)
@@ -116,7 +122,8 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
 
 
 def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta,
-                    target_mode="fixed_waypoint", high_p_randomgoal=0.0):
+                    target_mode="fixed_waypoint", high_p_randomgoal=0.0,
+                    adv_agg="min"):
     """存 high_actor.pt:权重 + 维度 + gc_value_ckpt/way_steps/beta + target_mode/high_p_randomgoal。"""
     torch.save({
         "state_dict": model.state_dict(),
@@ -130,6 +137,7 @@ def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta,
         "beta": beta,
         "target_mode": target_mode,
         "high_p_randomgoal": high_p_randomgoal,
+        "adv_agg": adv_agg,
     }, path)
 
 
@@ -144,4 +152,5 @@ def load_high_actor(path, map_location="cpu"):
     info = {k: ckpt[k] for k in ("gc_value_ckpt", "way_steps", "beta")}
     info["target_mode"] = ckpt.get("target_mode", "fixed_waypoint")
     info["high_p_randomgoal"] = ckpt.get("high_p_randomgoal", 0.0)
+    info["adv_agg"] = ckpt.get("adv_agg", "min")
     return model, info

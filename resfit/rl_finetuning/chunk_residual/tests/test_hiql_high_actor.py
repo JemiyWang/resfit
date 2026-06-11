@@ -199,3 +199,36 @@ def test_high_actor_parser_defaults_aligned_to_hiql():
                                          "--high_p_randomgoal", "0.0"])
     assert b.target_mode == "fixed_waypoint"
     assert b.high_p_randomgoal == 0.0
+
+
+def test_adv_agg_default_equivalence():
+    """底层默认(不传)与显式 'min' 逐位等价(默认路径未被破坏)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=300, batch_size=16, rep_dim=8, hidden=32,
+                           lr=1e-3, ema=0.01, seed=0)
+    kw = dict(way_steps=5, beta=1.0, steps=300, batch_size=16, hidden=32, lr=1e-3, seed=0)
+    h0 = train_high_actor(data, vf, **kw)
+    h1 = train_high_actor(data, vf, adv_agg="min", **kw)
+    for a, b in zip(h0.state_dict().values(), h1.state_dict().values()):
+        assert torch.equal(a, b)
+
+
+def test_adv_agg_mean_differs_and_validates():
+    """'mean' 聚合与 'min' 训出不同;非法值报错。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    vf, _ = train_gc_value(data, steps=300, batch_size=16, rep_dim=8, hidden=32,
+                           lr=1e-3, ema=0.01, seed=0)
+    kw = dict(way_steps=5, beta=1.0, steps=300, batch_size=16, hidden=32, lr=1e-3, seed=0)
+    h_min = train_high_actor(data, vf, adv_agg="min", **kw)
+    h_mean = train_high_actor(data, vf, adv_agg="mean", **kw)
+    diffs = [not torch.equal(a, b) for a, b in
+             zip(h_min.state_dict().values(), h_mean.state_dict().values())]
+    assert any(diffs)
+    with pytest.raises(ValueError):
+        train_high_actor(data, vf, adv_agg="bogus", **kw)

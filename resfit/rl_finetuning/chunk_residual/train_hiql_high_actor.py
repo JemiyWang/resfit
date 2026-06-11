@@ -41,6 +41,8 @@ def build_parser():
                    help="高层 AWR 航点:clamp_to_goal(默认,HIQL,近 goal 塌到 goal)| fixed_waypoint(旧口径,恒 +way)")
     p.add_argument("--high_p_randomgoal", type=float, default=0.3,
                    help="clamp_to_goal 下高层 goal 取 random 的概率(HIQL 默认 0.3;fixed_waypoint 下须为 0)")
+    p.add_argument("--adv_agg", choices=["min", "mean"], default="mean",
+                   help="高层优势双 critic 聚合:min=min(vw)-min(vs)旧行为;mean=均值(对齐HIQL,默认)")
     return p
 
 
@@ -62,14 +64,17 @@ def main():
         f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} "
-          f"target_mode={args.target_mode} high_p_randomgoal={args.high_p_randomgoal}")
+          f"target_mode={args.target_mode} high_p_randomgoal={args.high_p_randomgoal} "
+          f"adv_agg={args.adv_agg}")
     ha = train_high_actor(data, vf, way_steps=args.way_steps, beta=args.beta, lr=args.lr,
                           batch_size=args.batch_size, steps=args.steps, hidden=args.hidden,
                           seed=args.seed, target_mode=args.target_mode,
-                          high_p_randomgoal=args.high_p_randomgoal)
+                          high_p_randomgoal=args.high_p_randomgoal,
+                          adv_agg=args.adv_agg)
     save_high_actor(args.output, ha, gc_value_ckpt=args.gc_value_ckpt,
                     way_steps=args.way_steps, beta=args.beta,
-                    target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal)
+                    target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal,
+                    adv_agg=args.adv_agg)
     print(f"[hiql_high] saved {args.output}")
 
 
