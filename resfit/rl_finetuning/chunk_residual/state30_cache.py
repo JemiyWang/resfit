@@ -8,19 +8,45 @@ import os
 import numpy as np
 
 
-def save_state30_cache(path, seqs):
-    """存 30 维 state 序列列表到 npz(键 n + s{i})。"""
+def save_state30_cache(path, seqs, rel_stats=None, dataset_id=None):
+    """存 30 维 state 序列到 npz。
+
+    rel_stats=(mean(12,),std(12,)) 给了则写 v2(额外 rel_mean/rel_std/dataset_id);
+    不给则 v1(仅 n+s{i},向后兼容)。
+    """
     payload = {"n": np.int64(len(seqs))}
     for i, s in enumerate(seqs):
         payload[f"s{i}"] = np.asarray(s, dtype=np.float32)
+    if rel_stats is not None:
+        mean, std = rel_stats
+        payload["rel_mean"] = np.asarray(mean, dtype=np.float32)
+        payload["rel_std"] = np.asarray(std, dtype=np.float32)
+        if dataset_id is not None:
+            payload["dataset_id"] = np.asarray(str(dataset_id))
     np.savez_compressed(path, **payload)
 
 
 def load_state30_cache(path):
-    """读 npz,返回 30 维 state 序列列表 [(T_i,30) float32]。"""
+    """读 npz,返回 30 维 state 序列列表 [(T_i,30) float32]。v2 额外键被忽略。"""
     with np.load(path) as z:
         n = int(z["n"])
         return [z[f"s{i}"] for i in range(n)]
+
+
+def load_state30_cache_v2(path):
+    """读 npz → (seqs, rel_stats 或 None, dataset_id 或 None)。
+
+    缺 rel_mean 键(旧 v1 格式)→ rel_stats=None, dataset_id=None。
+    """
+    with np.load(path, allow_pickle=False) as z:
+        n = int(z["n"])
+        seqs = [z[f"s{i}"] for i in range(n)]
+        if "rel_mean" in z.files:
+            rel_stats = (z["rel_mean"], z["rel_std"])
+            ds = str(z["dataset_id"]) if "dataset_id" in z.files else None
+        else:
+            rel_stats, ds = None, None
+    return seqs, rel_stats, ds
 
 
 def load_or_build_state30(hdf5_path, dataset_id, num_demos, cache_path):
