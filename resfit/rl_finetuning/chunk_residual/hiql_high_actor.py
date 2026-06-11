@@ -64,7 +64,10 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                      adv_agg="min"):
     """AWR 抽高层 π^h。vf:冻结 GoalConditionedVF。复用 Phase 1 的 data(build_gc_data)。
 
-    优势 Ã^h = min V(s_{t+k},g) − min V(s_t,g);回归目标 z=vf.phi(s_t, s_{t+k})。返回训练后的 HighActor。
+    优势 Ã^h 由 adv_agg 决定(见下);回归目标 z=vf.phi(s_t, s_{t+k})。返回训练后的 HighActor。
+    adv_agg:
+      - 'min'(默认,底层旧行为):Ã^h = min(vw1,vw2) − min(vs1,vs2)。
+      - 'mean'(对齐 HIQL):Ã^h = 0.5(vw1+vw2) − 0.5(vs1+vs2)。
     target_mode:
       - 'fixed_waypoint'(默认):wi=min(si+way,demo末),goal 混采 sample_gc_goals(与现状逐位等价)。
       - 'clamp_to_goal':HIQL GCSDataset 高段——goal 线性插值轨迹态,wi=min(si+way, goal)。
