@@ -343,12 +343,72 @@ def test_gc_value_parser_defaults_aligned_to_hiql():
     assert a.use_layer_norm == 1
     assert a.value_loss_mode == "hiql"
     assert a.value_mask_mode == "hiql"
+    assert a.value_rep_mode == "goal_only"
     # 旧口径仍可显式回退
     b = build_parser().parse_args(req + ["--goal_future_mode", "stage_entry",
                                          "--use_layer_norm", "0",
                                          "--value_loss_mode", "shared_min",
-                                         "--value_mask_mode", "done_aware"])
+                                         "--value_mask_mode", "done_aware",
+                                         "--value_rep_mode", "concat"])
     assert b.goal_future_mode == "stage_entry"
     assert b.use_layer_norm == 0
     assert b.value_loss_mode == "shared_min"
     assert b.value_mask_mode == "done_aware"
+    assert b.value_rep_mode == "concat"
+
+
+def test_rep_mode_default_concat_and_dims():
+    """默认(不传)= concat:goal 编码器第一层吃 2*state_dim;goal_only 吃 state_dim。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import RelativeGoalEncoder
+    enc_default = RelativeGoalEncoder(state_dim=30, rep_dim=10, hidden=64)
+    assert enc_default.net[0].in_features == 60          # concat[g,s]
+    enc_go = RelativeGoalEncoder(state_dim=30, rep_dim=10, hidden=64, rep_mode="goal_only")
+    assert enc_go.net[0].in_features == 30               # goal-only
+
+
+def test_goal_only_phi_ignores_state():
+    """goal_only 下 phi(s,g) 只依赖 g(扰动 s 不变);concat 下扰动 s 会变。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    g = torch.randn(4, 30)
+    s1 = torch.randn(4, 30)
+    s2 = torch.randn(4, 30)
+    vf_go = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, rep_mode="goal_only")
+    assert torch.allclose(vf_go.phi(s1, g), vf_go.phi(s2, g), atol=1e-6)
+    vf_cat = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, rep_mode="concat")
+    assert not torch.allclose(vf_cat.phi(s1, g), vf_cat.phi(s2, g), atol=1e-4)
+    with pytest.raises(ValueError):
+        GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, rep_mode="bogus")
+
+
+def test_value_rep_mode_default_equivalence():
+    """train_gc_value 底层默认(不传)与显式 'concat' 逐位等价。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(steps=300, batch_size=16, rep_dim=8, hidden=32, lr=1e-3, ema=0.01, seed=0)
+    m0, _ = train_gc_value(data, **kw)
+    m1, _ = train_gc_value(data, value_rep_mode="concat", **kw)
+    for a, b in zip(m0.state_dict().values(), m1.state_dict().values()):
+        assert torch.equal(a, b)
+
+
+def test_gc_value_rep_mode_save_load_roundtrip(tmp_path):
+    """save/load 往返保 value_rep_mode 并按之重建维度;旧档(无键)回退 concat。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, save_gc_value, load_gc_value)
+    vf = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, rep_mode="goal_only")
+    p = tmp_path / "v.pt"
+    save_gc_value(str(p), vf, v_stats={"min": 0.0, "max": 0.0, "mean": 0.0},
+                  mean=torch.zeros(30), std=torch.ones(30), dataset_id="x")
+    m, info = load_gc_value(str(p))
+    assert info["value_rep_mode"] == "goal_only"
+    assert m.goal_encoder.net[0].in_features == 30
+    # 旧档:删掉键 → 回退 concat(2*state_dim)
+    ckpt = torch.load(str(p), weights_only=False)
+    del ckpt["value_rep_mode"]
+    cat = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, rep_mode="concat")
+    ckpt["state_dict"] = cat.state_dict()
+    torch.save(ckpt, str(p))
+    m2, info2 = load_gc_value(str(p))
+    assert info2["value_rep_mode"] == "concat"
+    assert m2.goal_encoder.net[0].in_features == 60

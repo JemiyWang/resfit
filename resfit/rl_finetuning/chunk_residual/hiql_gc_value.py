@@ -38,16 +38,21 @@ def _mlp(in_dim, hidden, out_dim, n_hidden=2, use_layer_norm=False):
 
 
 class RelativeGoalEncoder(nn.Module):
-    """φ([g,s]):concat([targets, bases]) -> MLP -> rep_dim,再归一化到半径 sqrt(rep_dim)。"""
+    """φ:rep_mode='concat' 吃 concat([g,s]);'goal_only' 只吃 g。归一化到半径 sqrt(rep_dim)。"""
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False, rep_mode="concat"):
         super().__init__()
+        if rep_mode not in ("concat", "goal_only"):
+            raise ValueError(f"unknown rep_mode: {rep_mode!r}")
         self.state_dim = state_dim
         self.rep_dim = rep_dim
-        self.net = _mlp(2 * state_dim, hidden, rep_dim, use_layer_norm=use_layer_norm)
+        self.rep_mode = rep_mode
+        in_dim = state_dim if rep_mode == "goal_only" else 2 * state_dim
+        self.net = _mlp(in_dim, hidden, rep_dim, use_layer_norm=use_layer_norm)
 
     def forward(self, targets, bases):
-        rep = self.net(torch.cat([targets, bases], dim=-1))
+        inp = targets if self.rep_mode == "goal_only" else torch.cat([targets, bases], dim=-1)
+        rep = self.net(inp)
         rep = rep / (rep.norm(dim=-1, keepdim=True) + 1e-8) * (self.rep_dim ** 0.5)
         return rep
 
@@ -59,13 +64,17 @@ class GoalConditionedVF(nn.Module):
     "目标/子目标状态"。forward(s, g) -> (v1, v2)。
     """
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False, rep_mode="concat"):
         super().__init__()
+        if rep_mode not in ("concat", "goal_only"):
+            raise ValueError(f"unknown rep_mode: {rep_mode!r}")
         self.state_dim = state_dim
         self.rep_dim = rep_dim
         self.hidden = hidden
         self.use_layer_norm = use_layer_norm
-        self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden, use_layer_norm=use_layer_norm)
+        self.rep_mode = rep_mode
+        self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden,
+                                                use_layer_norm=use_layer_norm, rep_mode=rep_mode)
         self.v1 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
         self.v2 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
 
@@ -168,7 +177,8 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
                    future_mode="stage_entry", use_layer_norm=False,
-                   value_loss_mode="shared_min", value_mask_mode="done_aware"):
+                   value_loss_mode="shared_min", value_mask_mode="done_aware",
+                   value_rep_mode="concat"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;TD mask 由 value_mask_mode 决定(见下)。
@@ -180,16 +190,22 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
       - 'shared_min'(默认,现状):两 critic 都回归 y=r+γ·mask·min(nv1,nv2),残差自门控 expectile。
       - 'hiql'(对齐参考):per-critic 目标 q_i=r+γ·mask·nv_i(不取 min)、adv=q−V_target 门控的
         两参 expectile、当前态 V 走 target 网。复刻 HIQL compute_value_loss 的 expectile+双 critic。
+    value_rep_mode:
+      - 'concat'(默认,底层旧行为):goal 编码器 φ 吃 concat([g,s]),输入维 2*state_dim。
+      - 'goal_only'(对齐参考):φ 只吃 g,输入维 state_dim(HIQL rep_type='state',状态侧恒等)。
     """
     if value_loss_mode not in ("shared_min", "hiql"):
         raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")
     if value_mask_mode not in ("done_aware", "hiql"):
         raise ValueError(f"unknown value_mask_mode: {value_mask_mode!r}")
+    if value_rep_mode not in ("concat", "goal_only"):
+        raise ValueError(f"unknown value_rep_mode: {value_rep_mode!r}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     states = data["states"]
     D = states.shape[1]
-    model = GoalConditionedVF(D, rep_dim, hidden, use_layer_norm=use_layer_norm)
+    model = GoalConditionedVF(D, rep_dim, hidden, use_layer_norm=use_layer_norm,
+                              rep_mode=value_rep_mode)
     target = copy.deepcopy(model)
     for p in target.parameters():
         p.requires_grad_(False)
@@ -259,6 +275,7 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         "rep_dim": model.rep_dim,
         "hidden": model.hidden,
         "use_layer_norm": model.use_layer_norm,
+        "value_rep_mode": model.rep_mode,
         "v_stats": v_stats,
         "mean": mean,
         "std": std,
@@ -275,14 +292,17 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
 def load_gc_value(path, map_location="cpu"):
     """读 gc_value.pt,重建 GoalConditionedVF(eval),返回 (model, info)。"""
     ckpt = torch.load(path, map_location=map_location, weights_only=False)
+    value_rep_mode = ckpt.get("value_rep_mode", "concat")
     model = GoalConditionedVF(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"],
-                              use_layer_norm=ckpt.get("use_layer_norm", False))
+                              use_layer_norm=ckpt.get("use_layer_norm", False),
+                              rep_mode=value_rep_mode)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
     info["state_mode"] = ckpt.get("state_mode", "eef_piece")
     info["value_loss_mode"] = ckpt.get("value_loss_mode", "shared_min")
     info["value_mask_mode"] = ckpt.get("value_mask_mode", "done_aware")
+    info["value_rep_mode"] = value_rep_mode
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     return model, info

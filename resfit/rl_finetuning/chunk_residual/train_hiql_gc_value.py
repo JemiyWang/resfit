@@ -66,6 +66,8 @@ def build_parser():
                         "shared_min(旧口径,两 critic 钉 min 共享目标 + 残差 expectile)")
     p.add_argument("--value_mask_mode", choices=["done_aware", "hiql"], default="hiql",
                    help="value TD mask:done_aware=(1-success)(1-done)旧行为;hiql=1-success(对齐HIQL,默认)")
+    p.add_argument("--value_rep_mode", choices=["concat", "goal_only"], default="goal_only",
+                   help="goal 编码器输入:concat=[g,s]旧行为;goal_only=只吃 g(对齐HIQL,默认)")
     return p
 
 
@@ -82,13 +84,14 @@ def main():
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
           f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)} "
-          f"value_loss_mode={args.value_loss_mode} value_mask_mode={args.value_mask_mode}")
+          f"value_loss_mode={args.value_loss_mode} value_mask_mode={args.value_mask_mode} "
+          f"value_rep_mode={args.value_rep_mode}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
         hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
         use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode,
-        value_mask_mode=args.value_mask_mode)
+        value_mask_mode=args.value_mask_mode, value_rep_mode=args.value_rep_mode)
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
                   dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats,
