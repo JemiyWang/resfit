@@ -171,13 +171,15 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    value_loss_mode="shared_min", value_mask_mode="done_aware"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
-    reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
+    reward r(s,g)=0 if s==g else -1;TD mask 由 value_mask_mode 决定(见下)。
     EMA target。返回 (model, v_stats)。future_mode 透传给 sample_gc_goals。
+    value_mask_mode:
+      - 'done_aware'(默认,底层旧行为):mask=(1-success)*(1-done),到达 goal 或 demo 末步都截断 bootstrap。
+      - 'hiql'(对齐参考):mask=(1-success),只在到达 goal 截断(demo 末步仍 bootstrap)。
     value_loss_mode:
       - 'shared_min'(默认,现状):两 critic 都回归 y=r+γ·mask·min(nv1,nv2),残差自门控 expectile。
       - 'hiql'(对齐参考):per-critic 目标 q_i=r+γ·mask·nv_i(不取 min)、adv=q−V_target 门控的
-        两参 expectile、当前态 V 走 target 网。复刻 HIQL compute_value_loss 的 expectile+双 critic
-        两处(mask 仍含 (1-done),done-mask 不在本轮范围)。
+        两参 expectile、当前态 V 走 target 网。复刻 HIQL compute_value_loss 的 expectile+双 critic。
     """
     if value_loss_mode not in ("shared_min", "hiql"):
         raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")

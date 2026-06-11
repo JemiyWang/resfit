@@ -342,10 +342,13 @@ def test_gc_value_parser_defaults_aligned_to_hiql():
     assert a.goal_future_mode == "geometric"
     assert a.use_layer_norm == 1
     assert a.value_loss_mode == "hiql"
+    assert a.value_mask_mode == "hiql"
     # 旧口径仍可显式回退
     b = build_parser().parse_args(req + ["--goal_future_mode", "stage_entry",
                                          "--use_layer_norm", "0",
-                                         "--value_loss_mode", "shared_min"])
+                                         "--value_loss_mode", "shared_min",
+                                         "--value_mask_mode", "done_aware"])
     assert b.goal_future_mode == "stage_entry"
     assert b.use_layer_norm == 0
     assert b.value_loss_mode == "shared_min"
+    assert b.value_mask_mode == "done_aware"
