@@ -64,6 +64,8 @@ def build_parser():
     p.add_argument("--value_loss_mode", choices=["shared_min", "hiql"], default="hiql",
                    help="value 损失:hiql(默认,对齐参考,per-critic 目标不取 min + adv 门控两参 expectile)| "
                         "shared_min(旧口径,两 critic 钉 min 共享目标 + 残差 expectile)")
+    p.add_argument("--value_mask_mode", choices=["done_aware", "hiql"], default="hiql",
+                   help="value TD mask:done_aware=(1-success)(1-done)旧行为;hiql=1-success(对齐HIQL,默认)")
     return p
 
 
@@ -80,16 +82,17 @@ def main():
     print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
           f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)} "
-          f"value_loss_mode={args.value_loss_mode}")
+          f"value_loss_mode={args.value_loss_mode} value_mask_mode={args.value_mask_mode}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
         hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
-        use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode)
+        use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode,
+        value_mask_mode=args.value_mask_mode)
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
                   dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats,
-                  value_loss_mode=args.value_loss_mode)
+                  value_loss_mode=args.value_loss_mode, value_mask_mode=args.value_mask_mode)
     print(f"[hiql_gc] saved {args.output}; v_stats={v_stats}")
 
 

@@ -307,6 +307,33 @@ def test_critic_divergence_keys_and_range():
     assert d["mean_abs_diff"] >= 0.0
 
 
+def test_value_mask_mode_default_equivalence():
+    """底层默认(不传)与显式 'done_aware' 逐位等价(默认路径未被破坏)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(steps=300, batch_size=16, rep_dim=8, hidden=32, lr=1e-3, ema=0.01, seed=0)
+    m0, _ = train_gc_value(data, **kw)
+    m1, _ = train_gc_value(data, value_mask_mode="done_aware", **kw)
+    for a, b in zip(m0.state_dict().values(), m1.state_dict().values()):
+        assert torch.equal(a, b)
+
+
+def test_value_mask_mode_hiql_differs_and_validates():
+    """'hiql' 模式去掉 (1-done) → 训出与 'done_aware' 不同;非法值报错。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(20).reshape(20, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(steps=300, batch_size=16, rep_dim=8, hidden=32, lr=1e-3, ema=0.01, seed=0)
+    m_done, _ = train_gc_value(data, value_mask_mode="done_aware", **kw)
+    m_hiql, _ = train_gc_value(data, value_mask_mode="hiql", **kw)
+    diffs = [not torch.equal(a, b) for a, b in
+             zip(m_done.state_dict().values(), m_hiql.state_dict().values())]
+    assert any(diffs)
+    with pytest.raises(ValueError):
+        train_gc_value(data, value_mask_mode="bogus", **kw)
+
+
 def test_gc_value_parser_defaults_aligned_to_hiql():
     """对齐 HIQL:不带 flag 时 CLI 默认 = geometric / LN 开 / hiql 口径;旧选项仍可显式回退。"""
     from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser

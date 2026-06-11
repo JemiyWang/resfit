@@ -168,7 +168,7 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
                    future_mode="stage_entry", use_layer_norm=False,
-                   value_loss_mode="shared_min"):
+                   value_loss_mode="shared_min", value_mask_mode="done_aware"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;到达 goal 或 demo 末步都截断 bootstrap。
@@ -181,6 +181,8 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     """
     if value_loss_mode not in ("shared_min", "hiql"):
         raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")
+    if value_mask_mode not in ("done_aware", "hiql"):
+        raise ValueError(f"unknown value_mask_mode: {value_mask_mode!r}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     states = data["states"]
@@ -205,7 +207,10 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         g = states[gi]
         success = torch.tensor(si == gi, dtype=torch.float32)
         reward = success - 1.0
-        mask = (1.0 - success) * (1.0 - done_all[b])
+        if value_mask_mode == "done_aware":
+            mask = (1.0 - success) * (1.0 - done_all[b])
+        else:  # "hiql"
+            mask = 1.0 - success
         if value_loss_mode == "shared_min":
             with torch.no_grad():
                 nv1, nv2 = target(s_next, g)
@@ -242,7 +247,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
 
 def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
                   state_mode="eef_piece", rel_piece_stats=None,
-                  value_loss_mode="shared_min"):
+                  value_loss_mode="shared_min", value_mask_mode="done_aware"):
     """存 gc_value.pt:权重 + 维度 + v_stats + state mean/std + dataset_id + state_mode
     + value_loss_mode(provenance,旧档无此键时 load_gc_value 回退 'shared_min')
     (+ eef_piece 的 rel_piece mean/std,供 Phase 3 online 同源标准化)。"""
@@ -258,6 +263,7 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         "dataset_id": dataset_id,
         "state_mode": state_mode,
         "value_loss_mode": value_loss_mode,
+        "value_mask_mode": value_mask_mode,
     }
     if rel_piece_stats is not None:
         payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
@@ -274,6 +280,7 @@ def load_gc_value(path, map_location="cpu"):
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
     info["state_mode"] = ckpt.get("state_mode", "eef_piece")
     info["value_loss_mode"] = ckpt.get("value_loss_mode", "shared_min")
+    info["value_mask_mode"] = ckpt.get("value_mask_mode", "done_aware")
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     return model, info
