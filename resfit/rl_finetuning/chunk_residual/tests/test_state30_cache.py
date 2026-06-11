@@ -53,3 +53,41 @@ def test_state30_cache_v2_rel_stats_without_dataset_id(tmp_path):
     assert len(s) == 1
     assert rel is not None and np.allclose(rel[1], 1.0)
     assert ds is None
+
+
+from resfit.rl_finetuning.chunk_residual.state30_cache import state30_cache_reuse
+
+
+def _write_v2(p, n=3, dataset_id="ds"):
+    seqs = [np.ones((2, 30), np.float32) for _ in range(n)]
+    save_state30_cache(p, seqs,
+                       rel_stats=(np.zeros(12, np.float32), np.ones(12, np.float32)),
+                       dataset_id=dataset_id)
+
+
+def test_reuse_hit_full(tmp_path):
+    p = str(tmp_path / "c.npz"); _write_v2(p, n=3, dataset_id="ds")
+    out = state30_cache_reuse(p, dataset_id="ds", num_demos=None)
+    assert out is not None
+    seqs, rel = out
+    assert len(seqs) == 3 and np.allclose(rel[1], 1.0)
+
+
+def test_reuse_skip_partial_num_demos(tmp_path):
+    p = str(tmp_path / "c.npz"); _write_v2(p)
+    assert state30_cache_reuse(p, dataset_id="ds", num_demos=20) is None
+
+
+def test_reuse_skip_missing_file(tmp_path):
+    assert state30_cache_reuse(str(tmp_path / "nope.npz"), dataset_id="ds", num_demos=None) is None
+
+
+def test_reuse_skip_old_format(tmp_path):
+    p = str(tmp_path / "old.npz")
+    save_state30_cache(p, [np.ones((2, 30), np.float32)])   # v1,无 stats
+    assert state30_cache_reuse(p, dataset_id="ds", num_demos=None) is None
+
+
+def test_reuse_skip_dataset_mismatch(tmp_path):
+    p = str(tmp_path / "c.npz"); _write_v2(p, dataset_id="ds_a")
+    assert state30_cache_reuse(p, dataset_id="ds_b", num_demos=None) is None

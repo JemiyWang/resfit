@@ -50,6 +50,24 @@ def load_state30_cache_v2(path):
     return seqs, rel_stats, ds
 
 
+def state30_cache_reuse(cache_path, *, dataset_id, num_demos):
+    """决定能否复用 state30 缓存(等价性边界)。可复用→返回 (seqs, rel_stats);否则 None。
+
+    规则:缓存存在 且 num_demos is None(只有全量与新鲜 replay 严格等价,因 rel_stats
+    是对全量 raw rel 算的)且 v2(有 rel_stats)且 dataset_id 一致。
+    """
+    if not (cache_path and os.path.exists(cache_path)):
+        return None
+    if num_demos is not None:           # 部分 demo → rel_stats 不同,不复用
+        return None
+    seqs, rel_stats, ds = load_state30_cache_v2(cache_path)
+    if rel_stats is None:               # 旧 v1 格式
+        return None
+    if ds != dataset_id:                # 张冠李戴防护
+        return None
+    return seqs, rel_stats
+
+
 def load_or_build_state30(hdf5_path, dataset_id, num_demos, cache_path):
     """有缓存读缓存(秒级,按 num_demos 截前 N);否则 read_per_demo_states 回放 eef_piece 并存缓存。
 
