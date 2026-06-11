@@ -21,17 +21,26 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
 from resfit.rl_finetuning.utils.normalization import StateStandardizer
 
 
-def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None, device="cpu"):
+def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None,
+                         device="cpu", cache_path=None):
     """读每条 demo 的标准化 state 序列(与 RL 训练同源 mean/std)。
 
-    state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12],
-    rel_piece 由 replay set_state 从 sim 算(object-aware;要 replay 全 demo,慢)。
+    state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12]。
+    cache_path(仅 eef_piece+num_demos=None 时):命中完整 v2 缓存则跳过 MuJoCo replay。
     返回 (list[np.ndarray], standardizer, rel_piece_stats 或 None)。
     """
     import numpy as np
+    from resfit.rl_finetuning.chunk_residual.state30_cache import (
+        state30_cache_reuse, save_state30_cache)
     meta = LeRobotDatasetMetadata(dataset_id)
     standardizer = StateStandardizer.from_dataset_stats(
         meta.stats["observation.state"], device=device)
+    if state_mode == "eef_piece" and cache_path is not None:
+        hit = state30_cache_reuse(cache_path, dataset_id=dataset_id, num_demos=num_demos)
+        if hit is not None:
+            seqs30, rel_stats = hit
+            print(f"[read_per_demo_states] 缓存命中 {cache_path} → 跳过 replay({len(seqs30)} demo)")
+            return seqs30, standardizer, rel_stats
     seqs, replay_meta = [], []
     with h5py.File(hdf5_path, "r") as f:
         eps = sorted_demo_keys(list(f["data"].keys()))
@@ -50,7 +59,6 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
     if state_mode == "eef":
         return seqs, standardizer, None
 
-    # eef_piece: replay set_state 算 rel_piece(每 demo (T,12)),全量算 stats 后标准化拼进 state
     from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
         make_replay_env, replay_eef_rel_piece)
     from resfit.rl_finetuning.chunk_residual.object_state import rel_piece_stats
@@ -68,6 +76,9 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
         t = min(len(s18), len(rp))
         rp_std = ((rp[:t] - mean) / std).astype(np.float32)
         seqs30.append(np.concatenate([s18[:t], rp_std], axis=1))
+    if cache_path is not None and num_demos is None:
+        save_state30_cache(cache_path, seqs30, rel_stats=(mean, std), dataset_id=dataset_id)
+        print(f"[read_per_demo_states] 已写 v2 缓存 {cache_path}")
     return seqs30, standardizer, (mean, std)
 
 
@@ -79,6 +90,8 @@ def build_parser():
     p.add_argument("--state_mode", choices=["eef", "eef_piece"], default="eef",
                    help="eef(18,默认)|eef_piece(30,加双臂 eef-rel-piece object-aware;要 replay 全 demo)")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
+    p.add_argument("--state30_cache", default=None,
+                   help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -93,7 +106,8 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     seqs, standardizer, rel_stats = read_per_demo_states(
-        args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos)
+        args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
+        cache_path=args.state30_cache)
     s, s_next, done = build_transitions(seqs)
     print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
           f"transitions={s.shape[0]} state_dim={s.shape[1]}")

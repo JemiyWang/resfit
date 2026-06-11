@@ -47,6 +47,8 @@ def build_parser():
     p.add_argument("--stage_cache", required=True, help="逐帧 stage 缓存 npz(precompute_stage_cache 产)")
     p.add_argument("--output", default="gc_value.pt")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
+    p.add_argument("--state30_cache", default=None,
+                   help="state30 v2 缓存路径(命中跳过 replay)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -75,7 +77,8 @@ def main():
     args = build_parser().parse_args()
     # state_mode 固定 eef_piece(分层路必须含物体 pose;③a' 假设就绪)
     seqs, standardizer, rel_stats = read_per_demo_states(
-        args.hdf5, args.dataset, "eef_piece", num_demos=args.num_demos)
+        args.hdf5, args.dataset, "eef_piece", num_demos=args.num_demos,
+        cache_path=args.state30_cache)
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \
