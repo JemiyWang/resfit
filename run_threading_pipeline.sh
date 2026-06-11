@@ -27,6 +27,7 @@ COMMON=(
   --reward_shaping potential --potential_source hiql
   --hiql_value_ckpt "$VALUE"
   --action_scale 0.05 --offline_fraction 0.5
+  --demo_bc_coef 0.1
 )
 
 # OMP/MKL 限线程:防 CPU 侧(offline buffer 的 base forward / 小算子)开满核霸占机器
