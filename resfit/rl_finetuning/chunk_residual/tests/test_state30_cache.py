@@ -43,3 +43,13 @@ def test_old_loader_still_reads_v2_seqs(tmp_path):
                        rel_stats=(np.zeros(12, np.float32), np.ones(12, np.float32)),
                        dataset_id="d")
     assert len(load_state30_cache(p)) == 1
+
+
+def test_state30_cache_v2_rel_stats_without_dataset_id(tmp_path):
+    p = str(tmp_path / "c.npz")
+    save_state30_cache(p, [np.ones((2, 30), np.float32)],
+                       rel_stats=(np.zeros(12, np.float32), np.ones(12, np.float32)))
+    s, rel, ds = load_state30_cache_v2(p)
+    assert len(s) == 1
+    assert rel is not None and np.allclose(rel[1], 1.0)
+    assert ds is None

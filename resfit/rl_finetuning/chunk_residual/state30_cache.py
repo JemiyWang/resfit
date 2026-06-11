@@ -13,6 +13,7 @@ def save_state30_cache(path, seqs, rel_stats=None, dataset_id=None):
 
     rel_stats=(mean(12,),std(12,)) 给了则写 v2(额外 rel_mean/rel_std/dataset_id);
     不给则 v1(仅 n+s{i},向后兼容)。
+    dataset_id 仅在 rel_stats 给定时写入(单独给 dataset_id 会被忽略)。
     """
     payload = {"n": np.int64(len(seqs))}
     for i, s in enumerate(seqs):
