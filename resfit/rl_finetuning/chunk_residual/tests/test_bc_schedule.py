@@ -23,9 +23,10 @@ def test_negative_steps_clipped_to_c0():
     assert linear_bc_coef(-100, c0=0.1, c_final=0.01, total_steps=500_000) == pytest.approx(0.1)
 
 
-def test_zero_total_steps_returns_c_final():
-    # 防除零:total_steps<=0 退化为终值
+def test_nonpositive_total_steps_returns_c_final():
+    # 防除零:total_steps<=0(含负值)退化为终值
     assert linear_bc_coef(0, c0=0.1, c_final=0.01, total_steps=0) == pytest.approx(0.01)
+    assert linear_bc_coef(123, c0=0.1, c_final=0.01, total_steps=-1) == pytest.approx(0.01)
 
 
 def test_flat_when_final_equals_c0():
