@@ -80,6 +80,7 @@ def load_or_build_state30(hdf5_path, dataset_id, num_demos, cache_path):
     from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
     seqs, _, rel_stats = read_per_demo_states(hdf5_path, dataset_id, "eef_piece", num_demos=num_demos)
     if cache_path and num_demos is None:
+        # 仅全量 v2(含 rel_stats/dataset_id)可被 state30_cache_reuse 复用
         save_state30_cache(cache_path, seqs, rel_stats=rel_stats, dataset_id=dataset_id)
     elif cache_path:
         save_state30_cache(cache_path, seqs)   # 部分 demo 仍按 v1 存(不含全量 stats)
