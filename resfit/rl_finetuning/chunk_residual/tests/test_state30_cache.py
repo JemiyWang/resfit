@@ -1,8 +1,11 @@
 import numpy as np
 
 from resfit.rl_finetuning.chunk_residual.state30_cache import (
-    save_state30_cache, load_state30_cache)
-from resfit.rl_finetuning.chunk_residual.state30_cache import load_state30_cache_v2
+    save_state30_cache,
+    load_state30_cache,
+    load_state30_cache_v2,
+    state30_cache_reuse,
+)
 
 
 def test_state30_cache_roundtrip(tmp_path):
@@ -55,9 +58,6 @@ def test_state30_cache_v2_rel_stats_without_dataset_id(tmp_path):
     assert ds is None
 
 
-from resfit.rl_finetuning.chunk_residual.state30_cache import state30_cache_reuse
-
-
 def _write_v2(p, n=3, dataset_id="ds"):
     seqs = [np.ones((2, 30), np.float32) for _ in range(n)]
     save_state30_cache(p, seqs,
@@ -91,3 +91,11 @@ def test_reuse_skip_old_format(tmp_path):
 def test_reuse_skip_dataset_mismatch(tmp_path):
     p = str(tmp_path / "c.npz"); _write_v2(p, dataset_id="ds_a")
     assert state30_cache_reuse(p, dataset_id="ds_b", num_demos=None) is None
+
+
+def test_reuse_skip_v2_without_stored_dataset_id(tmp_path):
+    # v2 缓存有 rel_stats 但没存 dataset_id(ds 读回 None)→ 对真 dataset_id 应拒绝
+    p = str(tmp_path / "c.npz")
+    save_state30_cache(p, [np.ones((2, 30), np.float32)],
+                       rel_stats=(np.zeros(12, np.float32), np.ones(12, np.float32)))
+    assert state30_cache_reuse(p, dataset_id="ankile/x", num_demos=None) is None
