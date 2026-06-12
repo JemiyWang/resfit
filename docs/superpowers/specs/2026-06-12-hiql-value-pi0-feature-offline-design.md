@@ -24,7 +24,14 @@ resfit 现有 HIQL value(路线B:`gc_value` + `high_actor`)的 state 口径写�
 
 ## 3. 设计
 
-### 3.1 `Pi0FeatureExtractor`(新文件 `pi0_feature.py`,纯特征器)
+### 3.0 环境分工(2026-06-12 修订:实测 `residual` 环境 import 不了 `openpi`)
+实测:resfit 的 `residual` 环境(`/mnt/mnt/data/envs/residual`)有 torch/safetensors 但**无 `openpi`**;能 import `PI0Pytorch` 的是 **openpi 环境 `/mnt/mnt/data/chj/openpi/.venv`**。且本机**无 torch pi05 ckpt**,只有 JAX/orbax `pi05_base`(`/mnt/mnt/data/FPF_workspace/checkpoints/pi05_base`)。故采纳**环境分离(方案 X)**:
+- **建缓存在 openpi 环境**:新增脚本 `build_pi0_feat_cache.py`,用 openpi venv 跑——先(一次性)`convert_jax_model_to_pytorch.py` 把 `pi05_base` JAX→torch,再加载冻结 torch pi05、遍历 hdf5、出**已标准化**的 pi0_feat 缓存 npz(seqs + feat_stats + 签名)。
+- **value 训练在 residual 环境**:`read_per_demo_states(pi0_feat)` / gc_value / high_actor **只读缓存**(cache-required),**全程不 import openpi**;缓存缺失即报错引导先在 openpi 环境生成。
+- `pi0_feature.py` 的纯函数(pool/concat/signature)只依赖 torch/numpy,两环境都可 import;其中加载真 pi05 的 `from_checkpoint`/`_model_prefix_pool` 走**惰性 import openpi**,仅 build 脚本(openpi venv)触达。
+- **标准化口径搬到 build 时**:整条 `[emb⊕proprio]` 的 mean/std 在 build 脚本对全量算并写进缓存;residual 侧只加载,不再自算(§3.3 据此修订)。
+
+### 3.1 `Pi0FeatureExtractor`(新文件 `pi0_feature.py`,纯特征器;由 build 脚本在 openpi 环境用)
 - `__init__(ckpt, device, image_keys, proprio_key, pooling="last", prompt=None)`:加载冻结 torch `PI0Pytorch`(pi05,`openpi.models_pytorch.pi0_pytorch`),`eval()`+`requires_grad_(False)`。
 - `embed_batch(images: dict[str, Tensor], proprio: Tensor, prompts) -> Tensor[B, D]`:
   1. 按 base policy 同款预处理图像;
@@ -40,24 +47,22 @@ resfit 现有 HIQL value(路线B:`gc_value` + `high_actor`)的 state 口径写�
 - `pi0_feat_cache_reuse(path, *, signature, num_demos) -> (seqs, emb_stats) | None`:签名(含 dataset_id、num_demos、pi05 ckpt 标识、image_keys、proprio_key、pooling、prompt)**全一致**才命中,否则 None → 重算。`num_demos` 非 None 的部分量**不落盘当全量**。
 
 ### 3.3 `read_per_demo_states` 加 `pi0_feat` 分支(改 `train_hiql_value.py`)
-保持现有契约 `-> (seqs, standardizer, aux_stats)`:
+保持现有契约 `-> (seqs, standardizer, aux_stats)`,但 **residual 侧 cache-required**(不在 residual 进程内跑 pi05):
 ```
-state_mode == "pi0_feat":
-    命中 pi0_feat 缓存 → 直接返回 (seqs, standardizer, feat_stats)
-    否则:逐 demo 读 hdf5 图像键 + proprio_key
-          → Pi0FeatureExtractor.embed_batch(批量) 得每帧 [emb_raw ⊕ proprio_raw]
-          → 对整条 [emb_raw ⊕ proprio_raw] 自算单组 (mean,std) 标准化
-          → 拼成 seqs;num_demos 全量时落盘缓存
-    返回 (seqs, standardizer, feat_stats)   # feat_stats=(mean,std) 占 aux_stats 槽(类比 rel_piece_stats)
+state_mode == "pi0_feat":   # residual 环境
+    cache_path 缺失/未命中 → raise(引导:先在 openpi 环境跑 build_pi0_feat_cache.py)
+    命中 → 返回 (seqs, None, feat_stats)   # 缓存里 seqs 已标准化;standardizer 占位 None
 ```
-- **归一化口径(命门)**:`pi0_feat` **不复用** `observation.state` 的 `StateStandardizer`(proprio_key 可配、未必等于 observation.state)——而是对整条 `[emb_raw ⊕ proprio_raw]` 自算**一组** `(mean,std)`。该 stats 同时:(a) 作为 `feat_stats` 返回;(b) 由 `save_gc_value`/`save_high_actor` 存进 ckpt 的 `mean/std` 字段,供后续在线对实时 `[emb⊕proprio]` 同款标准化。返回的 `standardizer` 在此模式仅占位(下游 pi0_feat 路不依赖它做 proprio 标准化)。
+- **不在 residual 进程内构造 Extractor、不读图像、不 import openpi**。嵌入计算 + 标准化全在 build 脚本(openpi 环境,§3.0)完成并写入缓存。
+- **归一化口径(命门)**:`pi0_feat` **不复用** `observation.state` 的 `StateStandardizer`(proprio_key 可配)。build 脚本对整条 `[emb_raw ⊕ proprio_raw]` 算**一组** `(mean,std)` 写进缓存;`save_gc_value`/`save_high_actor` 把它存进 ckpt `mean/std`,供后续在线同款标准化。
 - `eef`/`eef_piece` 两支**原样不动**(仍走 `StateStandardizer` + `rel_piece_stats`)。
 
-### 3.4 接线(4 处,全 flag-gated)
-- `train_hiql_value.py` / `train_hiql_gc_value.py` / `train_hiql_high_actor.py`:`--state_mode` 加 `pi0_feat` 枚举;新增仅 `pi0_feat` 用的 `--pi0_ckpt/--pi0_image_keys/--pi0_proprio_key/--pi0_prompt/--pi0_pooling/--pi0_feat_cache`。
+### 3.4 接线(全 flag-gated)
+- **build 脚本(openpi 环境)**`build_pi0_feat_cache.py` 的 flags:`--pi0_ckpt`(torch pi05 目录)`--hdf5 --dataset --image_keys --proprio_key --prompt --pooling --out_cache [--num_demos]`。
+- **residual 侧训练** `train_hiql_value.py` / `train_hiql_gc_value.py` / `train_hiql_high_actor.py`:`--state_mode` 加 `pi0_feat` 枚举 + `--pi0_feat_cache`(指向 build 产物,**须已存在**)。**不加 `--pi0_ckpt` 等**(那是 build 脚本的)。
   - **注**:`train_hiql_gc_value.py` 现在**写死** `state_mode="eef_piece"`(`:108`)→ 改成读 `--state_mode`(默认仍 `eef_piece`,逐位等价)。
-- 守卫 `validate_pi0_feat_cfg(args)`:`pi0_feat` 缺 `--pi0_ckpt`/图像键 → `ValueError`;非 `pi0_feat` 传了 `--pi0_*` → warn 忽略(仿现有 `validate_stage_cache`,在重活前 fail-fast)。
-- `save_gc_value`/`save_high_actor`:存 `state_mode="pi0_feat"` + 签名;加载侧断言一致(现有 dim/state_mode assert 延伸)。
+- 守卫 `validate_pi0_feat_cfg(args)`(residual 侧):`pi0_feat` 缺 `--pi0_feat_cache` 或文件不存在 → `ValueError`(引导先 build);非 `pi0_feat` 传了 `--pi0_feat_cache` → warn 忽略。
+- `save_gc_value`/`save_high_actor`:存 `state_mode="pi0_feat"` + 缓存里读出的签名;加载侧断言一致(现有 dim/state_mode assert 延伸)。
 
 ### 3.5 数据集映射
 - image_keys:dexmg `agentview_image,robot0_eye_in_hand_image,robot1_eye_in_hand_image`;LIBERO `agentview_rgb,eye_in_hand_rgb` → 由 `--pi0_image_keys` 指定(沿用 pi05 adapter 的 image_key_map 思路)。
@@ -80,15 +85,19 @@ state_mode == "pi0_feat":
 **集成冒烟(opt-in,真 pi05,默认 skip/标 slow)**:dexmg 与 LIBERO 各取几帧跑真 extractor → 产出极小 `gc_value.pt`,断言训几步不 NaN、V 有限。这是"两种 hdf5 都跑通"的完成判据,门控起来不拖累单测。
 
 ## 5. 要改/新增的文件
-- 新增 `resfit/rl_finetuning/chunk_residual/pi0_feature.py`(Pi0FeatureExtractor)
-- 新增 `resfit/rl_finetuning/chunk_residual/pi0_feat_cache.py`(缓存)
-- 改 `train_hiql_value.py`(`read_per_demo_states` 加分支 + parser)
+- 新增 `resfit/rl_finetuning/chunk_residual/verify_pi0_prefix_feature.py`(spike;openpi 环境跑;含 load_frozen_pi05/build_observation/prefix_feature 真实底稿)
+- 新增 `resfit/rl_finetuning/chunk_residual/pi0_feature.py`(纯函数 + Pi0FeatureExtractor;惰性 import openpi)
+- 新增 `resfit/rl_finetuning/chunk_residual/pi0_feat_cache.py`(缓存,纯 numpy)
+- 新增 `resfit/rl_finetuning/chunk_residual/build_pi0_feat_cache.py`(**openpi 环境**入口:转换/加载 pi05 → 出缓存)
+- 改 `train_hiql_value.py`(`read_per_demo_states` 加 cache-required 分支 + parser `--pi0_feat_cache` + `validate_pi0_feat_cfg`)
 - 改 `train_hiql_gc_value.py`(state_mode 改可选 + parser + save 签名)
-- 改 `train_hiql_high_actor.py`(parser + save 签名)
-- 新增 tests:`tests/test_pi0_feature.py`、`tests/test_pi0_feat_cache.py`、`read_per_demo_states` pi0_feat 分支测试
+- 改 `train_hiql_high_actor.py`(state 源 dispatch + parser + save 签名)
+- 新增 tests:`tests/test_pi0_feature.py`、`tests/test_pi0_feat_cache.py`、`tests/test_read_per_demo_states_pi0_feat.py`、`tests/test_pi0_feat_cli_wiring.py`(均 residual 环境可跑,不 import openpi)
 
-## 6. 前置依赖与风险
-- **torch pi05 可加载**(命门前置):本机有 `PI0Pytorch` 类 + `convert_jax_model_to_pytorch.py` + pi05 权重(如 `FPF_workspace/checkpoints/pi05_base`)。**实施计划第一步任务**先验证"加载冻结 torch pi05 + prefix 前向出特征"成立(只有 JAX 就先转换);不成立则回退方案2(JAX 特征器+cache 解耦,见 brainstorm 记录)。
+## 6. 前置依赖与风险(2026-06-12 实测更新)
+- **环境(已实测)**:`residual`(`/mnt/mnt/data/envs/residual`)有 torch/safetensors、**无 openpi**;openpi torch 栈在 **`/mnt/mnt/data/chj/openpi/.venv`**(可 import `PI0Pytorch`)。→ 据此定 §3.0 环境分离。
+- **无 torch pi05 ckpt**(命门前置):本机只有 JAX/orbax `pi05_base`(`/mnt/mnt/data/FPF_workspace/checkpoints/pi05_base`,确认 orbax)。**Task 1 spike 先在 openpi 环境**:`convert_jax_model_to_pytorch.py --checkpoint_dir <含'pi05'的目录> --output_path <out> --config_name <pi05 config>` 转 torch,再 load + prefix 前向验有限特征。不成立则回退方案2。注:转换/spike 需 GPU 授权;部署同款 finetuned pi05 在远端 `/home/dex`,首版用通用 `pi05_base` 证机制即可(特征-策略权重一致性留作后续 refinement)。
+- **build 脚本环境依赖**:openpi venv 需有 h5py/numpy(待 Task 1 一并确认)。
 - **预处理一致性**:图像预处理与 base policy 不一致 → 特征垃圾。必须复用现成预处理。
 - **缓存体积**:D_emb 较大(pi05 gemma width)→ 帧×demo 累积可观,提供 fp16 缓存选项。
 - **pi05 state 内部通道**:pi05 跳过 suffix state token(`pi0_pytorch.py:244 if not self.pi05`),故 proprio 是否已隐含在 prefix 不确定 → 设计统一**显式 concat 原始 proprio**,无论 pi05 内部如何都保证本体在场(冗余但安全)。

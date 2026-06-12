@@ -10,6 +10,8 @@
 
 参照 spec:`docs/superpowers/specs/2026-06-12-hiql-value-pi0-feature-offline-design.md`。
 
+> **⚠️ 2026-06-12 修订(环境分离,见 spec §3.0)**:实测 `residual` 环境无 `openpi`、openpi torch 栈在 `/mnt/mnt/data/chj/openpi/.venv`,且本机无 torch pi05(仅 JAX `pi05_base`)。故:**特征器/缓存构建移到 openpi 环境的 `build_pi0_feat_cache.py`**(先 JAX→torch 转换);**residual 侧 value 训练只读缓存(cache-required,不 import openpi、不构造 extractor)**。Task 1 是 openpi 环境的转换+spike,跑通后**据真实 API 回填 build 脚本与下列 Task 的细节**(Task 4/6/7 的"进程内 extractor"相应改成"读缓存");Task 2/3/5 的纯逻辑与 CLI 守卫基本不变(守卫改为校验 `--pi0_feat_cache` 存在)。下列任务文本为修订前版本,执行时以本横幅 + spec §3.0/§3.3/§3.4 为准。
+
 跑测命令(全计划统一):
 ```
 conda run -n residual python -m pytest <path>::<test> -v
