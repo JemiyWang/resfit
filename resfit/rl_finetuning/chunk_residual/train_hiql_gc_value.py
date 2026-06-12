@@ -22,9 +22,28 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
 
 
+def validate_stage_cache(stage_cache, *, needs_stage):
+    """按口径校验 --stage_cache 是否必需。
+
+    需要 stage 的口径(gc_value 的 --goal_future_mode stage_entry / high_actor 的
+    --target_mode fixed_waypoint)必须提供 stage_cache;默认 geometric/clamp_to_goal 口径
+    不读 stage,可省略。返回 stage_cache 原样(None 表示无 stage)。"""
+    if needs_stage and stage_cache is None:
+        raise ValueError(
+            "该口径需要 --stage_cache(由 precompute_stage_cache 生成);"
+            "若用默认 geometric(gc_value)/clamp_to_goal(high_actor)口径则可省略")
+    return stage_cache
+
+
 def stage_entries_aligned(hdf5_path, stage_cache, num_demos, seq_lens):
     """按 read_per_demo_states 的同款 demo 顺序读逐帧 stage,算 within-demo 入口下标,
-    并裁剪到对应 seq 长度(eef_piece 路会把 seq 截到 min(len(s18),len(rel)))。"""
+    并裁剪到对应 seq 长度(eef_piece 路会把 seq 截到 min(len(s18),len(rel)))。
+
+    stage_cache=None(默认 geometric 口径,不读 stage)时不起 hdf5/缓存,直接按 demo 数
+    返回空入口数组——build_gc_data 会让 stage_entries_of 回退到末态;几何采样根本不读它,
+    故与喂一份全 0 dummy cache 逐位等价。"""
+    if stage_cache is None:
+        return [np.empty(0, dtype=np.int64) for _ in seq_lens]
     stages_by_demo = load_stage_cache(stage_cache)
     with h5py.File(hdf5_path, "r") as f:
         eps = sorted_demo_keys(list(f["data"].keys()))
@@ -44,7 +63,9 @@ def build_parser():
     p = argparse.ArgumentParser(description="离线训练 goal-conditioned HIQL value(Phase 1)")
     p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
-    p.add_argument("--stage_cache", required=True, help="逐帧 stage 缓存 npz(precompute_stage_cache 产)")
+    p.add_argument("--stage_cache", default=None,
+                   help="逐帧 stage 缓存 npz(precompute_stage_cache 产)。仅 --goal_future_mode "
+                        "stage_entry 需要;默认 geometric 不读 stage,可省略")
     p.add_argument("--output", default="gc_value.pt")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
@@ -73,8 +94,16 @@ def build_parser():
     return p
 
 
+def gc_value_needs_stage(args):
+    """gc_value 仅 --goal_future_mode stage_entry 口径读 stage 入口(见 sample_gc_goals
+    的 stage_entry 分支);默认 geometric 不读。main 与守卫共用此谓词,避免接线散落。"""
+    return args.goal_future_mode == "stage_entry"
+
+
 def main():
     args = build_parser().parse_args()
+    # 配置守卫先行(在重活 read_per_demo_states 之前 fail-fast)
+    validate_stage_cache(args.stage_cache, needs_stage=gc_value_needs_stage(args))
     # state_mode 固定 eef_piece(分层路必须含物体 pose;③a' 假设就绪)
     seqs, standardizer, rel_stats = read_per_demo_states(
         args.hdf5, args.dataset, "eef_piece", num_demos=args.num_demos,
