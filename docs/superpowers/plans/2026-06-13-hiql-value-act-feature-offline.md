@@ -566,7 +566,7 @@ Expected: FAIL（`act_feat` 非合法 choice / `validate_act_feat_cfg` 不存在
 
 - [ ] **Step 3: 改 `train_hiql_value.py`**
 
-3a. `read_per_demo_states` 签名加可选参数并加 `act_feat` 分支(放在 `meta`/standardizer 之后、现有 `eef_piece` 缓存判断之前):
+3a. `read_per_demo_states` 签名加可选参数,并把 `act_feat` 分支放在**最前面**(在 `meta = LeRobotDatasetMetadata(...)` 之前 return)——act_feat 不需要 `StateStandardizer`,也不能依赖真实 dataset 元信息(单测用假 dataset_id):
 
 ```python
 def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None,
@@ -577,10 +577,8 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
     import numpy as np
     from resfit.rl_finetuning.chunk_residual.state30_cache import (
         state30_cache_reuse, save_state30_cache)
-    meta = LeRobotDatasetMetadata(dataset_id)
-    standardizer = StateStandardizer.from_dataset_stats(
-        meta.stats["observation.state"], device=device)
 
+    # --- act_feat 分支:在加载 dataset 元信息/StateStandardizer 之前短路 ---
     if state_mode == "act_feat":
         from resfit.rl_finetuning.chunk_residual.act_feature import act_feat_signature
         from resfit.rl_finetuning.chunk_residual.act_feat_cache import (
@@ -604,7 +602,12 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
             save_act_feat_cache(act_feat_cache, seqs_std, (mean, std), signature=sig)
             print(f"[read_per_demo_states] 已写 act_feat 缓存 {act_feat_cache}")
         return seqs_std, None, (mean, std)
-    # ...(以下 eef / eef_piece 原逻辑保持不动)
+
+    # --- 非 act_feat:原逻辑(eef / eef_piece)保持不动 ---
+    meta = LeRobotDatasetMetadata(dataset_id)
+    standardizer = StateStandardizer.from_dataset_stats(
+        meta.stats["observation.state"], device=device)
+    # ...(以下 eef_piece 缓存判断 + eef/eef_piece 原逻辑不变)
 ```
 
 3b. 新增 build 辅助(从 hdf5 逐 demo 组装 ACT 输入 raw_obs;图像键映射按 Task 1 spike 确认):
