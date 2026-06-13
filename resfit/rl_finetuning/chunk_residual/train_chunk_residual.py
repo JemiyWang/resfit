@@ -648,7 +648,6 @@ def main():
         assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
         assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
         from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal, representative_goal
-        from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value
         _gc_info = _subgoal_gc_info
         _sm = _gc_info["state_mode"]
         if _sm == "act_feat":
@@ -661,6 +660,15 @@ def main():
             for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
                 assert _cache_sig.get(k) == _gv_sig.get(k), \
                     f"act_feat cache 与 gc_value 签名不符 [{k}]: {_cache_sig.get(k)} vs {_gv_sig.get(k)}"
+            import os
+            import warnings
+            _base_id = os.path.normpath(str(getattr(args, "base_wandb_id", "") or ""))
+            _cache_ckpt = os.path.normpath(str(_gv_sig.get("act_ckpt_id") or ""))
+            if _base_id and _cache_ckpt and _base_id != _cache_ckpt:
+                warnings.warn(
+                    f"[act_feat] 残差 base_policy(--base_wandb_id={_base_id}) 与 act_feat cache 的 ACT "
+                    f"(act_ckpt_id={_cache_ckpt}) 不同 → 在线特征可能与离线不同源;务必先过一致性 smoke",
+                    stacklevel=2)
             goal = representative_goal(_seqs)
             assert goal.shape[0] == _gc_info["mean"].shape[0], "goal 维度须 == gc_value state_dim"
             subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
