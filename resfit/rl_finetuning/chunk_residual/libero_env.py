@@ -48,7 +48,13 @@ class LiberoGymWrapper(gym.Env):
         return self._process(obs), {}
 
     def step(self, action):
-        obs, reward, done, info = self.env.step(np.asarray(action, np.float32))
+        # action 可能是 cuda tensor(--device cuda 时);robosuite 要 numpy。对齐 dexmg RobosuiteGymWrapper.step。
+        if hasattr(action, "cpu"):
+            action = action.cpu().numpy()
+        action = np.asarray(action, np.float32)
+        if action.ndim > 1:
+            action = action[0]
+        obs, reward, done, info = self.env.step(action)
         obs2, r, term, trunc, info = adapt_4tuple(obs, reward, done, info)
         return self._process(obs2), float(r), bool(term), bool(trunc), info
 
