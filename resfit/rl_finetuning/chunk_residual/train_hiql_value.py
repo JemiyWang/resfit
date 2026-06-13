@@ -27,7 +27,7 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
                          device="cpu", cache_path=None,
                          act_feat_cache=None, act_extractor=None,
                          act_image_keys=None, act_ckpt_id=None, act_proprio_key="observation.state",
-                         pooling="mean", _raw_obs_seqs=None):
+                         pooling="mean", state_standardizer=None, _raw_obs_seqs=None):
     """读每条 demo 的标准化 state 序列(与 RL 训练同源 mean/std)。
 
     state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12]。
@@ -55,6 +55,15 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
         assert act_extractor is not None, "act_feat build 需 act_extractor(真 ACT 或 stub)"
         raw_seqs = _raw_obs_seqs if _raw_obs_seqs is not None else _build_raw_obs_seqs(
             hdf5_path, act_image_keys, act_proprio_key, num_demos)
+        # 命门 B:proprio 全栈 dataset-标准化(与在线 obs.state 同款)。
+        std = state_standardizer
+        if std is None and _raw_obs_seqs is None:   # 真 build 且未显式传 → 从 dataset stats 建
+            std = StateStandardizer.from_dataset_stats(
+                LeRobotDatasetMetadata(dataset_id).stats["observation.state"], device="cpu")
+        if std is not None:
+            for ro in raw_seqs:
+                ro[act_proprio_key] = std.standardize(
+                    torch.as_tensor(ro[act_proprio_key], dtype=torch.float32))
         raw_feat = [act_extractor.embed_batch(ro).cpu().numpy().astype(np.float32) for ro in raw_seqs]
         allf = np.concatenate(raw_feat, axis=0)
         mean = allf.mean(axis=0).astype(np.float32)

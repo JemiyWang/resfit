@@ -63,3 +63,32 @@ def test_build_raw_obs_seqs_image_preprocessing(tmp_path):
     assert img.dtype == torch.float32
     assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0   # scaled to [0,1]
     assert seqs[0]["observation.state"].shape == (T, 18)
+
+
+def test_act_feat_build_standardizes_proprio():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
+
+    captured = {}
+
+    class _RecExtractor:
+        """记录被喂进的 proprio,便于直接断言它已被 dataset-标准化(绕开 act_feat 末标准化的干扰)。"""
+        def embed_batch(self, raw):
+            captured["proprio"] = torch.as_tensor(raw["observation.state"], dtype=torch.float32).clone()
+            b = raw["observation.state"].shape[0]
+            return torch.cat([torch.zeros(b, 2),
+                              torch.as_tensor(raw["observation.state"], dtype=torch.float32)], -1)
+
+    class _StubStd:
+        def standardize(self, x):            # (x - 1)/2,便于断言确实被应用
+            return (torch.as_tensor(x, dtype=torch.float32) - 1.0) / 2.0
+
+    raw = [{"observation.images.agentview": torch.zeros(3, 3, 4, 4),
+            "observation.state": torch.full((3, 18), 5.0)}]   # raw proprio = 5
+    read_per_demo_states(
+        "ignored.hdf5", "ds", state_mode="act_feat", num_demos=None,
+        act_feat_cache=None, act_extractor=_RecExtractor(),
+        act_image_keys=["observation.images.agentview"], act_ckpt_id="ckptA",
+        state_standardizer=_StubStd(), _raw_obs_seqs=raw)
+    # extractor 收到的 proprio 应已被标准化:(5-1)/2 = 2.0(证明 build 在喂 extractor 前应用了 standardizer)
+    assert torch.allclose(captured["proprio"], torch.full((3, 18), 2.0))
