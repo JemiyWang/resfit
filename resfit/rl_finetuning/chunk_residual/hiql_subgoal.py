@@ -42,16 +42,18 @@ class HiqlSubgoal:
             self.rep_dim = high_actor.rep_dim
         self.device = device
         self.renorm_subgoal = renorm_subgoal
-        self.goal = torch.as_tensor(np.asarray(goal), dtype=torch.float32, device=device).reshape(-1)
+        # 注:不用 np.asarray 包装 —— 这些量可能是 ckpt 里 map_location=cuda 加载出的 cuda 张量,
+        # np.asarray(cuda_tensor) 会崩;torch.as_tensor 本就吃 numpy/cpu/cuda 张量并搬到 device。
+        self.goal = torch.as_tensor(goal, dtype=torch.float32, device=device).reshape(-1)
         if state_mode == "eef_piece":
             assert rel_stats is not None, "eef_piece 须给 rel_stats"
-            self.rel_mean = torch.as_tensor(np.asarray(rel_stats[0]), dtype=torch.float32, device=device)
-            self.rel_std = torch.as_tensor(np.asarray(rel_stats[1]), dtype=torch.float32, device=device)
+            self.rel_mean = torch.as_tensor(rel_stats[0], dtype=torch.float32, device=device)
+            self.rel_std = torch.as_tensor(rel_stats[1], dtype=torch.float32, device=device)
         elif state_mode == "act_feat":
             assert extractor is not None and feat_stats is not None, "act_feat 须给 extractor + feat_stats"
             self.extractor = extractor
-            self.feat_mean = torch.as_tensor(np.asarray(feat_stats[0]), dtype=torch.float32, device=device)
-            self.feat_std = torch.as_tensor(np.asarray(feat_stats[1]), dtype=torch.float32, device=device)
+            self.feat_mean = torch.as_tensor(feat_stats[0], dtype=torch.float32, device=device)
+            self.feat_std = torch.as_tensor(feat_stats[1], dtype=torch.float32, device=device)
         else:
             raise ValueError(f"unknown state_mode: {state_mode}")
 
