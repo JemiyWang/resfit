@@ -32,7 +32,6 @@ os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 # NOTE: create_vectorized_env 走 dexmg.py(顶层 import robosuite-1.5 专属 API),
 # libero 路(robosuite-1.4 env)不能触发它 —— 故改为 main() 的 dexmg else 分支内
 # lazy import(见下方)。libero 分支不 import 它。
-from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_policy
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
 from resfit.rl_finetuning.chunk_residual.bc_schedule import linear_bc_coef
 from resfit.rl_finetuning.chunk_residual.libero_obs import load_libero_norm_stats
@@ -160,6 +159,8 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
         # adapter 已按 device 构造(连 serve);不需再 .to/.eval(它是远端推理的薄封装)
         return load_pi05_base_policy(bp, device, schema=schema)
 
+    # ACT 路才需(lazy:其链拉外部 lerobot,libero/py3.8 env 没装也不需要)
+    from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_policy
     wandb_id = args.base_wandb_id
     if os.path.isdir(wandb_id):
         from pathlib import Path
