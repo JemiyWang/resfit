@@ -35,42 +35,32 @@
 
 ```python
 def test_act_feat_build_standardizes_proprio():
-    import numpy as np
     import torch
     from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
 
-    class _StubExtractorPassthrough:
+    captured = {}
+
+    class _RecExtractor:
+        """记录被喂进的 proprio,便于直接断言它已被 dataset-标准化(绕开 act_feat 末标准化的干扰)。"""
         def embed_batch(self, raw):
-            # 输出 [B, 2 + 18]:前2维占位,后18维 = 传入的 proprio(便于断言它已被标准化)
+            captured["proprio"] = torch.as_tensor(raw["observation.state"], dtype=torch.float32).clone()
             b = raw["observation.state"].shape[0]
-            emb = torch.zeros(b, 2)
-            return torch.cat([emb, torch.as_tensor(raw["observation.state"], dtype=torch.float32)], -1)
+            return torch.cat([torch.zeros(b, 2),
+                              torch.as_tensor(raw["observation.state"], dtype=torch.float32)], -1)
 
     class _StubStd:
-        # standardize: (x - 1)/2,便于断言确实被应用
-        def standardize(self, x):
+        def standardize(self, x):            # (x - 1)/2,便于断言确实被应用
             return (torch.as_tensor(x, dtype=torch.float32) - 1.0) / 2.0
 
     raw = [{"observation.images.agentview": torch.zeros(3, 3, 4, 4),
-            "observation.state": torch.ones(3, 18) * 5.0}]   # raw proprio = 5
-    seqs, std, stats = read_per_demo_states(
+            "observation.state": torch.full((3, 18), 5.0)}]   # raw proprio = 5
+    read_per_demo_states(
         "ignored.hdf5", "ds", state_mode="act_feat", num_demos=None,
-        act_feat_cache=None, act_extractor=_StubExtractorPassthrough(),
+        act_feat_cache=None, act_extractor=_RecExtractor(),
         act_image_keys=["observation.images.agentview"], act_ckpt_id="ckptA",
         state_standardizer=_StubStd(), _raw_obs_seqs=raw)
-    # build 出的 seqs 已被 act_feat (mean,std) 标准化;但我们验证“喂进 extractor 的 proprio 被 dataset 标准化”:
-    # proprio (5) -> dataset-std (5-1)/2 = 2.0;之后整条再过 act_feat 标准化。这里改为验证 raw 特征(关掉 act_feat 标准化不便),
-    # 故用 stub extractor 直接回传 proprio,并在 act_feat 标准化前比对:见下方实现保证 _raw_obs_seqs 的 proprio 被就地标准化。
-    # 简化断言:再跑一次不传 standardizer(raw),两者 proprio 段应不同。
-    seqs_raw, _, _ = read_per_demo_states(
-        "ignored.hdf5", "ds", state_mode="act_feat", num_demos=None,
-        act_feat_cache=None, act_extractor=_StubExtractorPassthrough(),
-        act_image_keys=["observation.images.agentview"], act_ckpt_id="ckptA",
-        state_standardizer=None, _raw_obs_seqs=[{
-            "observation.images.agentview": torch.zeros(3, 3, 4, 4),
-            "observation.state": torch.ones(3, 18) * 5.0}])
-    # 两条都各自被 act_feat (mean,std) 标准化,但因输入 proprio 不同(2.0 vs 5.0),标准化后 std 不同 → 不全等
-    assert not np.allclose(seqs[0], seqs_raw[0])
+    # extractor 收到的 proprio 应已被标准化:(5-1)/2 = 2.0(证明 build 在喂 extractor 前应用了 standardizer)
+    assert torch.allclose(captured["proprio"], torch.full((3, 18), 2.0))
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
