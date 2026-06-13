@@ -77,7 +77,7 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
     - cuda_to_egl_device_id(cuda_device_id: int)：单 int,逻辑号(env_id % num_visible_gpus)在调用侧算好再传。
     - VectorizedEnvWrapper(vec_env, video_key, device)：video_key 是必填位置参,不是只给 device。
     """
-    from resfit.dexmg.environments.dexmg import VectorizedEnvWrapper, cuda_to_egl_device_id
+    from resfit.rl_finetuning.chunk_residual.vec_env_util import VectorizedEnvWrapper, cuda_to_egl_device_id
 
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if cuda_visible is not None:

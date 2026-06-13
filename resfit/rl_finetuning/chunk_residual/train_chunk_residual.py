@@ -29,7 +29,9 @@ from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer, T
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
-from resfit.dexmg.environments.dexmg import create_vectorized_env
+# NOTE: create_vectorized_env 走 dexmg.py(顶层 import robosuite-1.5 专属 API),
+# libero 路(robosuite-1.4 env)不能触发它 —— 故改为 main() 的 dexmg else 分支内
+# lazy import(见下方)。libero 分支不 import 它。
 from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_policy
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
 from resfit.rl_finetuning.chunk_residual.bc_schedule import linear_bc_coef
@@ -542,6 +544,8 @@ def main():
         vec_env = create_libero_vectorized_env(
             args.libero_suite, args.libero_task_id, 1, args.device)
     else:
+        # lazy import:dexmg.py 顶层 import robosuite-1.5 专属 API,只在 dexmg 路触发。
+        from resfit.dexmg.environments.dexmg import create_vectorized_env
         vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device,
                                         state_mode=env_state_mode)
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
