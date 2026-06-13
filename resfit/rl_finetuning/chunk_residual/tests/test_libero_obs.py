@@ -66,3 +66,17 @@ def test_load_libero_norm_stats_keynames(tmp_path):
     st = load_libero_norm_stats(str(p))
     assert st["action_mean"].shape == (7,) and st["action_std"].shape == (7,)
     assert st["state_mean"].shape == (8,) and np.allclose(st["state_std"], 2.0)
+
+
+def test_flip_resize_image_reverses_corner():
+    # 方形输入(避免 pad 居中歧义):左上角亮点,[::-1,::-1] 后应到右下角
+    img = np.zeros((224, 224, 3), np.uint8); img[0, 0] = 255
+    out = flip_resize_image(img)
+    assert out[-1, -1].max() > 0 and out[0, 0].max() == 0   # 亮点翻到右下、原左上变黑
+
+
+def test_to_hwc_uint8_float01_scaling_via_flip():
+    # float[0,1] 经 flip_resize_image 应 *255:全 1.0 → 255(锁 [0,1] 契约)
+    img = np.ones((224, 224, 3), np.float32)
+    out = flip_resize_image(img)
+    assert out.dtype == np.uint8 and out.max() == 255

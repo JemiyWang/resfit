@@ -21,17 +21,19 @@ def resize_with_pad(img, h, w) -> np.ndarray:
     img = np.asarray(img)
     ih, iw = img.shape[:2]
     ratio = min(h / ih, w / iw)
-    nh, nw = max(1, int(round(ih * ratio))), max(1, int(round(iw * ratio)))
+    nh, nw = max(1, int(ih * ratio)), max(1, int(iw * ratio))
     resized = np.asarray(Image.fromarray(img.astype(np.uint8)).resize((nw, nh), Image.BILINEAR))
     if resized.ndim == 2:
         resized = np.stack([resized] * 3, axis=-1)
     out = np.zeros((h, w, 3), dtype=np.uint8)
-    top, left = (h - nh) // 2, (w - nw) // 2
+    top, left = max(0, (h - nh) // 2), max(0, (w - nw) // 2)
     out[top:top + nh, left:left + nw] = resized[:, :, :3]
     return out
 
 
 def _to_hwc_uint8(img) -> np.ndarray:
+    """CHW/HWC → HWC uint8。float 输入按 [0,1] 处理(本管线 env 出的是 CHW float[0,1],
+    见 libero_env._chw01),与上游 image_tools 的 [-1,1] 约定不同,故不复用上游。"""
     a = np.asarray(img)
     if a.ndim == 3 and a.shape[0] == 3:
         a = np.transpose(a, (1, 2, 0))
