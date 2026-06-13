@@ -45,3 +45,12 @@ def test_fp16_option_roundtrip(tmp_path):
                         signature=SIG, fp16=True)
     gseqs, _ = act_feat_cache_reuse(p, signature=SIG, num_demos=None)
     assert gseqs[0].dtype == np.float32 and np.allclose(gseqs[0], 0.5, atol=1e-3)
+
+
+def test_num_demos_param_overrides_signature(tmp_path):
+    # 缓存按 num_demos=None 存;若调用方 signature 里写了 num_demos=None 但 param 传 5,应不命中
+    p = str(tmp_path / "c.npz")
+    save_act_feat_cache(p, [np.ones((1, 5), np.float32)],
+                        (np.zeros(5, np.float32), np.ones(5, np.float32)), signature=SIG)
+    assert act_feat_cache_reuse(p, signature=SIG, num_demos=5) is None
+    assert act_feat_cache_reuse(p, signature=SIG, num_demos=None) is not None

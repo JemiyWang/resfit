@@ -5,6 +5,11 @@ import os
 import numpy as np
 
 
+def _norm_sig(sig):
+    """JSON round-trip 归一化(tuple->list 等),保证存/比两侧类型一致。"""
+    return json.loads(json.dumps(sig, sort_keys=True))
+
+
 def save_act_feat_cache(path, seqs, emb_stats, *, signature, fp16=False):
     """存每条 demo 的(已标准化)嵌入序列 + (mean,std) + 签名 json。fp16 仅压 seqs 存盘。"""
     mean, std = emb_stats
@@ -12,7 +17,7 @@ def save_act_feat_cache(path, seqs, emb_stats, *, signature, fp16=False):
         "n": np.int64(len(seqs)),
         "emb_mean": np.asarray(mean, dtype=np.float32),
         "emb_std": np.asarray(std, dtype=np.float32),
-        "signature": np.asarray(json.dumps(signature, sort_keys=True)),
+        "signature": np.asarray(json.dumps(_norm_sig(signature), sort_keys=True)),
     }
     dt = np.float16 if fp16 else np.float32
     for i, s in enumerate(seqs):
@@ -34,8 +39,8 @@ def act_feat_cache_reuse(path, *, signature, num_demos):
     if not (path and os.path.exists(path)):
         return None
     seqs, stats, sig = _load(path)
-    want = dict(signature)
-    want.setdefault("num_demos", num_demos)
+    want = _norm_sig(signature)
+    want["num_demos"] = num_demos
     if sig != want:
         return None
     return seqs, stats
