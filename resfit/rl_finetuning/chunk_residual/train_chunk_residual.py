@@ -644,6 +644,7 @@ def main():
         assert args.task in NUM_STAGES, f"--stage_budget 需要 {args.task} 有 stage 检测器"
 
     subgoal = None
+    _offline_act_feat_seqs = None   # act_feat:离线 buffer subgoal 复用的 530 缓存序列
     if args.subgoal_conditioned:
         assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
         assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
@@ -654,6 +655,7 @@ def main():
             assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
             from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
             _seqs, _stats, _cache_sig = load_act_feat_cache(args.act_feat_cache)
+            _offline_act_feat_seqs = _seqs   # 离线 buffer subgoal 复用同一份 530 序列
             assert _gc_info.get("act_feat_signature"), \
                 "gc_value 缺 act_feat_signature(须用 --state_mode act_feat 重训该 gc_value)"
             _gv_sig = _gc_info["act_feat_signature"]
@@ -750,6 +752,7 @@ def main():
                 mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
                 stage_cache=args.offline_stage_cache, potential=potential,
                 subgoal=subgoal, way_steps=args.subgoal_way_steps,
+                act_feat_seqs=_offline_act_feat_seqs,
                 base_policy=base_policy, base_mode=args.offline_base_mode,
                 base_device=args.device,)
             n_off = len(offline_rb)

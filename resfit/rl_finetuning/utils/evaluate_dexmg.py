@@ -173,7 +173,7 @@ def run_dexmg_evaluation(
     if subgoal is not None:
         _eval_info = reset_info  # track latest info for rel_piece
         obs["observation.subgoal"] = subgoal.subgoal_online(
-            obs["observation.state"],
+            obs,
             _eval_info.get("rel_piece") if _eval_info is not None else None,
         ).to(obs["observation.state"].device)
     else:
@@ -214,7 +214,7 @@ def run_dexmg_evaluation(
         if subgoal is not None:
             _eval_info = step_info
             next_obs["observation.subgoal"] = subgoal.subgoal_online(
-                next_obs["observation.state"],
+                next_obs,
                 _eval_info.get("rel_piece") if _eval_info is not None else None,
             ).to(next_obs["observation.state"].device)
 

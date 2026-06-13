@@ -186,6 +186,7 @@ def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
 def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
                          stage_cache=None, potential=None, subgoal=None, way_steps=25,
+                         act_feat_seqs=None,
                          base_policy=None, base_mode="gt", base_device="cpu") -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
@@ -212,12 +213,21 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     added = 0
     # ③a' object-aware:eef_piece value 时,每 demo set_state replay 从 sim 算 raw rel_piece,
     # 喂 Φ 重算 reward(observation.state 仍存 18 维)。stage cache 命中也得起 env 算 rel。
-    need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or (subgoal is not None)
-    _sg_rel_mean = subgoal.rel_mean.cpu() if subgoal is not None else None
-    _sg_rel_std = subgoal.rel_std.cpu() if subgoal is not None else None
+    _eef_subgoal = subgoal is not None and getattr(subgoal, "state_mode", "eef_piece") == "eef_piece"
+    _act_feat_subgoal = subgoal is not None and getattr(subgoal, "state_mode", "eef_piece") == "act_feat"
+    need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or _eef_subgoal
+    _sg_rel_mean = subgoal.rel_mean.cpu() if _eef_subgoal else None
+    _sg_rel_std = subgoal.rel_std.cpu() if _eef_subgoal else None
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
+            _af_by_ep = None
+            if _act_feat_subgoal:        # act_feat:离线 subgoal 复用已建好的 530 缓存(按 demo 全序映射)
+                assert act_feat_seqs is not None, \
+                    "act_feat subgoal 的 offline buffer 需 act_feat_seqs(530 缓存序列)"
+                assert len(act_feat_seqs) == len(demos), \
+                    f"act_feat_seqs 数({len(act_feat_seqs)}) != demo 数({len(demos)})"
+                _af_by_ep = dict(zip(demos, act_feat_seqs))
             if num_demos is not None:
                 demos = demos[:num_demos]
             for ep in demos:
@@ -268,13 +278,18 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
 
                 subgoal_z = None
                 if subgoal is not None:
-                    if rel_seq is None:
-                        raise RuntimeError("subgoal 模式需 eef_piece rel(env replay 应已算出)")
-                    rel_n = (torch.as_tensor(rel_seq, dtype=torch.float32) - _sg_rel_mean) \
-                        / _sg_rel_std
-                    s30 = torch.cat([state_n, rel_n], dim=-1)            # rel_seq 与 state 等长=T → (T,30)
+                    if _eef_subgoal:
+                        if rel_seq is None:
+                            raise RuntimeError("eef_piece subgoal 需 rel(env replay 应已算出)")
+                        rel_n = (torch.as_tensor(rel_seq, dtype=torch.float32) - _sg_rel_mean) \
+                            / _sg_rel_std
+                        s_sub = torch.cat([state_n, rel_n], dim=-1)         # (T,30)
+                    else:               # act_feat:用已标准化的 530 缓存序列(不必重跑 ACT / 不需 rel)
+                        s_sub = torch.as_tensor(_af_by_ep[ep], dtype=torch.float32)   # (T,530)
+                        assert s_sub.shape[0] == T, \
+                            f"act_feat 缓存帧数 {s_sub.shape[0]} != demo {T} ({ep})"
                     way = np.minimum(np.arange(T) + way_steps, T - 1)        # k 步航点(裁到末态)
-                    subgoal_z = subgoal.subgoal_waypoint(s30, s30[way]).cpu()  # (T,10)
+                    subgoal_z = subgoal.subgoal_waypoint(s_sub, s_sub[way]).cpu()  # (T,10)
 
                 for t in range(T - 1):
                     curr = {"observation.state": state_n[t],
