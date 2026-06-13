@@ -22,7 +22,7 @@ def test_wrapper_reset_returns_obs_info_with_contract_keys():
     assert obs["observation.state"].shape == (8,)   # per-env 1-D,与 dexmg 对齐(stack 后 (N,8))
     assert "observation.images.agentview" in obs
     assert "observation.images.robot0_eye_in_hand" in obs
-    assert obs["observation.images.agentview"].shape == (3, 224, 224)   # CHW
+    assert obs["observation.images.agentview"].shape == (3, 84, 84)   # CHW,agent ViT(min_vit)要 84×84;224 只在 serve 侧 build_libero_serve_obs
     assert obs["observation.images.agentview"].dtype == np.float32
     assert 0.0 <= float(obs["observation.images.agentview"].max()) <= 1.0
     assert w.action_space.shape == (7,)
