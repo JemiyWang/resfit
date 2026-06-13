@@ -537,19 +537,18 @@ def main():
         print(f"[hiql-phi] potential on; ckpt={args.hiql_value_ckpt} "
               f"state_mode={potential.state_mode} scale={potential.scale:.4f}")
     # Peek gc_value state_mode BEFORE env construction so env_state_mode can depend on it.
-    _subgoal_sm = None
+    _subgoal_gc_info = None
     if args.subgoal_conditioned:
         from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value as _lgv
         assert args.gc_value_ckpt, "--subgoal_conditioned 需 --gc_value_ckpt"
-        _subgoal_sm = _lgv(args.gc_value_ckpt, map_location="cpu")[1]["state_mode"]
+        _subgoal_gc_info = _lgv(args.gc_value_ckpt, map_location="cpu")[1]
+    _subgoal_sm = _subgoal_gc_info["state_mode"] if _subgoal_gc_info is not None else None
 
     # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
     env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
     if args.subgoal_conditioned and _subgoal_sm == "eef_piece":
-        env_state_mode = "eef_piece"   # eef_piece 子目标在线需 env 经 info["rel_piece"] 透出 rel
-    else:
-        # act_feat 子目标不需要 rel_piece:env_state_mode 保持上方 potential 决定的值(通常 "eef")
-        pass
+        env_state_mode = "eef_piece"   # eef_piece 子目标需 env info["rel_piece"]
+    # act_feat / 无子目标:env_state_mode 保持上方 potential 决定的值(通常 "eef")
 
     if args.env_family == "libero":
         from resfit.rl_finetuning.chunk_residual.libero_env import create_libero_vectorized_env
@@ -650,13 +649,15 @@ def main():
         assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
         from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal, representative_goal
         from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value
-        _, _gc_info = load_gc_value(args.gc_value_ckpt, map_location="cpu")
+        _gc_info = _subgoal_gc_info
         _sm = _gc_info["state_mode"]
         if _sm == "act_feat":
             assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
             from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
             _seqs, _stats, _cache_sig = load_act_feat_cache(args.act_feat_cache)
-            _gv_sig = _gc_info.get("act_feat_signature") or {}
+            assert _gc_info.get("act_feat_signature"), \
+                "gc_value 缺 act_feat_signature(须用 --state_mode act_feat 重训该 gc_value)"
+            _gv_sig = _gc_info["act_feat_signature"]
             for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
                 assert _cache_sig.get(k) == _gv_sig.get(k), \
                     f"act_feat cache 与 gc_value 签名不符 [{k}]: {_cache_sig.get(k)} vs {_gv_sig.get(k)}"
@@ -852,17 +853,23 @@ def main():
                 wandb.log(log_dict, step=env_steps)
                 next_log += args.log_freq
 
-        if env_steps >= next_eval and args.env_family != "libero":
-            # libero 暂无 evaluator(run_dexmg_evaluation 是 dexmg 专用 + 拉 robosuite-1.5);
-            # libero 路跳过在线 eval(后续可加 libero evaluator)。lazy import 避免 robosuite-1.5。
-            from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
-            with torch.no_grad():
-                m = run_dexmg_evaluation(env=eval_env, agent=agent,
-                                         num_episodes=args.eval_num_episodes, device=args.device,
-                                         global_step=env_steps, save_video=False,
-                                         save_q_plots=False, run_name=f"chunk_{args.actor}",
-                                         output_dir=args.output_dir,
-                                         subgoal=(subgoal if args.subgoal_conditioned else None))
+        if env_steps >= next_eval:
+            # libero 与 dexmg 走不同 evaluator:run_dexmg_evaluation 顶层拉 robosuite-1.5 且带
+            # dexmg 专属 Q图/视频/subgoal;libero 用 env-无关的 run_libero_evaluation(指标口径一致)。
+            # 两路都 lazy import:dexmg 路避免 libero 环境触发 robosuite-1.5。
+            if args.env_family == "libero":
+                from resfit.rl_finetuning.chunk_residual.libero_eval import run_libero_evaluation
+                m = run_libero_evaluation(env=eval_env, agent=agent,
+                                          num_episodes=args.eval_num_episodes, device=args.device)
+            else:
+                from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
+                with torch.no_grad():
+                    m = run_dexmg_evaluation(env=eval_env, agent=agent,
+                                             num_episodes=args.eval_num_episodes, device=args.device,
+                                             global_step=env_steps, save_video=False,
+                                             save_q_plots=False, run_name=f"chunk_{args.actor}",
+                                             output_dir=args.output_dir,
+                                             subgoal=(subgoal if args.subgoal_conditioned else None))
             sr = m["eval/success_rate"]
             if sr > best_sr:
                 best_sr = sr
@@ -871,11 +878,15 @@ def main():
                                 global_step=env_steps,
                                 config=args, success_rate=sr)
             print(f"[env_steps {env_steps}] eval success_rate={sr:.3f} (best {best_sr:.3f})")
-            if last_diag is not None:
-                print("[stage-diag] " + "  ".join(f"{k}={v:.3f}" for k, v in sorted(last_diag.items())))
-            print("[stage-purity] " + env.stage_purity_summary())
-            wandb.log(build_eval_log_dict(m, last_diag, env.stage_purity_summary()),
-                      step=env_steps)
+            if args.env_family == "libero":
+                # libero 无 stage 概念:只 log eval/*(stage purity/diag 不适用)。
+                wandb.log({k: v for k, v in m.items() if k.startswith("eval/")}, step=env_steps)
+            else:
+                if last_diag is not None:
+                    print("[stage-diag] " + "  ".join(f"{k}={v:.3f}" for k, v in sorted(last_diag.items())))
+                print("[stage-purity] " + env.stage_purity_summary())
+                wandb.log(build_eval_log_dict(m, last_diag, env.stage_purity_summary()),
+                          step=env_steps)
             next_eval += args.eval_every_env_steps
         if args.smoke:
             break
