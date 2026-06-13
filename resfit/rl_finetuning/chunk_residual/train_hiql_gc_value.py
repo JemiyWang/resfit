@@ -19,7 +19,9 @@ from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
     load_stage_cache, sorted_demo_keys,
 )
-from resfit.rl_finetuning.chunk_residual.train_hiql_value import read_per_demo_states
+from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
+    read_per_demo_states, validate_act_feat_cfg, _setup_act_feat, add_act_feat_args,
+)
 
 
 def validate_stage_cache(stage_cache, *, needs_stage):
@@ -70,6 +72,9 @@ def build_parser():
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
+    p.add_argument("--state_mode", choices=["eef_piece", "act_feat"], default="eef_piece",
+                   help="eef_piece(默认,sim 特权)|act_feat(冻结 ACT encoder ⊕ 本体)")
+    add_act_feat_args(p)
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -101,19 +106,27 @@ def gc_value_needs_stage(args):
 
 
 def main():
+    import torch
     args = build_parser().parse_args()
     # 配置守卫先行(在重活 read_per_demo_states 之前 fail-fast)
     validate_stage_cache(args.stage_cache, needs_stage=gc_value_needs_stage(args))
-    # state_mode 固定 eef_piece(分层路必须含物体 pose;③a' 假设就绪)
-    seqs, standardizer, rel_stats = read_per_demo_states(
-        args.hdf5, args.dataset, "eef_piece", num_demos=args.num_demos,
-        cache_path=args.state30_cache)
+    validate_act_feat_cfg(args)
+    extractor, act_ckpt_id, image_keys, act_sig = _setup_act_feat(args)
+    seqs, standardizer, aux = read_per_demo_states(
+        args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
+        cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
+        act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
+        act_proprio_key=args.act_proprio_key, pooling=args.pooling)
+    if args.state_mode == "act_feat":
+        mean, std, rel_stats = torch.as_tensor(aux[0]), torch.as_tensor(aux[1]), None
+    else:
+        mean, std, rel_stats = standardizer._mean.cpu(), standardizer._std.cpu(), aux
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \
         f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)
-    print(f"[hiql_gc] demos={len(seqs)} transitions={len(data['s_idx'])} "
+    print(f"[hiql_gc] state_mode={args.state_mode} demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
           f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)} "
           f"value_loss_mode={args.value_loss_mode} value_mask_mode={args.value_mask_mode} "
@@ -125,9 +138,10 @@ def main():
         use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode,
         value_mask_mode=args.value_mask_mode, value_rep_mode=args.value_rep_mode)
     save_gc_value(args.output, model, v_stats=v_stats,
-                  mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
-                  dataset_id=args.dataset, state_mode="eef_piece", rel_piece_stats=rel_stats,
-                  value_loss_mode=args.value_loss_mode, value_mask_mode=args.value_mask_mode)
+                  mean=mean, std=std,
+                  dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats,
+                  value_loss_mode=args.value_loss_mode, value_mask_mode=args.value_mask_mode,
+                  act_feat_signature=act_sig)
     print(f"[hiql_gc] saved {args.output}; v_stats={v_stats}")
 
 

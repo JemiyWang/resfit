@@ -169,6 +169,15 @@ def _setup_act_feat(args):
     return ext, str(args.act_base_ckpt), image_keys, ext.signature(str(args.act_base_ckpt))
 
 
+def add_act_feat_args(p):
+    """给 parser 加 act_feat 公共 flags(state_mode 各脚本自定义,不在此处)。"""
+    p.add_argument("--act_feat_cache", default=None, help="act_feat 嵌入缓存 npz(cache-or-build)")
+    p.add_argument("--act_base_ckpt", default=None, help="act_feat build 用的 ACT base 目录(同 run base)")
+    p.add_argument("--act_image_keys", nargs="*", default=None, help="ACT image_features 键(默认取 base config)")
+    p.add_argument("--act_proprio_key", default="observation.state")
+    p.add_argument("--pooling", choices=["mean"], default="mean")
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="离线训练 HIQL action-free value(③a)")
     p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
@@ -179,11 +188,7 @@ def build_parser():
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
-    p.add_argument("--act_feat_cache", default=None, help="act_feat 嵌入缓存 npz(cache-or-build)")
-    p.add_argument("--act_base_ckpt", default=None, help="act_feat build 用的 ACT base 目录(同 run base)")
-    p.add_argument("--act_image_keys", nargs="*", default=None, help="ACT image_features 键(默认取 base config)")
-    p.add_argument("--act_proprio_key", default="observation.state")
-    p.add_argument("--pooling", choices=["mean"], default="mean")
+    add_act_feat_args(p)
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)

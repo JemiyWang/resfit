@@ -3,6 +3,30 @@ from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
 )
 
 
+def test_gc_parser_has_state_mode_default_eef_piece():
+    from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser as gc_parser
+    args = gc_parser().parse_args(["--hdf5", "h", "--dataset", "d"])
+    assert args.state_mode == "eef_piece"           # 默认逐位不变
+    choices = gc_parser()._option_string_actions["--state_mode"].choices
+    assert "act_feat" in choices and "eef_piece" in choices
+
+
+def test_gc_save_load_act_feat_signature(tmp_path):
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        save_gc_value, load_gc_value, GoalConditionedVF)
+    p = str(tmp_path / "gc.pt")
+    m = GoalConditionedVF(state_dim=22, rep_dim=10, hidden=32)
+    sig = {"act_ckpt_id": "ckptA", "image_keys": ["observation.images.agentview"],
+           "proprio_key": "observation.state", "pooling": "mean"}
+    save_gc_value(p, m, v_stats={"min": 0.0, "max": 1.0, "mean": 0.5},
+                  mean=torch.zeros(22), std=torch.ones(22), dataset_id="ds",
+                  state_mode="act_feat", rel_piece_stats=None, act_feat_signature=sig)
+    _, info = load_gc_value(p)
+    assert info["state_mode"] == "act_feat"
+    assert info["act_feat_signature"] == sig
+
+
 def test_guard_act_feat_requires_cache_or_base():
     args = build_parser().parse_args(["--hdf5", "h", "--dataset", "d", "--state_mode", "act_feat"])
     try:
