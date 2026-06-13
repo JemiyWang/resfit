@@ -56,13 +56,13 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
         raw_seqs = _raw_obs_seqs if _raw_obs_seqs is not None else _build_raw_obs_seqs(
             hdf5_path, act_image_keys, act_proprio_key, num_demos)
         # 命门 B:proprio 全栈 dataset-标准化(与在线 obs.state 同款)。
-        std = state_standardizer
-        if std is None and _raw_obs_seqs is None:   # 真 build 且未显式传 → 从 dataset stats 建
-            std = StateStandardizer.from_dataset_stats(
+        proprio_std = state_standardizer
+        if proprio_std is None and _raw_obs_seqs is None:   # 真 build 且未显式传 → 从 dataset stats 建
+            proprio_std = StateStandardizer.from_dataset_stats(
                 LeRobotDatasetMetadata(dataset_id).stats["observation.state"], device="cpu")
-        if std is not None:
+        if proprio_std is not None:
             for ro in raw_seqs:
-                ro[act_proprio_key] = std.standardize(
+                ro[act_proprio_key] = proprio_std.standardize(
                     torch.as_tensor(ro[act_proprio_key], dtype=torch.float32))
         raw_feat = [act_extractor.embed_batch(ro).cpu().numpy().astype(np.float32) for ro in raw_seqs]
         allf = np.concatenate(raw_feat, axis=0)
