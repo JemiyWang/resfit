@@ -80,6 +80,8 @@ def test_ha_save_load_act_feat_signature(tmp_path):
     m = HighActor(state_dim=22, rep_dim=10, hidden=32)
     sig = {"act_ckpt_id": "ckptA", "image_keys": ["observation.images.agentview"],
            "proprio_key": "observation.state", "pooling": "mean"}
-    save_high_actor(p, m, gc_value_ckpt="g.pt", way_steps=25, beta=1.0, act_feat_signature=sig)
+    save_high_actor(p, m, gc_value_ckpt="g.pt", way_steps=25, beta=1.0, act_feat_signature=sig,
+                    state_mode="act_feat")
     _, info = load_high_actor(p)
     assert info.get("act_feat_signature") == sig
+    assert info["state_mode"] == "act_feat"

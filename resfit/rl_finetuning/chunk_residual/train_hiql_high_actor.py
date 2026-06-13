@@ -9,9 +9,11 @@
       --way_steps 25 --output outputs_chunk/three_piece_high_actor.pt
 
 state30_cache 命中则秒读回放后的 30 维 state(否则首次 MuJoCo 回放全 demo 并落盘)。
+支持 --state_mode act_feat(配 --act_feat_cache/--act_base_ckpt,走 read_per_demo_states 取冻结 ACT 特征)。
 设计见 docs/superpowers/specs/2026-06-08-hiql-hierarchy-residual-design.md。
 """
 import argparse
+import warnings
 
 from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, load_gc_value
 from resfit.rl_finetuning.chunk_residual.hiql_high_actor import train_high_actor, save_high_actor
@@ -67,7 +69,6 @@ def main():
         validate_act_feat_cfg, setup_act_feat, read_per_demo_states)
     validate_act_feat_cfg(args)
     if args.state_mode != "act_feat" and args.state30_cache is None:
-        import warnings
         warnings.warn("--state30_cache 未设置,将触发完整 MuJoCo 回放(可能耗时数小时);建议指向 state30 缓存 npz", stacklevel=2)
     validate_stage_cache(args.stage_cache, needs_stage=high_actor_needs_stage(args))
     if args.state_mode == "act_feat":
@@ -102,7 +103,8 @@ def main():
     save_high_actor(args.output, ha, gc_value_ckpt=args.gc_value_ckpt,
                     way_steps=args.way_steps, beta=args.beta,
                     target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal,
-                    adv_agg=args.adv_agg, act_feat_signature=act_sig)
+                    adv_agg=args.adv_agg, act_feat_signature=act_sig,
+                    state_mode=args.state_mode)
     print(f"[hiql_high] saved {args.output}")
 
 

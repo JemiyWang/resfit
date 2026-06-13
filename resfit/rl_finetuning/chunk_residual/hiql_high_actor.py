@@ -126,9 +126,10 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
 
 def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta,
                     target_mode="fixed_waypoint", high_p_randomgoal=0.0,
-                    adv_agg="min", act_feat_signature=None):
+                    adv_agg="min", act_feat_signature=None, state_mode="eef_piece"):
     """存 high_actor.pt:权重 + 维度 + gc_value_ckpt/way_steps/beta + target_mode/high_p_randomgoal。
-    act_feat_signature:非 None 时写入 ckpt,供 load_high_actor 取回。"""
+    act_feat_signature:非 None 时写入 ckpt,供 load_high_actor 取回。
+    state_mode:写入 ckpt(镜像 save_gc_value),旧调用方不传则默认 eef_piece。"""
     payload = {
         "state_dict": model.state_dict(),
         "state_dim": model.state_dim,
@@ -142,6 +143,7 @@ def save_high_actor(path, model, *, gc_value_ckpt, way_steps, beta,
         "target_mode": target_mode,
         "high_p_randomgoal": high_p_randomgoal,
         "adv_agg": adv_agg,
+        "state_mode": state_mode,
     }
     if act_feat_signature is not None:
         payload["act_feat_signature"] = act_feat_signature
@@ -160,5 +162,6 @@ def load_high_actor(path, map_location="cpu"):
     info["target_mode"] = ckpt.get("target_mode", "fixed_waypoint")
     info["high_p_randomgoal"] = ckpt.get("high_p_randomgoal", 0.0)
     info["adv_agg"] = ckpt.get("adv_agg", "min")
+    info["state_mode"] = ckpt.get("state_mode", "eef_piece")
     info["act_feat_signature"] = ckpt.get("act_feat_signature")
     return model, info
