@@ -399,6 +399,8 @@ def build_parser():
                         "只动模长不动方向。默认开=对齐 HIQL(实测偏差仅 1-2%,clamp 版尾部 ±10-20%)")
     p.add_argument("--no_renorm_subgoal", dest="renorm_subgoal", action="store_false",
                    help="关闭 online z 投球面(回到旧版逐位行为)")
+    p.add_argument("--act_feat_cache", default=None,
+                   help="act_feat 子目标:530 序列缓存(算 goal + 同源签名校验);仅 act_feat gc_value 用")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
     p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="base_policy",
@@ -534,10 +536,20 @@ def main():
             phi_scale=args.phi_scale, device=args.device)
         print(f"[hiql-phi] potential on; ckpt={args.hiql_value_ckpt} "
               f"state_mode={potential.state_mode} scale={potential.scale:.4f}")
+    # Peek gc_value state_mode BEFORE env construction so env_state_mode can depend on it.
+    _subgoal_sm = None
+    if args.subgoal_conditioned:
+        from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value as _lgv
+        assert args.gc_value_ckpt, "--subgoal_conditioned 需 --gc_value_ckpt"
+        _subgoal_sm = _lgv(args.gc_value_ckpt, map_location="cpu")[1]["state_mode"]
+
     # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
     env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
-    if args.subgoal_conditioned:
-        env_state_mode = "eef_piece"   # 子目标在线需 env 经 info["rel_piece"] 透出 rel
+    if args.subgoal_conditioned and _subgoal_sm == "eef_piece":
+        env_state_mode = "eef_piece"   # eef_piece 子目标在线需 env 经 info["rel_piece"] 透出 rel
+    else:
+        # act_feat 子目标不需要 rel_piece:env_state_mode 保持上方 potential 决定的值(通常 "eef")
+        pass
 
     if args.env_family == "libero":
         from resfit.rl_finetuning.chunk_residual.libero_env import create_libero_vectorized_env
@@ -553,8 +565,9 @@ def main():
     print(f"[state-mode] env_state_mode={env_state_mode} "
           f"(observation.state 仍 18 维;rel_piece 经 info 只喂 Φ/z)")
     # eval 不加 shaping、不喂 Φ → 保持 eef(省每步 sim rel 开销);
-    # FIX A: --subgoal_conditioned 时需 eef_piece 让 eval info 携带 rel_piece 供 z 注入
-    eval_state_mode = "eef_piece" if args.subgoal_conditioned else "eef"
+    # FIX A: eef_piece 子目标时需 eef_piece 让 eval info 携带 rel_piece 供 z 注入;
+    # act_feat 子目标用图像特征提取,不需要 rel_piece → eval_state_mode 保持 eef
+    eval_state_mode = "eef_piece" if (args.subgoal_conditioned and _subgoal_sm == "eef_piece") else "eef"
     if args.env_family == "libero":
         eval_vec = create_libero_vectorized_env(
             args.libero_suite, args.libero_task_id, args.eval_num_envs, args.device)
@@ -634,28 +647,36 @@ def main():
     subgoal = None
     if args.subgoal_conditioned:
         assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
-        assert env_state_mode == "eef_piece", "--subgoal_conditioned 需 env 透出 rel(eef_piece)"
-        assert args.gc_value_ckpt and args.high_actor_ckpt, \
-            "--subgoal_conditioned 需 --gc_value_ckpt 与 --high_actor_ckpt"
-        # FIX B: guard goal30 source — 至少有一个来源能构建 goal30
-        assert args.subgoal_state30_cache or args.offline_dataset_path, \
-            "--subgoal_conditioned 需 --subgoal_state30_cache 或 --offline_dataset_path(用于建 goal30)"
-        from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal, representative_goal30
-        from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
-        # goal30 = demo 末态的 medoid(离均值最近的真实末态),作为在线高层的固定任务目标。
-        # 不用算术均值:均值是 off-manifold 虚构质心、会糊掉散得最厉害的 rel_piece 物体信息,且
-        # high_actor 训练时只见过真实态当 goal(2026-06-09 讨论);用 state30 缓存避免回放。
-        _seqs30 = load_or_build_state30(args.offline_dataset_path, args.dataset,
-                                        args.offline_num_demos, args.subgoal_state30_cache)
-        goal30 = representative_goal30(_seqs30)
-        # FIX C: assert goal30 is 30-dim (eef_piece state)
-        assert goal30.shape[0] == 30, \
-            f"goal30 须 30 维(eef_piece),got {goal30.shape[0]};检查 state30 缓存是否来自 eef_piece"
-        subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
-                                         goal=goal30, device=args.device,
-                                         renorm_subgoal=args.renorm_subgoal)
-        print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} renorm={args.renorm_subgoal} "
-              f"gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")
+        assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
+        from resfit.rl_finetuning.chunk_residual.hiql_subgoal import HiqlSubgoal, representative_goal
+        from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value
+        _, _gc_info = load_gc_value(args.gc_value_ckpt, map_location="cpu")
+        _sm = _gc_info["state_mode"]
+        if _sm == "act_feat":
+            assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
+            from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
+            _seqs, _stats, _cache_sig = load_act_feat_cache(args.act_feat_cache)
+            _gv_sig = _gc_info.get("act_feat_signature") or {}
+            for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
+                assert _cache_sig.get(k) == _gv_sig.get(k), \
+                    f"act_feat cache 与 gc_value 签名不符 [{k}]: {_cache_sig.get(k)} vs {_gv_sig.get(k)}"
+            goal = representative_goal(_seqs)
+            assert goal.shape[0] == _gc_info["mean"].shape[0], "goal 维度须 == gc_value state_dim"
+            subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
+                                             goal=goal, device=args.device,
+                                             renorm_subgoal=args.renorm_subgoal, base_policy=base_policy)
+        else:  # eef_piece:现状不变
+            assert args.subgoal_state30_cache or args.offline_dataset_path, \
+                "eef_piece 子目标需 --subgoal_state30_cache 或 --offline_dataset_path"
+            from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_state30
+            _seqs30 = load_or_build_state30(args.offline_dataset_path, args.dataset,
+                                            args.offline_num_demos, args.subgoal_state30_cache)
+            goal30 = representative_goal(_seqs30)
+            assert goal30.shape[0] == 30, f"goal30 须 30 维,got {goal30.shape[0]}"
+            subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
+                                             goal=goal30, device=args.device,
+                                             renorm_subgoal=args.renorm_subgoal)
+        print(f"[hiql-subgoal] on; mode={_sm} rep_dim={subgoal.rep_dim} renorm={args.renorm_subgoal}")
 
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
@@ -758,15 +779,15 @@ def main():
     while env_steps <= total:
         next_rel = None   # FIX D: silence unbound-var lint; overwritten below when subgoal_conditioned
         if args.subgoal_conditioned:
-            obs["observation.subgoal"] = subgoal.subgoal_online(
-                obs["observation.state"], cur_rel).to(obs["observation.state"].device)
+            obs["observation.subgoal"] = subgoal.subgoal_online(obs, cur_rel).to(
+                obs["observation.state"].device)
         with torch.no_grad(), utils.eval_mode(agent):
             action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,480] 残差
         next_obs, reward, terminated, truncated, info = env.step(action)
         if args.subgoal_conditioned:
             next_rel = info.get("rel_piece")
-            next_obs["observation.subgoal"] = subgoal.subgoal_online(
-                next_obs["observation.state"], next_rel).to(next_obs["observation.state"].device)
+            next_obs["observation.subgoal"] = subgoal.subgoal_online(next_obs, next_rel).to(
+                next_obs["observation.state"].device)
         done = terminated | truncated
         add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
                              reward=reward, done=done, info=info, image_keys=image_keys,

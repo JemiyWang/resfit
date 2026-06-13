@@ -64,6 +64,12 @@ def test_setup_act_feat_recovers_image_keys_and_ckpt_from_cache(tmp_path):
     assert got_sig["dataset_id"] == "ds"
 
 
+def test_chunk_residual_parser_has_act_feat_cache():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+    args = build_parser().parse_args(["--task", "TwoArmThreePieceAssembly", "--dataset", "d"])
+    assert hasattr(args, "act_feat_cache") and args.act_feat_cache is None
+
+
 def test_ha_parser_has_state_mode_default_eef_piece():
     from resfit.rl_finetuning.chunk_residual.train_hiql_high_actor import build_parser as ha_parser
     args = ha_parser().parse_args(["--hdf5", "h", "--dataset", "d", "--gc_value_ckpt", "g"])
