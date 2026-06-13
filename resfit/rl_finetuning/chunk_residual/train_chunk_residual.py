@@ -652,7 +652,7 @@ def main():
         assert goal30.shape[0] == 30, \
             f"goal30 须 30 维(eef_piece),got {goal30.shape[0]};检查 state30 缓存是否来自 eef_piece"
         subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
-                                         goal30=goal30, device=args.device,
+                                         goal=goal30, device=args.device,
                                          renorm_subgoal=args.renorm_subgoal)
         print(f"[hiql-subgoal] on; rep_dim={subgoal.rep_dim} renorm={args.renorm_subgoal} "
               f"gc={args.gc_value_ckpt} high={args.high_actor_ckpt}")

@@ -74,7 +74,7 @@ def test_hiql_subgoal_shapes(tmp_path):
     save_high_actor(hp, ha, gc_value_ckpt=gp, way_steps=25, beta=1.0)
 
     goal30 = torch.zeros(30)
-    sg = HiqlSubgoal.from_ckpts(gp, hp, goal30=goal30, device="cpu")
+    sg = HiqlSubgoal.from_ckpts(gp, hp, goal=goal30, device="cpu")
     assert sg.rep_dim == 10
     s30 = sg.build_state30(torch.zeros(2, 18), np.zeros((2, 12)))
     assert s30.shape == (2, 30)
@@ -123,8 +123,8 @@ def test_subgoal_online_renorm_projects_to_sphere():
         ha.mean_net[-1].weight.mul_(5.0)
     goal30, rel_mean, rel_std = np.zeros(30, np.float32), np.zeros(12, np.float32), np.ones(12, np.float32)
 
-    sg_off = HiqlSubgoal(vf, ha, goal30, rel_mean, rel_std)                       # 默认 False
-    sg_on = HiqlSubgoal(vf, ha, goal30, rel_mean, rel_std, renorm_subgoal=True)
+    sg_off = HiqlSubgoal(vf, ha, goal30, state_mode="eef_piece", rel_stats=(rel_mean, rel_std))                       # 默认 False
+    sg_on = HiqlSubgoal(vf, ha, goal30, state_mode="eef_piece", rel_stats=(rel_mean, rel_std), renorm_subgoal=True)
     state_std, rel_raw = np.ones((4, 18), np.float32), np.ones((4, 12), np.float32)
 
     z_on = sg_on.subgoal_online(state_std, rel_raw)

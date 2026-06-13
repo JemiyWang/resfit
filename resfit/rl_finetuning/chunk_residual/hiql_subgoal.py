@@ -26,28 +26,55 @@ def representative_goal30(seqs):
 
 
 class HiqlSubgoal:
-    def __init__(self, gc_value, high_actor, goal30, rel_mean, rel_std, device="cpu",
-                 renorm_subgoal=False):
-        self.vf = gc_value.to(device).eval()
+    def __init__(self, gc_value, high_actor, goal, device="cpu", renorm_subgoal=False,
+                 *, state_mode="eef_piece", rel_stats=None, extractor=None, feat_stats=None):
+        self.state_mode = state_mode
         self.ha = high_actor.to(device).eval()
-        for m in (self.vf, self.ha):
-            for p in m.parameters():
+        for p in self.ha.parameters():
+            p.requires_grad_(False)
+        if gc_value is not None:
+            self.vf = gc_value.to(device).eval()
+            for p in self.vf.parameters():
                 p.requires_grad_(False)
-        self.rep_dim = gc_value.rep_dim
+            self.rep_dim = gc_value.rep_dim
+        else:
+            self.vf = None
+            self.rep_dim = high_actor.rep_dim
         self.device = device
         self.renorm_subgoal = renorm_subgoal
-        self.goal30 = torch.as_tensor(np.asarray(goal30), dtype=torch.float32, device=device).reshape(-1)
-        self.rel_mean = torch.as_tensor(np.asarray(rel_mean), dtype=torch.float32, device=device)
-        self.rel_std = torch.as_tensor(np.asarray(rel_std), dtype=torch.float32, device=device)
+        self.goal = torch.as_tensor(np.asarray(goal), dtype=torch.float32, device=device).reshape(-1)
+        if state_mode == "eef_piece":
+            assert rel_stats is not None, "eef_piece 须给 rel_stats"
+            self.rel_mean = torch.as_tensor(np.asarray(rel_stats[0]), dtype=torch.float32, device=device)
+            self.rel_std = torch.as_tensor(np.asarray(rel_stats[1]), dtype=torch.float32, device=device)
+        elif state_mode == "act_feat":
+            assert extractor is not None and feat_stats is not None, "act_feat 须给 extractor + feat_stats"
+            self.extractor = extractor
+            self.feat_mean = torch.as_tensor(np.asarray(feat_stats[0]), dtype=torch.float32, device=device)
+            self.feat_std = torch.as_tensor(np.asarray(feat_stats[1]), dtype=torch.float32, device=device)
+        else:
+            raise ValueError(f"unknown state_mode: {state_mode}")
 
     @classmethod
-    def from_ckpts(cls, gc_value_ckpt, high_actor_ckpt, *, goal30, device="cpu", renorm_subgoal=False):
+    def from_ckpts(cls, gc_value_ckpt, high_actor_ckpt, *, goal, device="cpu",
+                   renorm_subgoal=False, base_policy=None):
         gc, info = load_gc_value(gc_value_ckpt, map_location=device)
         ha, _ = load_high_actor(high_actor_ckpt, map_location=device)
-        assert info["state_mode"] == "eef_piece", "分层路 gc_value 须 eef_piece(object-aware)"
+        sm = info["state_mode"]
+        assert sm in ("eef_piece", "act_feat"), f"分层路 gc_value state_mode 须 eef_piece/act_feat,got {sm}"
         assert ha.rep_dim == gc.rep_dim, f"rep_dim 不一致: high_actor={ha.rep_dim} gc_value={gc.rep_dim}"
         assert ha.state_dim == gc.state_dim, f"state_dim 不一致: high_actor={ha.state_dim} gc_value={gc.state_dim}"
-        return cls(gc, ha, goal30, info["rel_piece_mean"], info["rel_piece_std"], device=device, renorm_subgoal=renorm_subgoal)
+        if sm == "eef_piece":
+            return cls(gc, ha, goal, device=device, renorm_subgoal=renorm_subgoal,
+                       state_mode="eef_piece", rel_stats=(info["rel_piece_mean"], info["rel_piece_std"]))
+        assert base_policy is not None, "act_feat 在线子目标须传 base_policy 建特征器"
+        from resfit.rl_finetuning.chunk_residual.act_feature import ActFeatureExtractor
+        sig = info["act_feat_signature"] or {}
+        ext = ActFeatureExtractor(base_policy, image_keys=sig["image_keys"],
+                                  proprio_key=sig.get("proprio_key", "observation.state"),
+                                  pooling=sig.get("pooling", "mean"))
+        return cls(gc, ha, goal, device=device, renorm_subgoal=renorm_subgoal,
+                   state_mode="act_feat", extractor=ext, feat_stats=(info["mean"], info["std"]))
 
     def build_state30(self, state_std, rel_raw):
         """18 维已标准化 state(tensor [B,18]) + raw rel_piece([B,12] np/tensor) -> [B,30] tensor。"""
@@ -61,11 +88,17 @@ class HiqlSubgoal:
         return torch.cat([x, rel_n], dim=-1)
 
     @torch.no_grad()
-    def subgoal_online(self, state_std, rel_raw):
-        """在线:z = π^h(s30, goal30)(取分布均值);renorm_subgoal 时投到半径 sqrt(rep_dim)。"""
-        s30 = self.build_state30(state_std, rel_raw)
-        g30 = self.goal30.unsqueeze(0).expand(s30.shape[0], -1)
-        z = self.ha(s30, g30).mean
+    def subgoal_online(self, obs, rel_raw=None):
+        """eef_piece: obs 传已 std 的 state([B,18]) 或含 observation.state 的 dict(+rel_raw);
+        act_feat: obs 传含 images+observation.state 的 dict。"""
+        if self.state_mode == "eef_piece":
+            state_std = obs["observation.state"] if isinstance(obs, dict) else obs
+            s = self.build_state30(state_std, rel_raw)
+        else:  # act_feat
+            feat = self.extractor.embed_batch(obs)
+            s = (feat.to(self.device) - self.feat_mean) / self.feat_std
+        g = self.goal.unsqueeze(0).expand(s.shape[0], -1)
+        z = self.ha(s, g).mean
         if self.renorm_subgoal:
             z = z / (z.norm(dim=-1, keepdim=True) + 1e-8) * (self.rep_dim ** 0.5)
         return z
@@ -83,3 +116,7 @@ class HiqlSubgoal:
         assert b.shape[-1] == self.vf.state_dim and t.shape[-1] == self.vf.state_dim, \
             f"subgoal_waypoint 须传 {self.vf.state_dim} 维 state(已拼 rel),got {b.shape[-1]}/{t.shape[-1]}"
         return self.vf.phi(b, t)
+
+
+# dim-agnostic alias
+representative_goal = representative_goal30
