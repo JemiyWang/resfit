@@ -19,7 +19,7 @@ class _StubLiberoEnv:
 def test_wrapper_reset_returns_obs_info_with_contract_keys():
     w = LiberoGymWrapper(_StubLiberoEnv(), init_states=np.zeros((1, 10)), num_steps_wait=2)
     obs, info = w.reset()
-    assert obs["observation.state"].shape[-1] == 8
+    assert obs["observation.state"].shape == (8,)   # per-env 1-D,与 dexmg 对齐(stack 后 (N,8))
     assert "observation.images.agentview" in obs
     assert "observation.images.robot0_eye_in_hand" in obs
     assert obs["observation.images.agentview"].shape == (3, 224, 224)   # CHW

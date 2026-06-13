@@ -28,7 +28,7 @@ class LiberoGymWrapper(gym.Env):
 
     def _process(self, obs):
         return {
-            "observation.state": assemble_libero_state(obs).reshape(1, 8),
+            "observation.state": assemble_libero_state(obs).reshape(8),   # per-env 1-D (8,),与 dexmg 对齐(AsyncVectorEnv stack 成 (N,8))
             "observation.images.agentview": _chw01(flip_resize_image(obs["agentview_image"])),
             "observation.images.robot0_eye_in_hand": _chw01(flip_resize_image(obs["robot0_eye_in_hand_image"])),
         }
@@ -45,6 +45,7 @@ class LiberoGymWrapper(gym.Env):
         obs2, r, term, trunc, info = adapt_4tuple(obs, reward, done, info)
         return self._process(obs2), float(r), bool(term), bool(trunc), info
 
+    # v1 不录视频(--no-save-videos);需要则用 self.env.sim.render 返帧,live smoke 时再实现。
     def render(self, *a, **k):
         return None
 
@@ -91,6 +92,7 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
         # 映射到同物理卡的 EGL 下标(否则渲染会漏到别的物理卡,见 dexmg.py 注释)。
         logical_id = env_id % num_visible_gpus
         egl = cuda_to_egl_device_id(logical_id)
+        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(egl)   # 对齐 dexmg.py:263,防 EGL 渲染漏到别的物理卡
         env, _ = make_libero_env(suite, task_id, render_gpu_device_id=egl)
         return env
 
@@ -99,7 +101,9 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
         vec_env = gym.vector.SyncVectorEnv(
             env_fns, autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
     else:
+        # shared_memory=False:observation_space 是空 Dict({}),shared_memory 会按声明的(空)键
+        # 写回、丢掉真实 3 个 obs 键;False 走 pickle 透传,obs 才完整。
         vec_env = gym.vector.AsyncVectorEnv(
-            env_fns, shared_memory=True, copy=True, context="spawn",
+            env_fns, shared_memory=False, copy=True, context="spawn",
             autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
     return VectorizedEnvWrapper(vec_env, video_key, device)
