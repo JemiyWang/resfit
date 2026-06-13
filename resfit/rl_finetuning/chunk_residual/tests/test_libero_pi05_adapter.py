@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 from collections import deque
 from resfit.rl_finetuning.chunk_residual.libero_pi05_adapter import LiberoPi05Adapter
@@ -63,3 +64,29 @@ def test_from_policy_classmethod():
     ad = LiberoPi05Adapter.from_policy(_StubPolicy(), prompt="x", action_dim=7,
                                        device="cpu", execute_horizon=5, image_key_map=None)
     assert isinstance(ad, LiberoPi05Adapter) and ad.action_dim == 7
+
+
+def test_select_action_multi_env_independent_queues():
+    # B=2:两 env 各自独立队列,stack 顺序与 env 对应
+    p = _StubPolicy()
+    ad = LiberoPi05Adapter(p, prompt="x", action_dim=7, execute_horizon=5)
+    a = ad.select_action(_raw_obs(2))
+    assert a.shape == (2, 7)
+    assert np.allclose(a[0].cpu().numpy(), np.arange(7))      # 两 env 同 stub chunk,首步一致
+    assert np.allclose(a[1].cpu().numpy(), np.arange(7))
+
+
+def test_infer_empty_chunk_raises():
+    class _EmptyPolicy:
+        def infer(self, obs): return {"actions": np.zeros((0, 8), np.float32)}
+    ad = LiberoPi05Adapter(_EmptyPolicy(), prompt="x", action_dim=7)
+    with pytest.raises(ValueError):
+        ad.select_action(_raw_obs(1))
+
+
+def test_infer_missing_actions_key_raises():
+    class _NoActionsPolicy:
+        def infer(self, obs): return {"foo": 1}
+    ad = LiberoPi05Adapter(_NoActionsPolicy(), prompt="x", action_dim=7)
+    with pytest.raises(ValueError):
+        ad.select_action(_raw_obs(1))

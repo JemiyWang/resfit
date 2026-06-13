@@ -40,9 +40,14 @@ class LiberoPi05Adapter:
             self._queues.append(deque())
 
     def _infer_chunk(self, obs):
-        actions = np.asarray(self.policy.infer(obs)["actions"], dtype=np.float32)
+        result = self.policy.infer(obs)
+        if "actions" not in result:
+            raise ValueError("policy.infer(...) 必须返回含 'actions' 的 mapping")
+        actions = np.asarray(result["actions"], dtype=np.float32)
         if actions.ndim != 2 or actions.shape[1] < self.action_dim:
             raise ValueError(f"policy actions 形状非法或维度 < {self.action_dim}: {actions.shape}")
+        if actions.shape[0] == 0:
+            raise ValueError("policy actions chunk 至少要有 1 步")
         sliced = actions[:self.execute_horizon, :self.action_dim]
         return [row.copy() for row in sliced]
 
