@@ -76,6 +76,19 @@ def test_select_action_multi_env_independent_queues():
     assert np.allclose(a[1].cpu().numpy(), np.arange(7))
 
 
+def test_select_action_accepts_torch_tensor_obs():
+    # train --device cuda 下 VectorizedEnvWrapper 会把 obs .to(device);CPU tensor 走同一
+    # .detach().cpu().numpy() 路径,锁住 select_action 不在 tensor obs 上炸。
+    p = _StubPolicy()
+    ad = LiberoPi05Adapter(p, prompt="x", action_dim=7, execute_horizon=5)
+    raw = {"observation.images.agentview": torch.zeros(1, 3, 8, 8),
+           "observation.images.robot0_eye_in_hand": torch.zeros(1, 3, 8, 8),
+           "observation.state": torch.zeros(1, 8)}
+    a = ad.select_action(raw)
+    assert isinstance(a, torch.Tensor) and a.shape == (1, 7)
+    assert np.allclose(a[0].cpu().numpy(), np.arange(7))
+
+
 def test_infer_empty_chunk_raises():
     class _EmptyPolicy:
         def infer(self, obs): return {"actions": np.zeros((0, 8), np.float32)}

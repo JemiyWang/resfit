@@ -6,6 +6,13 @@ import numpy as np
 from PIL import Image
 
 
+def _to_np(x):
+    """torch tensor(含 cuda)→ numpy;其它走 np.asarray。鸭子类型,不 import torch。"""
+    if hasattr(x, "detach"):
+        x = x.detach().cpu().numpy()
+    return np.asarray(x)
+
+
 def quat2axisangle(quat) -> np.ndarray:
     """robosuite (x,y,z,w) → 3 维轴角。对齐 rollout_libero._quat2axisangle。"""
     quat = np.asarray(quat, dtype=np.float64).copy()
@@ -34,7 +41,7 @@ def resize_with_pad(img, h, w) -> np.ndarray:
 def _to_hwc_uint8(img) -> np.ndarray:
     """CHW/HWC → HWC uint8。float 输入按 [0,1] 处理(本管线 env 出的是 CHW float[0,1],
     见 libero_env._chw01),与上游 image_tools 的 [-1,1] 约定不同,故不复用上游。"""
-    a = np.asarray(img)
+    a = _to_np(img)
     if a.ndim == 3 and a.shape[0] == 3:
         a = np.transpose(a, (1, 2, 0))
     if np.issubdtype(a.dtype, np.floating):
@@ -68,10 +75,10 @@ def adapt_4tuple(obs, reward, done, info):
 def build_libero_serve_obs(raw_obs, *, base_key, wrist_key, state_key, prompt, env_index=0):
     """从(批后)raw_obs 取 env_index,出 pi0_libero serve 扁平 schema。env 侧已翻转,这里只 resize。"""
     def _img(key):
-        arr = np.asarray(raw_obs[key])
+        arr = _to_np(raw_obs[key])
         arr = arr[env_index] if arr.ndim == 4 else arr
         return resize_with_pad(_to_hwc_uint8(arr), 224, 224)
-    st = np.asarray(raw_obs[state_key])
+    st = _to_np(raw_obs[state_key])
     st = st[env_index] if st.ndim == 2 else st
     return {"observation/image": _img(base_key), "observation/wrist_image": _img(wrist_key),
             "observation/state": st.astype(np.float32).reshape(-1)[:8], "prompt": str(prompt)}

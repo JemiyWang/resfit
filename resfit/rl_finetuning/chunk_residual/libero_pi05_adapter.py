@@ -52,7 +52,7 @@ class LiberoPi05Adapter:
         return [row.copy() for row in sliced]
 
     def select_action(self, raw_obs):
-        b = int(np.asarray(raw_obs[self.STATE_KEY]).shape[0])
+        b = int(raw_obs[self.STATE_KEY].shape[0])
         self._ensure_queues(b)
         out = []
         for i in range(b):

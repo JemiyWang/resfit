@@ -77,6 +77,19 @@ def test_flip_resize_image_reverses_corner():
     assert out[-1, -1].max() > 0 and out[0, 0].max() == 0   # 亮点翻到右下、原左上变黑
 
 
+def test_build_libero_serve_obs_accepts_torch_tensors():
+    import torch
+    raw = {"observation.images.agentview": torch.zeros(1, 3, 8, 8),
+           "observation.images.robot0_eye_in_hand": torch.zeros(1, 3, 8, 8),
+           "observation.state": torch.zeros(1, 8)}
+    out = build_libero_serve_obs(raw, base_key="observation.images.agentview",
+                                 wrist_key="observation.images.robot0_eye_in_hand",
+                                 state_key="observation.state", prompt="x", env_index=0)
+    assert set(out) == {"observation/image", "observation/wrist_image", "observation/state", "prompt"}
+    assert out["observation/state"].shape == (8,) and out["observation/image"].dtype.name == "uint8"
+    assert out["observation/image"].shape == (224, 224, 3)
+
+
 def test_to_hwc_uint8_float01_scaling_via_flip():
     # float[0,1] 经 flip_resize_image 应 *255:全 1.0 → 255(锁 [0,1] 契约)
     img = np.ones((224, 224, 3), np.float32)
