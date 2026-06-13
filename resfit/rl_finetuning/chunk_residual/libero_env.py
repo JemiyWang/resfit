@@ -24,13 +24,20 @@ class LiberoGymWrapper(gym.Env):
         self.num_steps_wait = int(num_steps_wait)
         self.init_idx = int(init_idx)
         self.action_space = gym.spaces.Box(-1.0, 1.0, (7,), np.float32)
-        self.observation_space = gym.spaces.Dict({})
+        # 必须是真 Dict(非空):AsyncVectorEnv 靠 observation_space 组装批后 obs,
+        # 空 Dict 会让批后 obs 变成 {} → 丢掉所有键(三键须与 _process 输出一致)。
+        self.observation_space = gym.spaces.Dict({
+            "observation.state": gym.spaces.Box(-np.inf, np.inf, (8,), np.float32),
+            "observation.images.agentview": gym.spaces.Box(0.0, 1.0, (3, 84, 84), np.float32),
+            "observation.images.robot0_eye_in_hand": gym.spaces.Box(0.0, 1.0, (3, 84, 84), np.float32),
+        })
 
     def _process(self, obs):
         return {
             "observation.state": assemble_libero_state(obs).reshape(8),   # per-env 1-D (8,),与 dexmg 对齐(AsyncVectorEnv stack 成 (N,8))
-            "observation.images.agentview": _chw01(flip_resize_image(obs["agentview_image"])),
-            "observation.images.robot0_eye_in_hand": _chw01(flip_resize_image(obs["robot0_eye_in_hand_image"])),
+            # agent ViT(min_vit)要 84×84;pi0 serve 用的 224 由 build_libero_serve_obs 再放大
+            "observation.images.agentview": _chw01(flip_resize_image(obs["agentview_image"], 84)),
+            "observation.images.robot0_eye_in_hand": _chw01(flip_resize_image(obs["robot0_eye_in_hand_image"], 84)),
         }
 
     def reset(self, *, seed=None, options=None):
@@ -66,7 +73,15 @@ def make_libero_env(suite, task_id, *, camera_size=256, render_gpu_device_id=0):
     bddl = f"{get_libero_path('bddl_files')}/{task.problem_folder}/{task.bddl_file}"
     env = OffScreenRenderEnv(bddl_file_name=bddl, camera_heights=camera_size,
                              camera_widths=camera_size, render_gpu_device_id=render_gpu_device_id)
-    init_states = task_suite.get_task_init_states(task_id)
+    # torch>=2.6 默认 weights_only=True,拒绝 LIBERO init_states 里的 numpy pickle;
+    # 这是 LIBERO 自带的可信文件,临时 shim 成 weights_only=False 加载。
+    import torch as _torch
+    _orig_load = _torch.load
+    _torch.load = lambda *a, **k: _orig_load(*a, **{**k, "weights_only": False})
+    try:
+        init_states = task_suite.get_task_init_states(task_id)
+    finally:
+        _torch.load = _orig_load
     return LiberoGymWrapper(env, init_states=init_states), task.language
 
 
@@ -77,7 +92,7 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
     - cuda_to_egl_device_id(cuda_device_id: int)：单 int,逻辑号(env_id % num_visible_gpus)在调用侧算好再传。
     - VectorizedEnvWrapper(vec_env, video_key, device)：video_key 是必填位置参,不是只给 device。
     """
-    from resfit.rl_finetuning.chunk_residual.vec_env_util import VectorizedEnvWrapper, cuda_to_egl_device_id
+    from resfit.rl_finetuning.chunk_residual.vec_env_util import VectorizedEnvWrapper
 
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if cuda_visible is not None:
@@ -88,12 +103,12 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
     num_visible_gpus = len(visible) if visible else 1
 
     def _factory(env_id):
-        # 渲染设备用 CUDA_VISIBLE_DEVICES 掩码后的"逻辑号",再过 cuda_to_egl_device_id
-        # 映射到同物理卡的 EGL 下标(否则渲染会漏到别的物理卡,见 dexmg.py 注释)。
-        logical_id = env_id % num_visible_gpus
-        egl = cuda_to_egl_device_id(logical_id)
-        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(egl)   # 对齐 dexmg.py:263,防 EGL 渲染漏到别的物理卡
-        env, _ = make_libero_env(suite, task_id, render_gpu_device_id=egl)
+        # robosuite 1.4.1(LIBERO)的 EGL 约定:MUJOCO_EGL_DEVICE_ID 必须 ∈ CUDA_VISIBLE_DEVICES
+        # 的物理卡号(binding_utils 有此断言),与 dexmg 的 robosuite 1.5(EGL 枚举下标,
+        # cuda_to_egl_device_id)不同。EGL 按物理卡枚举、不受 CUDA mask 影响,故直接用物理号。
+        phys = visible[env_id % num_visible_gpus] if visible else 0
+        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(phys)
+        env, _ = make_libero_env(suite, task_id, render_gpu_device_id=phys)
         return env
 
     env_fns = [lambda i=i: _factory(i) for i in range(num_envs)]

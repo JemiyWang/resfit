@@ -588,6 +588,7 @@ def main():
     cfg.agent.actor.action_scale = args.action_scale
     cfg.agent.bc_loss_coef = args.demo_bc_coef
     cfg.agent.bc_loss_dynamic = 0          # 均匀 BC(②a 不开 DAPG 动态)
+    cfg.agent.device = args.device         # 让 --device 传到 agent(encoders/nets);否则用 config 默认 cuda
     if args.demo_bc_coef > 0:
         assert args.actor == "raw", "demo_bc 第一版只支持 --actor raw"
         assert args.offline_fraction > 0, \
@@ -830,8 +831,9 @@ def main():
                 wandb.log(log_dict, step=env_steps)
                 next_log += args.log_freq
 
-        if env_steps >= next_eval:
-            # lazy:evaluate_dexmg 拉 dexmg.py(robosuite-1.5);libero 路/无 eval 时不 import
+        if env_steps >= next_eval and args.env_family != "libero":
+            # libero 暂无 evaluator(run_dexmg_evaluation 是 dexmg 专用 + 拉 robosuite-1.5);
+            # libero 路跳过在线 eval(后续可加 libero evaluator)。lazy import 避免 robosuite-1.5。
             from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
             with torch.no_grad():
                 m = run_dexmg_evaluation(env=eval_env, agent=agent,

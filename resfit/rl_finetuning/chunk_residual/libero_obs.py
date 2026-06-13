@@ -49,11 +49,12 @@ def _to_hwc_uint8(img) -> np.ndarray:
     return a.astype(np.uint8)
 
 
-def flip_resize_image(img) -> np.ndarray:
-    """LIBERO 原图 [::-1,::-1] 翻转 + resize_with_pad 224。对齐 rollout_libero:425-430。"""
+def flip_resize_image(img, size: int = 224) -> np.ndarray:
+    """LIBERO 原图 [::-1,::-1] 翻转 + resize_with_pad 到 size×size。默认 224(pi0 serve 用,
+    对齐 rollout_libero:425-430);agent ViT 用 84(min_vit 81-patch=84×84)。"""
     a = _to_hwc_uint8(img)
     a = np.ascontiguousarray(a[::-1, ::-1])
-    return resize_with_pad(a, 224, 224)
+    return resize_with_pad(a, size, size)
 
 
 def assemble_libero_state(obs) -> np.ndarray:

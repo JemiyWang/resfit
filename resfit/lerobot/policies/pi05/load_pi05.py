@@ -31,6 +31,20 @@ def load_pi05_base_policy(cfg, device, schema="dexmg"):
             sys.path.insert(0, p)
 
     WebsocketClientPolicy = _import_ws_client()
+    # 禁掉 websocket keepalive ping:pi0 serve 首次推理触发冷启动 JIT 编译(可 >20s),
+    # 期间不响应 keepalive ping 会被 websockets 默认 20s 超时断连(ConnectionClosedError)。
+    # ping_interval=None 关掉心跳,长推理不掉线。
+    import websockets.sync.client as _wsc
+    if not getattr(_wsc.connect, "_no_ping_patched", False):
+        _orig_connect = _wsc.connect
+
+        def _connect_no_ping(*a, **k):
+            k.setdefault("ping_interval", None)
+            return _orig_connect(*a, **k)
+
+        _connect_no_ping._no_ping_patched = True
+        _wsc.connect = _connect_no_ping
+
     client = WebsocketClientPolicy(host=cfg.host, port=cfg.port)
 
     if schema == "libero":
