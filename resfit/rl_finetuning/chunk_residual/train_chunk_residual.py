@@ -33,6 +33,7 @@ from resfit.dexmg.environments.dexmg import create_vectorized_env
 from resfit.lerobot.utils.load_policy import download_policy_from_wandb, load_policy
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
 from resfit.rl_finetuning.chunk_residual.bc_schedule import linear_bc_coef
+from resfit.rl_finetuning.chunk_residual.libero_obs import load_libero_norm_stats
 from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
@@ -141,16 +142,21 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
     if getattr(args, "base_policy_type", "act") == "pi05":
         from resfit.rl_finetuning.config.residual_td3 import BasePolicyConfig
         from resfit.lerobot.policies.pi05 import load_pi05_base_policy
+        # LIBERO 路:schema=libero,prompt 用该 task 的 language(覆盖 --pi0_prompt 默认)。
+        schema = "libero" if getattr(args, "env_family", "dexmg") == "libero" else "dexmg"
+        prompt = args.pi0_prompt
+        if schema == "libero":
+            prompt = _libero_task_prompt(args.libero_suite, args.libero_task_id)
         image_key_map = (json.loads(args.pi0_image_key_map)
                          if args.pi0_image_key_map else dict(PIECE_IMAGE_KEY_MAP))
         bp = BasePolicyConfig(
             type="pi05", host=args.pi0_host, port=args.pi0_port,
-            prompt=args.pi0_prompt, action_dim=args.pi0_action_dim,
+            prompt=prompt, action_dim=args.pi0_action_dim,
             execute_horizon=args.pi0_execute_horizon,
             image_key_map=image_key_map, kai0_paths=[args.pi0_kai0_path],
         )
         # adapter 已按 device 构造(连 serve);不需再 .to/.eval(它是远端推理的薄封装)
-        return load_pi05_base_policy(bp, device)
+        return load_pi05_base_policy(bp, device, schema=schema)
 
     wandb_id = args.base_wandb_id
     if os.path.isdir(wandb_id):
@@ -267,10 +273,88 @@ def _save_offline_buffer(offline_rb, cache_dir, sig, n_off):
         json.dump({"signature": sig, "n_transitions": int(n_off)}, fp, indent=2)
 
 
+def _libero_task_prompt(suite, task_id):
+    """取 LIBERO (suite,task_id) 的 task.language 当 pi0 prompt(不建 env,只问 benchmark)。"""
+    from libero.libero import benchmark
+    task_suite = benchmark.get_benchmark_dict()[suite]()
+    return task_suite.get_task(int(task_id)).language
+
+
+def validate_libero_cfg(args):
+    """LIBERO 路守卫:强制最小可行配置,任何禁用组合 → 清晰 ValueError。
+
+    dexmg 路(env_family != "libero")直接 return,绝不动既有行为。
+    """
+    if getattr(args, "env_family", "dexmg") != "libero":
+        return
+    if getattr(args, "base_policy_type", "act") != "pi05":
+        raise ValueError(
+            "--env_family libero 需 --base_policy_type pi05;当前 "
+            f"base_policy_type={getattr(args, 'base_policy_type', None)!r}")
+    if getattr(args, "base_action_mode", None) != "queue":
+        raise ValueError(
+            "--env_family libero 需 --base_action_mode queue(pi05 是 step 级 base);当前 "
+            f"base_action_mode={getattr(args, 'base_action_mode', None)!r}")
+    if getattr(args, "chunk_length", 1) != 1:
+        raise ValueError(
+            "--env_family libero 需 --chunk_length 1(queue 模式);当前 "
+            f"chunk_length={getattr(args, 'chunk_length', None)!r}")
+    if getattr(args, "reward_shaping", None) not in ("none", None):
+        raise ValueError(
+            "--env_family libero 不支持奖励整形,需 --reward_shaping none(或不传);当前 "
+            f"reward_shaping={getattr(args, 'reward_shaping', None)!r}")
+    if getattr(args, "offline_fraction", 0) not in (0, 0.0, None):
+        raise ValueError(
+            "--env_family libero 不支持 offline 锚 buffer,需 --offline_fraction 0;当前 "
+            f"offline_fraction={getattr(args, 'offline_fraction', None)!r}")
+    if getattr(args, "pi0_action_dim", None) != 7:
+        raise ValueError(
+            "--env_family libero(单臂)需 --pi0_action_dim 7;当前 "
+            f"pi0_action_dim={getattr(args, 'pi0_action_dim', None)!r}")
+    if (getattr(args, "stage_conditioned", False)
+            or getattr(args, "stage_budget", None)
+            or getattr(args, "subgoal_conditioned", False)):
+        raise ValueError(
+            "--env_family libero 不支持 stage_conditioned / stage_budget / subgoal_conditioned;"
+            "请关闭这些选项")
+    if getattr(args, "potential_source", None) == "hiql":
+        raise ValueError(
+            "--env_family libero 不支持 --potential_source hiql;请用默认 stage")
+
+
+def build_libero_scalers(stats_json_path, device):
+    """直读 LeRobot meta/stats.json(不调 lerobot)建 (ActionScaler, StateStandardizer)。
+
+    LIBERO 路用此兜底替代 LeRobotDatasetMetadata(lerobot 在 py3.8 目标 env 装不上)。
+    stats.json 只含 mean/std;ActionScaler 需 min/max:用 mean±std 当近似动作范围
+    (后续 action_scale 旋钮再外扩),StateStandardizer 直接吃 mean/std。
+    """
+    stats = load_libero_norm_stats(stats_json_path)
+    a_mean = np.asarray(stats["action_mean"], np.float32)
+    a_std = np.asarray(stats["action_std"], np.float32)
+    action_scaler = ActionScaler.from_dataset_stats(
+        {"min": (a_mean - a_std).tolist(), "max": (a_mean + a_std).tolist()},
+        device=device)
+    state_standardizer = StateStandardizer.from_dataset_stats(
+        {"mean": np.asarray(stats["state_mean"], np.float32).tolist(),
+         "std": np.asarray(stats["state_std"], np.float32).tolist()},
+        device=device)
+    return action_scaler, state_standardizer
+
+
 def build_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--actor", choices=["raw", "flow"], default="raw")
     p.add_argument("--task", default="TwoArmBoxCleanup")
+    # --- env family 开关(dexmg 默认行为不变;libero=LIBERO 单臂 + pi05 base via openpi serve)---
+    p.add_argument("--env_family", choices=["dexmg", "libero"], default="dexmg",
+                   help="环境族:dexmg(默认,行为不变)|libero(LIBERO 单臂,pi05 base,直读 stats.json)")
+    p.add_argument("--libero_suite", default="libero_spatial",
+                   help="LIBERO benchmark suite(--env_family libero 用)")
+    p.add_argument("--libero_task_id", type=int, default=0,
+                   help="LIBERO suite 内的 task id(--env_family libero 用)")
+    p.add_argument("--libero_stats_json", default=None,
+                   help="LIBERO LeRobot meta/stats.json 路径(直读建 scaler,不调 lerobot;libero 必填)")
     p.add_argument("--base_wandb_id", default="dexmg-boxcleanup-bc/d59wny58")
     p.add_argument("--dataset", default="ankile/dexmg-two-arm-box-cleanup")
     p.add_argument("--chunk_length", type=int, default=1)
@@ -394,20 +478,26 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    validate_libero_cfg(args)   # LIBERO 路守卫(dexmg 路 no-op)
     torch.manual_seed(args.seed)
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 
     # --- 归一化器(从 dataset stats 建,与 AE / RL 同款)---
-    # 只需 dataset 的统计量来建归一化器:用 LeRobotDatasetMetadata(仅拉 meta/ 几个小文件)
-    # 而非 LeRobotDataset(会 snapshot 整个 repo,含上百 MB 视频)。.stats 完全一致,且可离线工作,
-    # 避免国内直连 HF 下视频频繁超时。
-    from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-    meta = LeRobotDatasetMetadata(args.dataset)
-    action_scaler = ActionScaler.from_dataset_stats(
-        meta.stats["action"], action_scale=args.action_scale,
-        min_range_per_dim=args.min_range_per_dim, device=args.device)
-    state_standardizer = StateStandardizer.from_dataset_stats(
-        meta.stats["observation.state"], device=args.device)
+    if args.env_family == "libero":
+        # LIBERO 路:直读 stats.json(不调 lerobot,目标 env 装不上 LeRobotDatasetMetadata)。
+        assert args.libero_stats_json, "--env_family libero 需 --libero_stats_json(meta/stats.json 路径)"
+        action_scaler, state_standardizer = build_libero_scalers(args.libero_stats_json, args.device)
+    else:
+        # 只需 dataset 的统计量来建归一化器:用 LeRobotDatasetMetadata(仅拉 meta/ 几个小文件)
+        # 而非 LeRobotDataset(会 snapshot 整个 repo,含上百 MB 视频)。.stats 完全一致,且可离线工作,
+        # 避免国内直连 HF 下视频频繁超时。
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
+        meta = LeRobotDatasetMetadata(args.dataset)
+        action_scaler = ActionScaler.from_dataset_stats(
+            meta.stats["action"], action_scale=args.action_scale,
+            min_range_per_dim=args.min_range_per_dim, device=args.device)
+        state_standardizer = StateStandardizer.from_dataset_stats(
+            meta.stats["observation.state"], device=args.device)
 
     # --- 基座 + env ---
     if args.base_policy_type == "pi05":
@@ -441,8 +531,13 @@ def main():
     if args.subgoal_conditioned:
         env_state_mode = "eef_piece"   # 子目标在线需 env 经 info["rel_piece"] 透出 rel
 
-    vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device,
-                                    state_mode=env_state_mode)
+    if args.env_family == "libero":
+        from resfit.rl_finetuning.chunk_residual.libero_env import create_libero_vectorized_env
+        vec_env = create_libero_vectorized_env(
+            args.libero_suite, args.libero_task_id, 1, args.device)
+    else:
+        vec_env = create_vectorized_env(env_name=args.task, num_envs=1, device=args.device,
+                                        state_mode=env_state_mode)
     print(f"[reward-shaping] mode={shaping_mode} bonus={args.stage_reward_bonus} gamma={args.gamma}")
     print(f"[base-action] mode={args.base_action_mode}")
     print(f"[state-mode] env_state_mode={env_state_mode} "
@@ -450,8 +545,12 @@ def main():
     # eval 不加 shaping、不喂 Φ → 保持 eef(省每步 sim rel 开销);
     # FIX A: --subgoal_conditioned 时需 eef_piece 让 eval info 携带 rel_piece 供 z 注入
     eval_state_mode = "eef_piece" if args.subgoal_conditioned else "eef"
-    eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
-                                     device=args.device, state_mode=eval_state_mode)
+    if args.env_family == "libero":
+        eval_vec = create_libero_vectorized_env(
+            args.libero_suite, args.libero_task_id, args.eval_num_envs, args.device)
+    else:
+        eval_vec = create_vectorized_env(env_name=args.task, num_envs=args.eval_num_envs,
+                                         device=args.device, state_mode=eval_state_mode)
     # queue 有状态(per-env action queue):eval(num_envs>1)与训练(num_envs=1)共享同一 base_policy
     # 会互踩 queue。queue 模式给 eval 单独的 base_policy 实例(对齐原版 train_residual_td3 双实例)。
     eval_base_policy = (build_base_policy(args, args.device)
