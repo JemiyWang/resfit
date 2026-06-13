@@ -7,6 +7,8 @@
 设计见 docs/superpowers/specs/2026-06-07-hiql-value-design.md。
 """
 import argparse
+import os
+import warnings
 
 import h5py
 import torch
@@ -135,8 +137,6 @@ def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
 
 def validate_act_feat_cfg(args):
     """act_feat 须能命中缓存或能 build(给了 base ckpt);否则 ValueError。非 act_feat 传 act_* 忽略。"""
-    import os
-    import warnings
     if args.state_mode != "act_feat":
         if getattr(args, "act_feat_cache", None) or getattr(args, "act_base_ckpt", None):
             warnings.warn("非 act_feat 模式,--act_* 被忽略", stacklevel=2)
@@ -146,7 +146,7 @@ def validate_act_feat_cfg(args):
         raise ValueError("state_mode=act_feat 需 --act_feat_cache(已存在)或 --act_base_ckpt 以 build")
 
 
-def _setup_act_feat(args):
+def setup_act_feat(args):
     """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None)。
     非 act_feat → 全 None。缓存已存在 → 不建 extractor,从缓存签名取回 image_keys/ckpt(免重复传 flag);
     否则加载冻结 ACT 建 extractor。"""
@@ -167,6 +167,15 @@ def _setup_act_feat(args):
     image_keys = args.act_image_keys or list(act.config.image_features.keys())
     ext = ActFeatureExtractor(act, image_keys, args.act_proprio_key, args.pooling)
     return ext, str(args.act_base_ckpt), image_keys, ext.signature(str(args.act_base_ckpt))
+
+
+def unpack_state_aux(standardizer, aux, state_mode):
+    """从 read_per_demo_states 的返回拆出 (mean, std, rel_stats)。
+    act_feat: aux=(mean,std) → (tensor mean, tensor std, None);
+    eef/eef_piece: 用 standardizer 的 mean/std,rel_stats=aux。"""
+    if state_mode == "act_feat":
+        return torch.as_tensor(aux[0]), torch.as_tensor(aux[1]), None
+    return standardizer._mean.cpu(), standardizer._std.cpu(), aux
 
 
 def add_act_feat_args(p):
@@ -203,7 +212,7 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
-    extractor, act_ckpt_id, image_keys, _ = _setup_act_feat(args)
+    extractor, act_ckpt_id, image_keys, _ = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
@@ -212,10 +221,7 @@ def main():
     s, s_next, done = build_transitions(seqs)
     print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
           f"transitions={s.shape[0]} state_dim={s.shape[1]}")
-    if args.state_mode == "act_feat":
-        mean, std, rel_stats = torch.as_tensor(aux[0]), torch.as_tensor(aux[1]), None
-    else:
-        mean, std, rel_stats = standardizer._mean.cpu(), standardizer._std.cpu(), aux
+    mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
     model, v_stats = train_value(
         s, s_next, done, gamma=args.gamma, expectile=args.expectile, ema=args.ema,
         lr=args.lr, batch_size=args.batch_size, steps=args.steps,

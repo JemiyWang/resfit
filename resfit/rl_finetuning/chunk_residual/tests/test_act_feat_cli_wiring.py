@@ -7,8 +7,9 @@ def test_gc_parser_has_state_mode_default_eef_piece():
     from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser as gc_parser
     args = gc_parser().parse_args(["--hdf5", "h", "--dataset", "d"])
     assert args.state_mode == "eef_piece"           # 默认逐位不变
-    choices = gc_parser()._option_string_actions["--state_mode"].choices
-    assert "act_feat" in choices and "eef_piece" in choices
+    # act_feat 是合法值(公开 API 校验,不碰 argparse 私有属性)
+    args2 = gc_parser().parse_args(["--hdf5", "h", "--dataset", "d", "--state_mode", "act_feat"])
+    assert args2.state_mode == "act_feat"
 
 
 def test_gc_save_load_act_feat_signature(tmp_path):
@@ -46,7 +47,7 @@ def test_setup_act_feat_recovers_image_keys_and_ckpt_from_cache(tmp_path):
     import argparse
     import numpy as np
     from resfit.rl_finetuning.chunk_residual.act_feat_cache import save_act_feat_cache
-    from resfit.rl_finetuning.chunk_residual.train_hiql_value import _setup_act_feat
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import setup_act_feat
     cache = str(tmp_path / "a.npz")
     sig = {"act_ckpt_id": "ckptA", "image_keys": ["observation.images.agentview"],
            "proprio_key": "observation.state", "pooling": "mean",
@@ -56,7 +57,7 @@ def test_setup_act_feat_recovers_image_keys_and_ckpt_from_cache(tmp_path):
     args = argparse.Namespace(state_mode="act_feat", act_feat_cache=cache,
                               act_base_ckpt=None, act_image_keys=None,
                               act_proprio_key="observation.state", pooling="mean")
-    ext, ckpt, image_keys, got_sig = _setup_act_feat(args)
+    ext, ckpt, image_keys, got_sig = setup_act_feat(args)
     assert ext is None
     assert ckpt == "ckptA"                                       # 从缓存签名取回
     assert image_keys == ["observation.images.agentview"]        # 从缓存签名取回(用户没传 flag)

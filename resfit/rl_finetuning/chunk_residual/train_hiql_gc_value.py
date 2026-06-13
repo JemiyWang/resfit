@@ -20,7 +20,8 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
     load_stage_cache, sorted_demo_keys,
 )
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
-    read_per_demo_states, validate_act_feat_cfg, _setup_act_feat, add_act_feat_args,
+    read_per_demo_states, validate_act_feat_cfg, setup_act_feat, add_act_feat_args,
+    unpack_state_aux,
 )
 
 
@@ -106,21 +107,17 @@ def gc_value_needs_stage(args):
 
 
 def main():
-    import torch
     args = build_parser().parse_args()
     # 配置守卫先行(在重活 read_per_demo_states 之前 fail-fast)
     validate_stage_cache(args.stage_cache, needs_stage=gc_value_needs_stage(args))
     validate_act_feat_cfg(args)
-    extractor, act_ckpt_id, image_keys, act_sig = _setup_act_feat(args)
+    extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
         act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
         act_proprio_key=args.act_proprio_key, pooling=args.pooling)
-    if args.state_mode == "act_feat":
-        mean, std, rel_stats = torch.as_tensor(aux[0]), torch.as_tensor(aux[1]), None
-    else:
-        mean, std, rel_stats = standardizer._mean.cpu(), standardizer._std.cpu(), aux
+    mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \

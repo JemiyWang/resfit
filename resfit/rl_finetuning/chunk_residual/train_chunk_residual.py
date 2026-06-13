@@ -37,7 +37,6 @@ from resfit.rl_finetuning.chunk_residual.bc_schedule import linear_bc_coef
 from resfit.rl_finetuning.chunk_residual.libero_obs import load_libero_norm_stats
 from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.utils.rb_transforms import MultiStepTransform
-from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
 from resfit.rl_finetuning.utils.normalization import ActionScaler, StateStandardizer
 from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
     ChunkResidualEnvWrapper, resolve_shaping_mode)
@@ -832,6 +831,8 @@ def main():
                 next_log += args.log_freq
 
         if env_steps >= next_eval:
+            # lazy:evaluate_dexmg 拉 dexmg.py(robosuite-1.5);libero 路/无 eval 时不 import
+            from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
             with torch.no_grad():
                 m = run_dexmg_evaluation(env=eval_env, agent=agent,
                                          num_episodes=args.eval_num_episodes, device=args.device,
