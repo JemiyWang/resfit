@@ -128,7 +128,8 @@ def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
             ro = {}
             for k in image_keys:
                 name = k.replace("observation.images.", "")
-                ro[k] = torch.as_tensor(grp[f"obs/{name}_image"][()])
+                img = torch.as_tensor(grp[f"obs/{name}_image"][()])
+                ro[k] = img.float().div(255.0).permute(0, 3, 1, 2)   # (T,H,W,C) uint8 -> (T,C,H,W) float [0,1]
             obs_arrays = {kk: grp[f"obs/{kk}"][()] for kk, _ in STATE18_KEYS}
             ro[proprio_key] = torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)
             out.append(ro)
