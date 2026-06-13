@@ -26,6 +26,8 @@
 
 约定:`D_emb` = ACT `dim_model`;`D_proprio` = 18(`STATE18_KEYS`/`assemble_state18`)。所有命令从仓库根 `/mnt/mnt/data/resfit` 用 `conda run -n residual` 跑。
 
+**测试目录(重要)**:本仓的 chunk_residual 测试都在 `resfit/rl_finetuning/chunk_residual/tests/`(不是根 `tests/`)。下文各任务里写的 `tests/test_*.py` 一律指 `resfit/rl_finetuning/chunk_residual/tests/test_*.py`,`git add` 与 `pytest` 路径据此调整。
+
 ---
 
 ## Task 1: Spike — 真 ACT 上验通 encoder_out hook(de-risk,opt-in)
