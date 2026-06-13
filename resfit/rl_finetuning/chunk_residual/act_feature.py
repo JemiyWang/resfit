@@ -27,3 +27,40 @@ def act_feat_signature(act_ckpt_id, image_keys, proprio_key, pooling) -> dict:
         "proprio_key": str(proprio_key),
         "pooling": str(pooling),
     }
+
+
+class ActFeatureExtractor:
+    """冻结 ACT,用 model.encoder 的 forward hook 抓 encoder_out → 池化 ⊕ 原始 proprio。"""
+
+    def __init__(self, act_policy, image_keys, proprio_key="observation.state",
+                 pooling="mean", proprio_dim=18):
+        self.act = act_policy
+        self.act.eval()
+        for p in self.act.parameters():
+            p.requires_grad_(False)
+        self.image_keys = list(image_keys)
+        self.proprio_key = proprio_key
+        self.pooling = pooling
+        self._proprio_dim = proprio_dim
+
+    @property
+    def feature_dim(self) -> int:
+        return int(self.act.config.dim_model) + self._proprio_dim
+
+    @torch.no_grad()
+    def embed_batch(self, raw_obs: dict) -> torch.Tensor:
+        batch = dict(self.act.normalize_inputs(raw_obs))
+        batch["observation.images"] = [batch[k] for k in self.image_keys]
+        captured = {}
+        h = self.act.model.encoder.register_forward_hook(
+            lambda m, i, o: captured.__setitem__("enc", o))
+        try:
+            self.act.model(batch)
+        finally:
+            h.remove()
+        emb = pool_encoder_out(captured["enc"], self.pooling)   # [B, D_emb]
+        proprio = torch.as_tensor(raw_obs[self.proprio_key], dtype=torch.float32)
+        return concat_proprio(emb, proprio)
+
+    def signature(self, act_ckpt_id) -> dict:
+        return act_feat_signature(act_ckpt_id, self.image_keys, self.proprio_key, self.pooling)
