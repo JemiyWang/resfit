@@ -116,8 +116,6 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
 
 def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
     """每条 demo -> 一个 raw_obs dict(整段 T 帧):ACT image_features 键 + proprio_key。"""
-    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
-        STATE18_KEYS, assemble_state18, sorted_demo_keys)
     out = []
     with h5py.File(hdf5_path, "r") as f:
         eps = sorted_demo_keys(list(f["data"].keys()))
@@ -150,14 +148,18 @@ def validate_act_feat_cfg(args):
 
 def _setup_act_feat(args):
     """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None)。
-    非 act_feat → 全 None。缓存已存在 → 不建 extractor(只读缓存);否则加载冻结 ACT 建 extractor。"""
+    非 act_feat → 全 None。缓存已存在 → 不建 extractor,从缓存签名取回 image_keys/ckpt(免重复传 flag);
+    否则加载冻结 ACT 建 extractor。"""
     from pathlib import Path
     if getattr(args, "state_mode", None) != "act_feat":
         return None, None, None, None
     cache_ready = bool(args.act_feat_cache) and Path(args.act_feat_cache).exists()
     if cache_ready:
-        ckpt = str(args.act_base_ckpt) if args.act_base_ckpt else None
-        return None, ckpt, args.act_image_keys, None
+        from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
+        _, _, sig = load_act_feat_cache(args.act_feat_cache)
+        ckpt = str(args.act_base_ckpt) if args.act_base_ckpt else sig.get("act_ckpt_id")
+        image_keys = args.act_image_keys if args.act_image_keys is not None else sig.get("image_keys")
+        return None, ckpt, image_keys, sig
     from resfit.lerobot.utils.load_policy import load_policy
     from resfit.rl_finetuning.chunk_residual.act_feature import ActFeatureExtractor
     cand = Path(args.act_base_ckpt) / "policy"

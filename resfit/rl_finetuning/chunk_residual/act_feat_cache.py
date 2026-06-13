@@ -34,6 +34,11 @@ def _load(path):
     return seqs, stats, sig
 
 
+def load_act_feat_cache(path):
+    """读缓存 → (seqs[float32], (mean,std), signature_dict)。无签名校验,仅读取。"""
+    return _load(path)
+
+
 def act_feat_cache_reuse(path, *, signature, num_demos):
     """签名全等(含 num_demos)才命中,否则 None。"""
     if not (path and os.path.exists(path)):
