@@ -22,16 +22,48 @@ from resfit.rl_finetuning.utils.normalization import StateStandardizer
 
 
 def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None,
-                         device="cpu", cache_path=None):
+                         device="cpu", cache_path=None,
+                         act_feat_cache=None, act_extractor=None,
+                         act_image_keys=None, act_ckpt_id=None, act_proprio_key="observation.state",
+                         pooling="mean", _raw_obs_seqs=None):
     """读每条 demo 的标准化 state 序列(与 RL 训练同源 mean/std)。
 
     state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12]。
+    state_mode=act_feat: (T,D_emb+D_proprio) 冻结 ACT encoder 池化 ⊕ 本体(归一化)。
     cache_path(仅 eef_piece+num_demos=None 时):命中完整 v2 缓存则跳过 MuJoCo replay。
-    返回 (list[np.ndarray], standardizer, rel_piece_stats 或 None)。
+    act_feat_cache(仅 act_feat+num_demos=None 时):命中缓存则跳过 embed_batch。
+    返回 (list[np.ndarray], standardizer_or_None, rel_piece_stats_or_emb_stats_or_None)。
     """
     import numpy as np
     from resfit.rl_finetuning.chunk_residual.state30_cache import (
         state30_cache_reuse, save_state30_cache)
+
+    # --- act_feat:在加载 dataset 元信息/StateStandardizer 之前短路 ---
+    if state_mode == "act_feat":
+        from resfit.rl_finetuning.chunk_residual.act_feature import act_feat_signature
+        from resfit.rl_finetuning.chunk_residual.act_feat_cache import (
+            save_act_feat_cache, act_feat_cache_reuse)
+        sig = act_feat_signature(act_ckpt_id, act_image_keys, act_proprio_key, pooling)
+        sig = dict(sig, dataset_id=str(dataset_id), num_demos=num_demos)
+        hit = act_feat_cache_reuse(act_feat_cache, signature=sig, num_demos=num_demos)
+        if hit is not None:
+            seqs_std, stats = hit
+            print(f"[read_per_demo_states] act_feat 缓存命中 {act_feat_cache}")
+            return seqs_std, None, (np.asarray(stats[0]), np.asarray(stats[1]))
+        assert act_extractor is not None, "act_feat build 需 act_extractor(真 ACT 或 stub)"
+        raw_seqs = _raw_obs_seqs if _raw_obs_seqs is not None else _build_raw_obs_seqs(
+            hdf5_path, act_image_keys, act_proprio_key, num_demos)
+        raw_feat = [act_extractor.embed_batch(ro).cpu().numpy().astype(np.float32) for ro in raw_seqs]
+        allf = np.concatenate(raw_feat, axis=0)
+        mean = allf.mean(axis=0).astype(np.float32)
+        std = np.maximum(allf.std(axis=0), 1e-6).astype(np.float32)
+        seqs_std = [((s - mean) / std).astype(np.float32) for s in raw_feat]
+        if act_feat_cache and num_demos is None:
+            save_act_feat_cache(act_feat_cache, seqs_std, (mean, std), signature=sig)
+            print(f"[read_per_demo_states] 已写 act_feat 缓存 {act_feat_cache}")
+        return seqs_std, None, (mean, std)
+
+    # --- 非 act_feat:以下为原有 eef / eef_piece 逻辑,原样保留 ---
     meta = LeRobotDatasetMetadata(dataset_id)
     standardizer = StateStandardizer.from_dataset_stats(
         meta.stats["observation.state"], device=device)
@@ -82,16 +114,74 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
     return seqs30, standardizer, (mean, std)
 
 
+def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
+    """每条 demo -> 一个 raw_obs dict(整段 T 帧):ACT image_features 键 + proprio_key。"""
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
+        STATE18_KEYS, assemble_state18, sorted_demo_keys)
+    out = []
+    with h5py.File(hdf5_path, "r") as f:
+        eps = sorted_demo_keys(list(f["data"].keys()))
+        if num_demos is not None:
+            eps = eps[:num_demos]
+        for ep in eps:
+            grp = f[f"data/{ep}"]
+            ro = {}
+            for k in image_keys:
+                name = k.replace("observation.images.", "")
+                ro[k] = torch.as_tensor(grp[f"obs/{name}_image"][()])
+            obs_arrays = {kk: grp[f"obs/{kk}"][()] for kk, _ in STATE18_KEYS}
+            ro[proprio_key] = torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)
+            out.append(ro)
+    return out
+
+
+def validate_act_feat_cfg(args):
+    """act_feat 须能命中缓存或能 build(给了 base ckpt);否则 ValueError。非 act_feat 传 act_* 忽略。"""
+    import os
+    import warnings
+    if args.state_mode != "act_feat":
+        if getattr(args, "act_feat_cache", None) or getattr(args, "act_base_ckpt", None):
+            warnings.warn("非 act_feat 模式,--act_* 被忽略", stacklevel=2)
+        return
+    cache_ok = bool(args.act_feat_cache) and os.path.exists(args.act_feat_cache)
+    if not cache_ok and not args.act_base_ckpt:
+        raise ValueError("state_mode=act_feat 需 --act_feat_cache(已存在)或 --act_base_ckpt 以 build")
+
+
+def _setup_act_feat(args):
+    """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None)。
+    非 act_feat → 全 None。缓存已存在 → 不建 extractor(只读缓存);否则加载冻结 ACT 建 extractor。"""
+    from pathlib import Path
+    if getattr(args, "state_mode", None) != "act_feat":
+        return None, None, None, None
+    cache_ready = bool(args.act_feat_cache) and Path(args.act_feat_cache).exists()
+    if cache_ready:
+        ckpt = str(args.act_base_ckpt) if args.act_base_ckpt else None
+        return None, ckpt, args.act_image_keys, None
+    from resfit.lerobot.utils.load_policy import load_policy
+    from resfit.rl_finetuning.chunk_residual.act_feature import ActFeatureExtractor
+    cand = Path(args.act_base_ckpt) / "policy"
+    act = load_policy(cand if cand.is_dir() else Path(args.act_base_ckpt))
+    image_keys = args.act_image_keys or list(act.config.image_features.keys())
+    ext = ActFeatureExtractor(act, image_keys, args.act_proprio_key, args.pooling)
+    return ext, str(args.act_base_ckpt), image_keys, ext.signature(str(args.act_base_ckpt))
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="离线训练 HIQL action-free value(③a)")
     p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--output", default="value.pt")
-    p.add_argument("--state_mode", choices=["eef", "eef_piece"], default="eef",
-                   help="eef(18,默认)|eef_piece(30,加双臂 eef-rel-piece object-aware;要 replay 全 demo)")
+    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat"], default="eef",
+                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
+    p.add_argument("--act_feat_cache", default=None, help="act_feat 嵌入缓存 npz(cache-or-build)")
+    p.add_argument("--act_base_ckpt", default=None, help="act_feat build 用的 ACT base 目录(同 run base)")
+    p.add_argument("--act_image_keys", nargs="*", default=None, help="ACT image_features 键(默认取 base config)")
+    p.add_argument("--act_proprio_key", default="observation.state")
+    p.add_argument("--pooling", choices=["mean"], default="mean")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -105,18 +195,25 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    seqs, standardizer, rel_stats = read_per_demo_states(
+    validate_act_feat_cfg(args)
+    extractor, act_ckpt_id, image_keys, _ = _setup_act_feat(args)
+    seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
-        cache_path=args.state30_cache)
+        cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
+        act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
+        act_proprio_key=args.act_proprio_key, pooling=args.pooling)
     s, s_next, done = build_transitions(seqs)
     print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
           f"transitions={s.shape[0]} state_dim={s.shape[1]}")
+    if args.state_mode == "act_feat":
+        mean, std, rel_stats = torch.as_tensor(aux[0]), torch.as_tensor(aux[1]), None
+    else:
+        mean, std, rel_stats = standardizer._mean.cpu(), standardizer._std.cpu(), aux
     model, v_stats = train_value(
         s, s_next, done, gamma=args.gamma, expectile=args.expectile, ema=args.ema,
         lr=args.lr, batch_size=args.batch_size, steps=args.steps,
         hidden=args.value_hidden, seed=args.seed)
-    save_value(args.output, model, v_stats=v_stats,
-               mean=standardizer._mean.cpu(), std=standardizer._std.cpu(),
+    save_value(args.output, model, v_stats=v_stats, mean=mean, std=std,
                dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats)
     print(f"[hiql_value] saved {args.output}; state_mode={args.state_mode} v_stats={v_stats}")
 
