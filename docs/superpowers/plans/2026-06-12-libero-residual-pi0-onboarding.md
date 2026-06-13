@@ -10,6 +10,12 @@
 
 参照 spec:`docs/superpowers/specs/2026-06-12-libero-residual-pi0-onboarding-design.md`。
 
+> **✅ Task 1 已完成(2026-06-12,改"复用克隆"):** 不再从零建——克隆现成 `/mnt/mnt/data/envs/libero`(py3.8.13,robosuite1.4.0/bddl/robomimic0.2.0/libero/torch2.4.1 全在)→ `/mnt/mnt/data/envs/libero-residual`,补装 `gymnasium1.1.1 + torchrl0.5.0 + tensordict0.5.0 + openpi_client(editable)`。**共存终核通过**:LIBERO 栈 + RL 栈 + openpi_client 同进程 import 无冲突,`AutoresetMode.SAME_STEP` 在。setup 脚本(Task1)据此改成 clone+补装。
+>
+> **两处 py3.8 不兼容 → 计划修订(影响 Task 3/5):**
+> 1. **lerobot 装不上 py3.8(要 ≥3.10)** → LIBERO 路**不走 LeRobotDatasetMetadata**,改**直读 `chj/lerobot_cache/physical-intelligence/libero/meta/stats.json`** 取 action/state 的 mean/std(注意键名 `actions`/`state`)。新增纯函数 `load_libero_norm_stats(stats_json_path)`(放 `libero_obs.py`,Task 2 一并加 + 单测),Task 5 的 libero 分支用它建 ActionScaler/StateStandardizer。
+> 2. **kai0 `resfit_pi05` 包 py3.10-only(`dataclass(slots=True)`)** → `LiberoPi05Adapter` **不子类化 kai0**,改**自包含**:在 `libero_pi05_adapter.py` 直接基于 `openpi_client.WebsocketClientPolicy` 重写那 ~80 行(per-env action queue + `_infer_action_chunk`(client.infer→actions[:, :action_dim]→execute_horizon 截断)+ `select_action`/`reset`/`from_policy`/`eval`/`to`),`_to_openpi_obs` 委托 `build_libero_serve_obs`。Task 3 据此重写(不再 import kai0;单测不再需要 kai0 path)。
+
 单测命令(residual 环境,纯逻辑不需新 env):
 ```
 conda run -n residual python -m pytest <path>::<test> -v
