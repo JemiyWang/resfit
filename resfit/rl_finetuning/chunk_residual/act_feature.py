@@ -30,7 +30,11 @@ def act_feat_signature(act_ckpt_id, image_keys, proprio_key, pooling) -> dict:
 
 
 class ActFeatureExtractor:
-    """冻结 ACT,用 model.encoder 的 forward hook 抓 encoder_out → 池化 ⊕ 原始 proprio。"""
+    """冻结 ACT,用 model.encoder 的 forward hook 抓 encoder_out → 池化 ⊕ 原始 proprio。
+
+    注意:__init__ 会原地修改传入的 act_policy:调用 .eval() 并冻结所有参数
+    (requires_grad=False)。调用方不应在此之后再对该 policy 调用 .train()。
+    """
 
     def __init__(self, act_policy, image_keys, proprio_key="observation.state",
                  pooling="mean", proprio_dim=18):
@@ -39,6 +43,10 @@ class ActFeatureExtractor:
         for p in self.act.parameters():
             p.requires_grad_(False)
         self.image_keys = list(image_keys)
+        if hasattr(act_policy, "config") and getattr(act_policy.config, "image_features", None) is not None:
+            canonical = list(act_policy.config.image_features.keys())
+            assert list(image_keys) == canonical, (
+                f"image_keys 顺序须与 act.config.image_features 一致: {list(image_keys)!r} vs {canonical!r}")
         self.proprio_key = proprio_key
         self.pooling = pooling
         self._proprio_dim = proprio_dim
@@ -49,6 +57,7 @@ class ActFeatureExtractor:
 
     @torch.no_grad()
     def embed_batch(self, raw_obs: dict) -> torch.Tensor:
+        self.act.eval()
         batch = dict(self.act.normalize_inputs(raw_obs))
         batch["observation.images"] = [batch[k] for k in self.image_keys]
         captured = {}
@@ -59,7 +68,7 @@ class ActFeatureExtractor:
         finally:
             h.remove()
         emb = pool_encoder_out(captured["enc"], self.pooling)   # [B, D_emb]
-        proprio = torch.as_tensor(raw_obs[self.proprio_key], dtype=torch.float32)
+        proprio = torch.as_tensor(raw_obs[self.proprio_key], dtype=torch.float32).to(emb.device)
         return concat_proprio(emb, proprio)
 
     def signature(self, act_ckpt_id) -> dict:
