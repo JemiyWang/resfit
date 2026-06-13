@@ -287,6 +287,9 @@ def validate_libero_cfg(args):
     """
     if getattr(args, "env_family", "dexmg") != "libero":
         return
+    if not getattr(args, "libero_stats_json", None):
+        raise ValueError(
+            "--env_family libero 需 --libero_stats_json(LeRobot meta/stats.json 路径)")
     if getattr(args, "base_policy_type", "act") != "pi05":
         raise ValueError(
             "--env_family libero 需 --base_policy_type pi05;当前 "
@@ -299,10 +302,12 @@ def validate_libero_cfg(args):
         raise ValueError(
             "--env_family libero 需 --chunk_length 1(queue 模式);当前 "
             f"chunk_length={getattr(args, 'chunk_length', None)!r}")
-    if getattr(args, "reward_shaping", None) not in ("none", None):
+    shaping_mode = resolve_shaping_mode(
+        getattr(args, "reward_shaping", None), getattr(args, "staged_reward", False))
+    if shaping_mode != "none":
         raise ValueError(
-            "--env_family libero 不支持奖励整形,需 --reward_shaping none(或不传);当前 "
-            f"reward_shaping={getattr(args, 'reward_shaping', None)!r}")
+            "--env_family libero 不支持奖励整形,需 --reward_shaping none(且不传 --staged_reward);"
+            f"当前 canonical shaping_mode={shaping_mode!r}")
     if getattr(args, "offline_fraction", 0) not in (0, 0.0, None):
         raise ValueError(
             "--env_family libero 不支持 offline 锚 buffer,需 --offline_fraction 0;当前 "
@@ -322,19 +327,18 @@ def validate_libero_cfg(args):
             "--env_family libero 不支持 --potential_source hiql;请用默认 stage")
 
 
-def build_libero_scalers(stats_json_path, device):
+def build_libero_scalers(stats_json_path, device, action_scale=0.2, min_range_per_dim=0.1):
     """直读 LeRobot meta/stats.json(不调 lerobot)建 (ActionScaler, StateStandardizer)。
 
     LIBERO 路用此兜底替代 LeRobotDatasetMetadata(lerobot 在 py3.8 目标 env 装不上)。
-    stats.json 只含 mean/std;ActionScaler 需 min/max:用 mean±std 当近似动作范围
-    (后续 action_scale 旋钮再外扩),StateStandardizer 直接吃 mean/std。
+    ActionScaler 用 action 节点真实 min/max(不再用 mean±std 近似);action_scale /
+    min_range_per_dim 透传(与 dexmg 路同款),StateStandardizer 直接吃 mean/std。
     """
     stats = load_libero_norm_stats(stats_json_path)
-    a_mean = np.asarray(stats["action_mean"], np.float32)
-    a_std = np.asarray(stats["action_std"], np.float32)
     action_scaler = ActionScaler.from_dataset_stats(
-        {"min": (a_mean - a_std).tolist(), "max": (a_mean + a_std).tolist()},
-        device=device)
+        {"min": np.asarray(stats["action_min"], np.float32).tolist(),
+         "max": np.asarray(stats["action_max"], np.float32).tolist()},
+        action_scale=action_scale, min_range_per_dim=min_range_per_dim, device=device)
     state_standardizer = StateStandardizer.from_dataset_stats(
         {"mean": np.asarray(stats["state_mean"], np.float32).tolist(),
          "std": np.asarray(stats["state_std"], np.float32).tolist()},
@@ -485,8 +489,10 @@ def main():
     # --- 归一化器(从 dataset stats 建,与 AE / RL 同款)---
     if args.env_family == "libero":
         # LIBERO 路:直读 stats.json(不调 lerobot,目标 env 装不上 LeRobotDatasetMetadata)。
-        assert args.libero_stats_json, "--env_family libero 需 --libero_stats_json(meta/stats.json 路径)"
-        action_scaler, state_standardizer = build_libero_scalers(args.libero_stats_json, args.device)
+        # libero_stats_json 必填校验已挪进 validate_libero_cfg 守卫。
+        action_scaler, state_standardizer = build_libero_scalers(
+            args.libero_stats_json, args.device,
+            action_scale=args.action_scale, min_range_per_dim=args.min_range_per_dim)
     else:
         # 只需 dataset 的统计量来建归一化器:用 LeRobotDatasetMetadata(仅拉 meta/ 几个小文件)
         # 而非 LeRobotDataset(会 snapshot 整个 repo,含上百 MB 视频)。.stats 完全一致,且可离线工作,

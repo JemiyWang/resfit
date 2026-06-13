@@ -78,8 +78,10 @@ def build_libero_serve_obs(raw_obs, *, base_key, wrist_key, state_key, prompt, e
 
 
 def load_libero_norm_stats(stats_json_path) -> dict:
-    """读 LeRobot meta/stats.json → {'action_mean','action_std','state_mean','state_std'} float32。
-    键名兜底:action 取 'action'|'actions';state 取 'observation.state'|'state'。"""
+    """读 LeRobot meta/stats.json → {'action_mean','action_std','action_min','action_max',
+    'state_mean','state_std'} float32。
+    键名兜底:action 取 'action'|'actions';state 取 'observation.state'|'state'。
+    action_min/max 取 action 节点真实 min/max(供 ActionScaler 用,勿用 mean±std 近似)。"""
     with open(stats_json_path) as f:
         s = json.load(f)
     def pick(*keys):
@@ -90,5 +92,6 @@ def load_libero_norm_stats(stats_json_path) -> dict:
     a = pick("action", "actions"); st = pick("observation.state", "state")
     return {
         "action_mean": np.asarray(a["mean"], np.float32), "action_std": np.asarray(a["std"], np.float32),
+        "action_min": np.asarray(a["min"], np.float32), "action_max": np.asarray(a["max"], np.float32),
         "state_mean": np.asarray(st["mean"], np.float32), "state_std": np.asarray(st["std"], np.float32),
     }

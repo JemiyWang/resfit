@@ -60,11 +60,13 @@ def test_load_libero_norm_stats_keynames(tmp_path):
     # LeRobot meta/stats.json:键名 actions/state(兜底也认 action/observation.state)
     p = tmp_path / "stats.json"
     p.write_text(json.dumps({
-        "actions": {"mean": [0.0] * 7, "std": [1.0] * 7},
+        "actions": {"mean": [0.0] * 7, "std": [1.0] * 7, "min": [-1.0] * 7, "max": [1.0] * 7},
         "state": {"mean": [0.0] * 8, "std": [2.0] * 8},
     }))
     st = load_libero_norm_stats(str(p))
     assert st["action_mean"].shape == (7,) and st["action_std"].shape == (7,)
+    assert st["action_min"].shape == (7,) and st["action_max"].shape == (7,)
+    assert np.allclose(st["action_min"], -1.0) and np.allclose(st["action_max"], 1.0)
     assert st["state_mean"].shape == (8,) and np.allclose(st["state_std"], 2.0)
 
 
