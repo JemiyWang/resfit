@@ -58,6 +58,9 @@ class ActFeatureExtractor:
     @torch.no_grad()
     def embed_batch(self, raw_obs: dict) -> torch.Tensor:
         self.act.eval()
+        _p = next(self.act.parameters(), None)
+        dev = _p.device if _p is not None else torch.device("cpu")
+        raw_obs = {k: (v.to(dev) if torch.is_tensor(v) else v) for k, v in raw_obs.items()}
         batch = dict(self.act.normalize_inputs(raw_obs))
         batch["observation.images"] = [batch[k] for k in self.image_keys]
         captured = {}

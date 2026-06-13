@@ -98,3 +98,16 @@ def test_extractor_shape_dtype_determinism_and_proprio_slice():
     assert torch.allclose(out1, out2)                    # 确定性
     assert torch.allclose(out1[:, 8:], raw["observation.state"])  # 原始 proprio 在尾部
     assert ext.feature_dim == 8 + 18
+
+
+def test_extractor_handles_model_with_parameters():
+    # stub WITH a parameter -> next(parameters(), None) is non-None (covers device-move branch);
+    # paramless stub is already covered by the other test (next(...,None) -> None -> cpu).
+    import torch
+    act = _StubACT(dim=8, image_keys=["observation.images.agentview"])
+    act.register_parameter("dummy", torch.nn.Parameter(torch.zeros(1)))
+    ext = ActFeatureExtractor(act, image_keys=["observation.images.agentview"],
+                              proprio_key="observation.state", pooling="mean")
+    out = ext.embed_batch(_raw())
+    assert out.shape == (3, 8 + 18)
+    assert torch.isfinite(out).all()
