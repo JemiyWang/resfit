@@ -178,6 +178,21 @@ def unpack_state_aux(standardizer, aux, state_mode):
     return standardizer._mean.cpu(), standardizer._std.cpu(), aux
 
 
+def assert_act_feat_pair_consistent(gc_info, act_sig, state_mode):
+    """high_actor 加载 gc_value 时的同源校验:state_mode 必须一致;
+    act_feat 时再比对特征签名的核心字段(act_ckpt_id/image_keys/proprio_key/pooling),
+    容忍一侧多带 dataset_id/num_demos(build 路是 4 字段,cache-hit 路是 6 字段)。"""
+    assert gc_info.get("state_mode") == state_mode, (
+        f"high_actor state_mode={state_mode} 与 gc_value state_mode={gc_info.get('state_mode')} 不一致(异源)")
+    if state_mode == "act_feat":
+        core = ("act_ckpt_id", "image_keys", "proprio_key", "pooling")
+        gv = gc_info.get("act_feat_signature") or {}
+        ha = act_sig or {}
+        bad = [k for k in core if gv.get(k) != ha.get(k)]
+        assert not bad, (
+            f"act_feat gc_value/high_actor 特征签名核心字段不一致 {bad}: gc_value={gv} vs high_actor={ha}")
+
+
 def add_act_feat_args(p):
     """给 parser 加 act_feat 公共 flags(state_mode 各脚本自定义,不在此处)。"""
     p.add_argument("--act_feat_cache", default=None, help="act_feat 嵌入缓存 npz(cache-or-build)")

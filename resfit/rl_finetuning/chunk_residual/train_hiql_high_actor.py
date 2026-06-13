@@ -21,7 +21,9 @@ from resfit.rl_finetuning.chunk_residual.state30_cache import load_or_build_stat
 from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import (
     stage_entries_aligned, validate_stage_cache,
 )
-from resfit.rl_finetuning.chunk_residual.train_hiql_value import add_act_feat_args
+from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
+    add_act_feat_args, assert_act_feat_pair_consistent,
+)
 
 
 def build_parser():
@@ -91,6 +93,7 @@ def main():
         f"gc_value 训练集 {info['dataset_id']!r} 与当前 --dataset {args.dataset!r} 不一致(异源 ckpt)"
     assert data["states"].shape[1] == vf.state_dim, \
         f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
+    assert_act_feat_pair_consistent(info, act_sig, args.state_mode)
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} "
           f"target_mode={args.target_mode} high_p_randomgoal={args.high_p_randomgoal} "

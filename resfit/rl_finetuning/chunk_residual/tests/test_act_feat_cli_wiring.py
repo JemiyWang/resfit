@@ -85,3 +85,26 @@ def test_ha_save_load_act_feat_signature(tmp_path):
     _, info = load_high_actor(p)
     assert info.get("act_feat_signature") == sig
     assert info["state_mode"] == "act_feat"
+
+
+def test_assert_act_feat_pair_consistent():
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import assert_act_feat_pair_consistent
+    core = {"act_ckpt_id": "A", "image_keys": ["observation.images.agentview"],
+            "proprio_key": "observation.state", "pooling": "mean"}
+    gc_info = {"state_mode": "act_feat", "act_feat_signature": dict(core, dataset_id="ds", num_demos=None)}
+    # 核心字段一致(即使一侧多了 dataset_id/num_demos)→ 通过
+    assert_act_feat_pair_consistent(gc_info, dict(core), "act_feat")
+    # state_mode 不一致 → 报错
+    try:
+        assert_act_feat_pair_consistent({"state_mode": "eef_piece"}, None, "act_feat")
+        assert False
+    except AssertionError:
+        pass
+    # 核心签名不一致(不同 ACT ckpt)→ 报错
+    try:
+        assert_act_feat_pair_consistent(gc_info, dict(core, act_ckpt_id="B"), "act_feat")
+        assert False
+    except AssertionError:
+        pass
+    # eef_piece 同模式 → 通过(不校签名)
+    assert_act_feat_pair_consistent({"state_mode": "eef_piece"}, None, "eef_piece")
