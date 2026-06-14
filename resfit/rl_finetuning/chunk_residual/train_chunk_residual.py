@@ -545,7 +545,13 @@ def main():
         # 而非 LeRobotDataset(会 snapshot 整个 repo,含上百 MB 视频)。.stats 完全一致,且可离线工作,
         # 避免国内直连 HF 下视频频繁超时。
         from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
-        meta = LeRobotDatasetMetadata(args.dataset)
+        # lerobot 数据源:标准化器 stats 用本地 root,与 offline act_feat 缓存(read_per_demo_states
+        # 同走 root)同源——否则 online proprio 标准化用 HF 默认缓存 stats、offline 用 root,
+        # act_feat 在线/离线特征被不同 mean/std 归一 → subgoal 失配;且离线模式无 root 可能找不到该 repo。
+        # hdf5 路 root=None,逐位等价原行为。
+        meta = LeRobotDatasetMetadata(
+            args.dataset,
+            root=args.lerobot_root if getattr(args, "data_source", "hdf5") == "lerobot" else None)
         action_scaler = ActionScaler.from_dataset_stats(
             meta.stats["action"], action_scale=args.action_scale,
             min_range_per_dim=args.min_range_per_dim, device=args.device)
