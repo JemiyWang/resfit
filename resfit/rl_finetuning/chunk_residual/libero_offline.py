@@ -19,3 +19,20 @@ def libero_task_language(suite: str, task_id: int) -> str:
     from libero.libero import benchmark
     task_suite = benchmark.get_benchmark_dict()[suite]()
     return task_suite.get_task(int(task_id)).language.strip()
+
+
+def find_demo_episodes(lerobot_root: str, language: str) -> list[str]:
+    """读 meta/episodes.jsonl,返回 tasks[0]==language 的 episode parquet 路径(按 episode_index 升序)。"""
+    ep_path = os.path.join(lerobot_root, "meta", "episodes.jsonl")
+    matched = []
+    with open(ep_path) as f:
+        for line in f:
+            rec = json.loads(line)
+            tasks = rec.get("tasks", [])
+            if tasks and tasks[0].strip() == language.strip():
+                matched.append(int(rec["episode_index"]))
+    if not matched:
+        raise ValueError(f"find_demo_episodes: 数据集 {lerobot_root} 无任务语言 {language!r} 的 episode")
+    matched.sort()
+    return [os.path.join(lerobot_root, "data", f"chunk-{ei // 1000:03d}",
+                         f"episode_{ei:06d}.parquet") for ei in matched]
