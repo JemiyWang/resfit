@@ -178,3 +178,13 @@ def test_build_libero_offline_buffer_gt(monkeypatch, tmp_path):
     assert len(rb) == 5
     b = rb.sample(2)
     assert "observation.state" in b["obs"] and b["action"].shape[-1] == 7
+
+
+def test_count_num_demos_truncates_by_episode_index(monkeypatch, tmp_path):
+    # ei=0 较长(L=5)、ei=1 较短(L=3);num_demos=1 必须按 episode_index 取 ei=0(与 build/find_demo_episodes 同序),
+    # 而非按 length 取较短的那个 —— 否则 count 与 build 选到不同子集,storage 定容对不上。
+    import resfit.rl_finetuning.chunk_residual.libero_offline as lo
+    monkeypatch.setattr(lo, "libero_task_language", lambda s, t: "L")
+    root = _make_stub_root(tmp_path, [(0, "L", 5), (1, "L", 3)])
+    assert lo.count_libero_offline_transitions(root, "x", 0, num_demos=1) == 4   # ei=0:5-1,不是 3-1=2
+    assert lo.count_libero_offline_transitions(root, "x", 0) == 6                # 全取:(5-1)+(3-1)

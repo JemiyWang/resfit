@@ -114,20 +114,26 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
 
 
 def count_libero_offline_transitions(lerobot_root, suite, task_id, num_demos=None) -> int:
-    """从 episodes.jsonl 的 length 求 sum(T-1)(不解 parquet,秒级),给 LazyTensorStorage 精确定容。"""
+    """从 episodes.jsonl 的 length 求 sum(T-1)(不解 parquet,秒级),给 LazyTensorStorage 精确定容。
+
+    **按 episode_index 升序取 num_demos —— 必须与 find_demo_episodes(build 用)同序**,否则
+    num_demos 截断会选到不同子集、storage 定容与实际灌入对不上(overflow/eviction)。
+    注:这是 episodes.jsonl 报告的 length;若个别 demo 实际 parquet T<2,build 会跳过它,
+    实得 transition 略少于此 cap —— LazyTensorStorage 容量略余是安全的(不会 assert len==cap)。
+    """
     language = libero_task_language(suite, task_id)
     ep_path = os.path.join(lerobot_root, "meta", "episodes.jsonl")
-    lengths = []
+    pairs = []  # (episode_index, length)
     with open(ep_path) as f:
         for line in f:
             rec = json.loads(line)
             tasks = rec.get("tasks", [])
-            if tasks and tasks[0].strip() == language:
-                lengths.append(int(rec["length"]))
-    lengths.sort()
+            if tasks and tasks[0].strip() == language.strip():
+                pairs.append((int(rec["episode_index"]), int(rec["length"])))
+    pairs.sort()                       # 按 episode_index 升序,与 find_demo_episodes 一致
     if num_demos is not None:
-        lengths = lengths[:num_demos]
-    return int(sum(max(0, L - 1) for L in lengths))
+        pairs = pairs[:num_demos]
+    return int(sum(max(0, length - 1) for _, length in pairs))
 
 
 def build_libero_offline_buffer(offline_rb, *, lerobot_root, suite, task_id,
