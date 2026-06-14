@@ -239,6 +239,8 @@ def _libero_offline_signature(args, image_keys, offline_cap, image_size):
         "suite": args.libero_suite, "task_id": int(args.libero_task_id),
         "base_mode": args.offline_base_mode, "base_policy_type": args.base_policy_type,
         "pi0_host": args.pi0_host, "pi0_port": args.pi0_port, "pi0_action_dim": args.pi0_action_dim,
+        # execute_horizon 决定 base_policy 在 demo 帧上的重规划频率 → 改变每帧 base_action,必须入签名
+        "pi0_execute_horizon": args.pi0_execute_horizon,
         "action_scale": args.action_scale, "min_range_per_dim": args.min_range_per_dim,
         "offline_cap": offline_cap, "image_keys": sorted(image_keys), "image_size": int(image_size),
         "gamma": args.gamma, "n_step": args.n_step, "num_demos": args.offline_num_demos,
@@ -465,8 +467,9 @@ def build_parser():
                    help="pi0/pi05 prompt;必须与微调/serve 的 default-prompt 完全一致")
     p.add_argument("--pi0_action_dim", type=int, default=14,
                    help="pi0/pi05 基座输出 action 维度(three-piece=14)")
-    p.add_argument("--pi0_execute_horizon", type=int, default=30,
-                   help="pi0/pi05 每次推理实际执行的步数(adapter 内部 action queue 长度)")
+    p.add_argument("--pi0_execute_horizon", type=int, default=10,
+                   help="pi0/pi05 每次推理后开环执行多少步再重规划(adapter 内部 action queue 长度);"
+                        "默认 10 对齐 three_piece_aligned 实验的 ACT base_n_action_steps=10")
     p.add_argument("--pi0_kai0_path", default="/mnt/mnt/data/kai0_new4090",
                    help="kai0 仓路径(供 import resfit_pi05.pi05_policy_adapter;本机=kai0_new4090)")
     p.add_argument("--pi0_image_key_map", default=None,
