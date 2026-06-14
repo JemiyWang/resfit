@@ -680,8 +680,8 @@ def main():
             for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
                 assert _cache_sig.get(k) == _gv_sig.get(k), \
                     f"act_feat cache 与 gc_value 签名不符 [{k}]: {_cache_sig.get(k)} vs {_gv_sig.get(k)}"
-            import os
-            import warnings
+            import warnings   # 注:勿在此再 import os —— 会让 os 成为 main() 的局部变量,
+                              # 致其它分支(libero offline 等)在此行前用 os 触发 UnboundLocalError
             _base_id = os.path.normpath(str(getattr(args, "base_wandb_id", "") or ""))
             _cache_ckpt = os.path.normpath(str(_gv_sig.get("act_ckpt_id") or ""))
             if _base_id and _cache_ckpt and _base_id != _cache_ckpt:
