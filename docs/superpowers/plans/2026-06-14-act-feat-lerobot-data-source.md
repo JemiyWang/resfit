@@ -30,7 +30,7 @@
 ```python
 import torch
 from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
-    lerobot_episode_frames, lerobot_episode_count, to_chw01,
+    lerobot_episode_frames, lerobot_episode_count, count_lerobot_transitions, to_chw01,
 )
 
 
@@ -52,6 +52,8 @@ def test_to_chw01_variants():
 def test_episode_count_and_frames():
     ds = _StubDS()
     assert lerobot_episode_count(ds) == 2
+    assert count_lerobot_transitions(ds) == 3                    # (3-1)+(2-1)
+    assert count_lerobot_transitions(ds, num_demos=1) == 2       # 仅第 0 集
     fr = lerobot_episode_frames(ds, 0, ["observation.images.agentview"], "observation.state", "action")
     assert fr["images"]["observation.images.agentview"].shape == (3, 3, 4, 4)   # (T=3,C,H,W)
     assert fr["state"].shape == (3, 18) and fr["actions"].shape == (3, 7)
@@ -98,6 +100,15 @@ def open_lerobot(repo_id, root):
 
 def lerobot_episode_count(ds) -> int:
     return int(len(ds.episode_data_index["from"]))
+
+
+def count_lerobot_transitions(ds, num_demos=None) -> int:
+    """sum(T-1) over 前 num_demos 集 → LazyTensorStorage 定容(取集序须与 build 一致)。"""
+    edi = ds.episode_data_index
+    n = int(len(edi["from"]))
+    if num_demos is not None:
+        n = min(n, num_demos)
+    return int(sum(max(0, int(edi["to"][e]) - int(edi["from"][e]) - 1) for e in range(n)))
 
 
 def lerobot_episode_frames(ds, ep_idx, image_keys, proprio_key="observation.state",
@@ -248,6 +259,8 @@ git commit -m "feat(act_feat): read_per_demo_states lerobot data source branch +
 **Files:** Modify `resfit/rl_finetuning/chunk_residual/offline_stage_replay.py`; Test `tests/test_build_offline_buffer_rel.py`
 
 lerobot 路:逐集读 LeRobot 帧(图/state/action),stage_id≡0(不 replay、不开 h5py),base_action/subgoal 同 hdf5 路。
+
+**落点确认(2026-06-14 rebase)**:`build_offline_buffer` 签名在 `offline_stage_replay.py:186-190`、act_feat subgoal 分支在 `:217/224-230/279-292`,**均未被 libero-offline 触碰**(libero 走独立文件 `libero_offline.py`,没改本文件)→ 本 Task 落点干净,新增独立 `_build_offline_lerobot` 不碰现有 hdf5 路。
 
 - [ ] **Step 1: 写失败测试**(append 到 `tests/test_build_offline_buffer_rel.py`)
 
@@ -429,14 +442,25 @@ Run: `conda run -n residual python -m pytest resfit/rl_finetuning/chunk_residual
 Expected: FAIL（parser 无 `--data_source`）。
 
 - [ ] **Step 3: 实现**
-- 三个 `build_parser` 各加(放在 act_feat flags 附近;train_hiql_value 已在 Task2 加过,gc_value/high_actor/train_chunk_residual 这里加):
+
+3a. 三个 `build_parser` 各加 `--data_source/--lerobot_root`(train_hiql_value 已在 Task2 加;此处加 gc_value/high_actor/train_chunk_residual)。落点:`train_hiql_gc_value.build_parser`(`:65-100`,紧跟 `add_act_feat_args(p)` `:78` 之后);`train_hiql_high_actor.build_parser`(`:29-58`,紧跟 `:57` 之后);`train_chunk_residual.build_parser`(紧跟 env_family flags `:374-381` 之后):
 ```python
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
 ```
-- `train_hiql_gc_value.main` / `train_hiql_high_actor.main`:把 `read_per_demo_states(...)` 调用加 `data_source=args.data_source, lerobot_root=args.lerobot_root`;`setup_act_feat`/`validate_data_source_cfg` 同 Task2(从 train_hiql_value import 复用)。
-- `train_chunk_residual.main`:`validate_data_source_cfg(args)`;build_offline_buffer 调用加 `data_source=args.data_source, lerobot_repo_id=args.dataset, lerobot_root=args.lerobot_root`;lerobot 时 `offline_dataset_path`/`offline_stage_cache` 不用(传 None 容忍);`setup_act_feat` 透传 data_source/lerobot_root 给其内部 read_per_demo_states(若它建缓存)。
+
+3b. `train_hiql_gc_value.main`(`read_per_demo_states` 调用在 `:115-119`、`setup_act_feat` 在 `:114`、守卫在 `:111-113`)与 `train_hiql_high_actor.main`(`read_per_demo_states` 在 `if args.state_mode=="act_feat":` 块内 `:78-82`、`setup_act_feat` `:77`、守卫 `:72`):调 `validate_data_source_cfg(args)`(从 train_hiql_value import 复用),`read_per_demo_states(...)` 调用加 `data_source=args.data_source, lerobot_root=args.lerobot_root`。两文件均未被 libero-offline 触碰,仅核对行号。
+
+3c. **`train_chunk_residual.main`(核心 rebase——offline buffer 块已被 libero-offline 改写成 `is_libero` 二分派)**:
+  - main 开头(`validate_libero_cfg(args)` `:507` 之后)加 `validate_data_source_cfg(args)`。
+  - offline buffer 块在 `:737-792`:`is_libero=getattr(args,"env_family","dexmg")=="libero"`(`:737`)→ libero 分支 `:738-744`、**dexmg(else)分支 `:745-754`**、灌装二分支 `:775-792`。dexmg+lerobot **挂在 else(dexmg)分支内部,再按 `args.data_source` 二分**,改三处:
+    - **定容**(`:751-752`,原用 `count_offline_transitions` 读 hdf5 `states`,lerobot 用不了):`data_source=="lerobot"` 时改用 `count_lerobot_transitions(open_lerobot(args.dataset, args.lerobot_root), args.offline_num_demos)`(Task1 新增;二者从 `lerobot_demo_source` import)。
+    - **签名(缺口 A,必补)**:`_offline_buffer_signature`(`:187-230`)当前**不含** data_source/lerobot_root → 给它加这两个键(参照 libero 那侧 `_libero_offline_signature` 的做法),否则同一 `--dataset` 下 hdf5 与 lerobot 的 `--offline_buffer_cache` 会误命中串台。
+    - **灌装**(`:783-792` 的 `build_offline_buffer(...)` 调用):加 `data_source=args.data_source, lerobot_repo_id=args.dataset, lerobot_root=args.lerobot_root`。
+  - lerobot 时 `--offline_dataset_path`(hdf5)/`--offline_stage_cache` 不用(build_offline_buffer lerobot 路不开 h5py、不读 stage_cache)。
+  - **陷阱(必避)**:本分支会用 `os.path`(算 lerobot_root abspath / 进 signature)。`train_chunk_residual.py:683` 有历史注释——**绝不在 `main()` 内 `import os`**(会把 os 变 main-local,触发 `:741` libero 分支 `os.path.abspath` 的 `UnboundLocalError`,live-smoke 踩过);用 module-level `os`,或像 `:546` 那样 `import os as _os` 别名。
+  - `setup_act_feat` 若内部建缓存,透传 `data_source/lerobot_root` 给其 `read_per_demo_states`。
 
 - [ ] **Step 4: 跑测试 + 回归**
 
@@ -511,4 +535,5 @@ git commit -m "test: opt-in pouring lerobot act_feat runnability smoke (gt base 
 - **占位扫描**:Task3 的 `_demo_base_actions_lerobot` 与 base_mode=base_policy 实测细节标注由 smoke 暴露(首版 smoke 用 gt base 验主链)——这是真 ACT/env 依赖的合理边界,非占位;其余给真实代码。
 - **类型一致**:`lerobot_episode_frames` 返回 `{images,state,actions}` 在 Task1 定义、Task2/3 用;`data_source/lerobot_root/lerobot_repo_id/_lerobot_ds` 参数名各 Task 一致;`act_feat_seqs` 沿用既有(上一 plan)。
 - **范围**:单一计划;act_feat+no-stage;hdf5 逐位不变;eef_piece+lerobot 禁止。
+- **Rebase(2026-06-14,libero-offline 落定后)**:Task4 接线已对齐 `train_chunk_residual.py:737-792` 的 `is_libero` 二分派(dexmg+lerobot 挂 else 分支内按 data_source 二分);补两缺口——`_offline_buffer_signature`(:187-230)纳入 data_source、Task1 增 `count_lerobot_transitions` 定容;避 main-local `import os` 陷阱(:683)。与 libero-offline 真正交:`read_per_demo_states`/`build_offline_buffer` 签名未被其触碰。
 - **风险**:视频-渲染 ~0.1 gap(已接受,结果明标);ACT base 加载 + 维度/相机泛化由 smoke 兜。
