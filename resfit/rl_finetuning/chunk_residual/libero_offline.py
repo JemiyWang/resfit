@@ -36,3 +36,23 @@ def find_demo_episodes(lerobot_root: str, language: str) -> list[str]:
     matched.sort()
     return [os.path.join(lerobot_root, "data", f"chunk-{ei // 1000:03d}",
                          f"episode_{ei:06d}.parquet") for ei in matched]
+
+
+def _decode_img_col(col) -> np.ndarray:
+    """LeRobot v2.0 image 列(每帧 dict{bytes,path} 的 JPEG)→ (T,H,W,3) uint8。"""
+    from PIL import Image
+    out = []
+    for cell in col:
+        b = cell["bytes"] if isinstance(cell, dict) else cell
+        out.append(np.asarray(Image.open(io.BytesIO(b)).convert("RGB"), dtype=np.uint8))
+    return np.stack(out, axis=0)
+
+
+def read_libero_demo(parquet_path: str) -> dict:
+    """一条 episode parquet → {state(T,8) f32, action(T,7) f32, agentview(T,256,256,3) u8, wrist(...) u8}。"""
+    import pandas as pd
+    df = pd.read_parquet(parquet_path)
+    state = np.stack([np.asarray(x, np.float32) for x in df["state"]], axis=0)
+    action = np.stack([np.asarray(x, np.float32) for x in df["actions"]], axis=0)
+    return {"state": state, "action": action,
+            "agentview": _decode_img_col(df["image"]), "wrist": _decode_img_col(df["wrist_image"])}
