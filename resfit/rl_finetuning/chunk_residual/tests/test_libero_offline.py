@@ -67,4 +67,4 @@ def test_read_libero_demo_shapes(tmp_path):
     assert d["state"].shape == (4, 8) and d["state"].dtype == np.float32
     assert d["action"].shape == (4, 7) and d["action"].dtype == np.float32
     assert d["agentview"].shape == (4, 256, 256, 3) and d["agentview"].dtype == np.uint8
-    assert d["wrist"].shape == (4, 256, 256, 3)
+    assert d["wrist"].shape == (4, 256, 256, 3) and d["wrist"].dtype == np.uint8

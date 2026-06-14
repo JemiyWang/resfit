@@ -39,11 +39,13 @@ def find_demo_episodes(lerobot_root: str, language: str) -> list[str]:
 
 
 def _decode_img_col(col) -> np.ndarray:
-    """LeRobot v2.0 image 列(每帧 dict{bytes,path} 的 JPEG)→ (T,H,W,3) uint8。"""
+    """LeRobot v2.0 image 列(每帧 dict{bytes,path} 的编码图,PNG/JPEG 皆可,PIL 自动识别)→ (T,H,W,3) uint8。"""
     from PIL import Image
     out = []
     for cell in col:
         b = cell["bytes"] if isinstance(cell, dict) else cell
+        if b is None:
+            raise ValueError("_decode_img_col: image 单元 bytes 为 None(数据集可能未完整下载,只有 path)")
         out.append(np.asarray(Image.open(io.BytesIO(b)).convert("RGB"), dtype=np.uint8))
     return np.stack(out, axis=0)
 
