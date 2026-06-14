@@ -14,6 +14,14 @@
 
 参照 spec: `docs/superpowers/specs/2026-06-14-hiql-value-pi0-feat-via-serve-design.md`。
 
+> **⚠️ 2026-06-14 修订(零碰 openpi 仓)**:Task 1-3 的文件从 openpi 仓改放 **resfit `/mnt/mnt/data/resfit/pi0_serve/`**(`feature_policy.py`/`serve_with_feat.py`/`tests/test_feature_policy.py`,自包含、与 resfit 包平级)。
+> - 跑测命令一律改:`cd /mnt/mnt/data/resfit/pi0_serve && /mnt/mnt/data/chj/openpi/.venv/bin/python -m pytest tests/ -v`(借 openpi `.venv`;`python -m pytest` 把 cwd 入 path,故 `from feature_policy import ...` 可用)。
+> - 测试 import 改 `from feature_policy import ...`(同目录顶层模块,非 `openpi.serving.feature_policy`)。
+> - serve_with_feat.py 顶部 `import feature_policy`(同目录)。
+> - commit 一律到 resfit 仓:`cd /mnt/mnt/data/resfit && git add pi0_serve/... && git commit ...`。openpi 仓零碰。
+> - Task 3 的 `serve_with_feat.py`:仍 `from openpi.policies import policy_config` 等(借 .venv 跑);用法注释改 `/mnt/mnt/data/chj/openpi/.venv/bin/python /mnt/mnt/data/resfit/pi0_serve/serve_with_feat.py ...`。
+> - Task 4-8(resfit 包内,residual 环境)不变。
+
 ---
 
 ## File Structure

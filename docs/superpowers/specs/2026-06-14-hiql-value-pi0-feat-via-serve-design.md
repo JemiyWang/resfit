@@ -2,6 +2,8 @@
 
 - 日期:2026-06-14
 - 状态:设计已定稿,待写实施计划
+> **⚠️ 2026-06-14 修订(应用户要求,零碰 openpi 仓)**:原设计把 serve 侧 wrapper(`feature_policy.py`/`serve_with_feat.py`/其测试)放 openpi 仓。改为**全部放 resfit 仓的 `pi0_serve/` 目录**(`/mnt/mnt/data/resfit/pi0_serve/`,与 `resfit/` 包平级、自包含),**运行时借 openpi 的 `.venv` 解释器**(`/mnt/mnt/data/chj/openpi/.venv/bin/python`,因需 import openpi 跑 pi05 prefix 前向;已实测从 resfit cwd 可 import openpi、`make_attn_mask` 在 `openpi.models.pi0`)。openpi 仓**零文件、零 commit**。下文 §3.0/§3.1/§3.2/§5 凡写 `src/openpi/...`/`scripts/...` 一律改读 `pi0_serve/...`,commit 一律到 resfit 仓。build/cache/train(resfit 包内,residual 环境)不变。
+
 - 范围:**只做①serve 透特征 + ②离线 pi0_feat 训 `gc_value`**。给 base policy 的 serve(openpi)加一层零侵入 wrapper,在 `infer` 返回里**额外透出 pi05 prefix 池化特征**;resfit 侧(residual 环境)用 `openpi_client` 调 serve 批量出**特征缓存**,再以 `state_mode="pi0_feat"` 训出 `gc_value`,验证"pi05 图像特征当 HIQL value 的 state 比 `eef_piece` 好不好"。**明确不做**:`high_actor`、在线 subgoal 注入(rollout 实时出 z)、pi0_feat vs eef_piece 的正式性能 A/B——各留后续独立 spec。
 
 ## 1. 背景与动机
