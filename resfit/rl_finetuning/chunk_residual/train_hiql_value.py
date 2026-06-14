@@ -29,18 +29,34 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
                          act_image_keys=None, act_ckpt_id=None, act_proprio_key="observation.state",
                          pooling="mean", state_standardizer=None,
                          data_source="hdf5", lerobot_root=None, _lerobot_ds=None,
-                         _raw_obs_seqs=None):
+                         _raw_obs_seqs=None,
+                         pi0_feat_cache=None, pi0_feat_signature=None):
     """读每条 demo 的标准化 state 序列(与 RL 训练同源 mean/std)。
 
     state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12]。
     state_mode=act_feat: (T,D_emb+D_proprio) 冻结 ACT encoder 池化 ⊕ 本体(归一化)。
+    state_mode=pi0_feat: (T,D_emb) 冻结 pi0 prefix 池化特征(cache-required,不连 serve)。
     cache_path(仅 eef_piece+num_demos=None 时):命中完整 v2 缓存则跳过 MuJoCo replay。
     act_feat_cache(仅 act_feat+num_demos=None 时):命中缓存则跳过 embed_batch。
+    pi0_feat_cache(仅 pi0_feat):必须命中;缺失直接 raise(全程不连 serve/不 import openpi)。
     返回 (list[np.ndarray], standardizer_or_None, rel_piece_stats_or_emb_stats_or_None)。
     """
     import numpy as np
     from resfit.rl_finetuning.chunk_residual.state30_cache import (
         state30_cache_reuse, save_state30_cache)
+
+    # --- pi0_feat:cache-required,最优先短路 ---
+    if state_mode == "pi0_feat":
+        from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import pi0_feat_cache_reuse
+        assert pi0_feat_signature is not None, "pi0_feat 需 pi0_feat_signature(build 时写的同款签名)"
+        nd = pi0_feat_signature.get("num_demos", num_demos)
+        hit = pi0_feat_cache_reuse(pi0_feat_cache, signature=pi0_feat_signature, num_demos=nd)
+        if hit is None:
+            raise RuntimeError(
+                f"pi0_feat 缓存未命中/缺失: {pi0_feat_cache}。请先在 residual 环境跑 "
+                "build_pi0_feat_cache_via_serve.py(serve 须先起)生成缓存。")
+        seqs, feat_stats = hit
+        return seqs, None, feat_stats        # 缓存里 seqs 已标准化;standardizer 占位 None
 
     # --- act_feat:在加载 dataset 元信息/StateStandardizer 之前短路 ---
     if state_mode == "act_feat":
