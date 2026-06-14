@@ -284,13 +284,13 @@ def build_parser():
     p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--output", default="value.pt")
-    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat", "pi0_feat"], default="eef",
-                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)|pi0_feat(冻结 pi0 prefix 池化特征)")
+    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat"], default="eef",
+                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)。"
+                        "pi0_feat 仅用于 train_hiql_gc_value,本脚本不支持。")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     add_act_feat_args(p)
-    add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(从 LeRobot 数据集读,no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 的本地数据根目录")

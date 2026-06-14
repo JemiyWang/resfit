@@ -60,6 +60,12 @@ def build_main(client, *, hdf5, dataset_id, image_keys, proprio_key, prompt, poo
     --pooling)决定,本端每帧只取 client.infer(obs)["prefix_feat"](serve 已池化好),不做聚合。
     故 pooling 必须与起 serve 时的 --pooling 一致(与 serve_ckpt_id 同理,人工保证同源);它写入
     签名是为了让缓存对 pooling 变更失效(换 pooling 重起 serve 后须重 build)。
+
+    ⚠️ obs 格式:本函数发给 serve 的是扁平 obs {image_key: ndarray, "prompt": str}。
+    serve(serve_with_feat.py)所用 --config 的 input_transform 必须接受这个扁平格式;若该
+    config 期望嵌套 {"state":..., "images":{...}} 或需要 "state" key,则真 serve 会
+    KeyError——届时需按所用 serve config 调整本函数的 obs 构造(image_keys/加 state)。
+    单测走 stub client 不覆盖此,首次真 serve smoke 前务必核对。
     """
     import h5py
     raw_feats, proprios = [], []

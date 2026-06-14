@@ -151,7 +151,11 @@ def main():
         pi0_sig = None
 
     seq_lens = [len(s) for s in seqs]
-    stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
+    # pi0_feat 时 seqs 数量由缓存签名的 num_demos 决定(而非 CLI args.num_demos);
+    # 用同款 effective_num_demos 传给 stage_entries_aligned 保持长度一致。
+    effective_num_demos = (_cache_sig.get("num_demos") if args.state_mode == "pi0_feat"
+                          else args.num_demos)
+    stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, effective_num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \
         f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)

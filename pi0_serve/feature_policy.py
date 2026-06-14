@@ -56,6 +56,9 @@ class FeaturePolicy:
     """包住原 Policy,在 infer 返回里加 prefix_feat。零侵入:不改原 Policy/协议。
 
     prefix_feat_fn(inner, obs, pooling) -> [D];默认 = make_prefix_feat_fn()(真前向)。
+
+    注:infer 会跑两次前向——inner.infer(完整动作采样)+ _prefix_feat_fn(独立 prefix 前向)。
+    离线 build 一次性可忽略;若将来复用于在线路径,注意 ~2x per-step 计算。
     """
 
     def __init__(self, inner, pooling="last", prefix_feat_fn=None):

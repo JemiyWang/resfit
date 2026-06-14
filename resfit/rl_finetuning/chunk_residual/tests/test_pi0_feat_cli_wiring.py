@@ -1,7 +1,5 @@
 import pytest
-from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
-    build_parser as v_parser, validate_pi0_feat_cfg,
-)
+from resfit.rl_finetuning.chunk_residual.train_hiql_value import validate_pi0_feat_cfg
 from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser as gc_parser
 
 
