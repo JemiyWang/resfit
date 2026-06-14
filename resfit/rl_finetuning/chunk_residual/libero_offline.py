@@ -113,6 +113,49 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
     return out
 
 
+def count_libero_offline_transitions(lerobot_root, suite, task_id, num_demos=None) -> int:
+    """从 episodes.jsonl 的 length 求 sum(T-1)(不解 parquet,秒级),给 LazyTensorStorage 精确定容。"""
+    language = libero_task_language(suite, task_id)
+    ep_path = os.path.join(lerobot_root, "meta", "episodes.jsonl")
+    lengths = []
+    with open(ep_path) as f:
+        for line in f:
+            rec = json.loads(line)
+            tasks = rec.get("tasks", [])
+            if tasks and tasks[0].strip() == language:
+                lengths.append(int(rec["length"]))
+    lengths.sort()
+    if num_demos is not None:
+        lengths = lengths[:num_demos]
+    return int(sum(max(0, L - 1) for L in lengths))
+
+
+def build_libero_offline_buffer(offline_rb, *, lerobot_root, suite, task_id,
+                                action_scaler, state_standardizer,
+                                base_policy, base_mode, base_device="cpu",
+                                image_size=84, num_demos=None) -> None:
+    """灌当前任务的 demo 进 offline_rb(prioritized + MultiStepTransform)。base_mode∈{gt,base_policy}。"""
+    if base_mode not in ("gt", "base_policy"):
+        raise ValueError(f"base_mode 必须是 gt|base_policy,得到 {base_mode!r}")
+    if base_mode == "base_policy" and base_policy is None:
+        raise ValueError("base_mode=base_policy 需传 base_policy")
+    language = libero_task_language(suite, task_id)
+    paths = find_demo_episodes(lerobot_root, language)
+    if num_demos is not None:
+        paths = paths[:num_demos]
+    for p in paths:
+        demo = read_libero_demo(p)
+        if demo["state"].shape[0] < 2:
+            print(f"[libero-offline] 跳过 {p}(T<2)")
+            continue
+        base_actions = (_libero_demo_base_actions(demo, base_policy, action_scaler, image_size, base_device)
+                        if base_mode == "base_policy" else None)
+        for td in _demo_to_transitions(demo, action_scaler=action_scaler,
+                                       state_standardizer=state_standardizer,
+                                       base_actions=base_actions, image_size=image_size):
+            offline_rb.add(td.unsqueeze(0))
+
+
 def _libero_demo_base_actions(demo, base_policy, action_scaler, image_size, device):
     """逐帧调 base_policy.select_action 出 base 动作(缩放后,(T,7))。
 

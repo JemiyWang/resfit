@@ -151,3 +151,30 @@ def test_libero_demo_base_actions_feeds_raw_state_and_noflip_84():
     assert img.max() <= 1.0 + 1e-6
     assert img[:, :42, :].mean() > img[:, 42:, :].mean() + 0.2
     assert WRIST_KEY in first and first[WRIST_KEY].reshape(3, 84, 84).max() <= 1.0 + 1e-6
+
+
+def test_build_libero_offline_buffer_gt(monkeypatch, tmp_path):
+    import torch
+    from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer
+    import resfit.rl_finetuning.chunk_residual.libero_offline as lo
+
+    demos = [_toy_demo(T=3), _toy_demo(T=4)]            # 2 + 3 = 5 个 transition
+    monkeypatch.setattr(lo, "libero_task_language", lambda s, t: "L")
+    monkeypatch.setattr(lo, "find_demo_episodes", lambda root, lang: ["p0", "p1"])
+    monkeypatch.setattr(lo, "read_libero_demo", lambda p: demos[["p0", "p1"].index(p)])
+
+    # count_libero_offline_transitions 内部调 libero_task_language(monkeypatched→"L")
+    # 再读 <root>/meta/episodes.jsonl,所以要建一个 stub root。
+    stub_root = _make_stub_root(tmp_path, [(0, "L", 3), (1, "L", 4)])
+    cap = lo.count_libero_offline_transitions(stub_root, "libero_10", 8)
+    assert cap == 5  # (3-1) + (4-1)
+
+    rb = TensorDictPrioritizedReplayBuffer(
+        storage=LazyTensorStorage(max_size=cap, device="cpu"),
+        alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority", batch_size=2)
+    lo.build_libero_offline_buffer(rb, lerobot_root="root", suite="libero_10", task_id=8,
+                                   action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+                                   base_policy=None, base_mode="gt", base_device="cpu", image_size=84)
+    assert len(rb) == 5
+    b = rb.sample(2)
+    assert "observation.state" in b["obs"] and b["action"].shape[-1] == 7
