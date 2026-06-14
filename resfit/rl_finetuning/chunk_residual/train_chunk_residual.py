@@ -230,7 +230,7 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
     return sig
 
 
-def _libero_offline_signature(args, image_keys, offline_cap):
+def _libero_offline_signature(args, image_keys, offline_cap, image_size):
     """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸即失效重建)。"""
     return {
         "env_family": "libero",
@@ -240,7 +240,7 @@ def _libero_offline_signature(args, image_keys, offline_cap):
         "base_mode": args.offline_base_mode, "base_policy_type": args.base_policy_type,
         "pi0_host": args.pi0_host, "pi0_port": args.pi0_port, "pi0_action_dim": args.pi0_action_dim,
         "action_scale": args.action_scale, "min_range_per_dim": args.min_range_per_dim,
-        "offline_cap": offline_cap, "image_keys": sorted(image_keys),
+        "offline_cap": offline_cap, "image_keys": sorted(image_keys), "image_size": int(image_size),
         "gamma": args.gamma, "n_step": args.n_step, "num_demos": args.offline_num_demos,
     }
 
@@ -741,7 +741,7 @@ def main():
             lerobot_root = os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), ".."))
             offline_cap = count_libero_offline_transitions(
                 lerobot_root, args.libero_suite, args.libero_task_id, num_demos=args.offline_num_demos)
-            sig = _libero_offline_signature(args, image_keys, offline_cap)
+            sig = _libero_offline_signature(args, image_keys, offline_cap, img_h)
         else:
             assert args.offline_dataset_path is not None, \
                 "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
