@@ -186,7 +186,9 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
     """
     sig = {
         "dataset": args.dataset,
-        "offline_dataset_path": os.path.abspath(args.offline_dataset_path),
+        # lerobot 路无 hdf5 源(offline_dataset_path 为 None)→ None-safe;hdf5 路逐位等价(始终非 None)
+        "offline_dataset_path": (os.path.abspath(args.offline_dataset_path)
+                                 if args.offline_dataset_path else None),
         "num_demos": args.offline_num_demos,
         "offline_cap": int(offline_cap),
         "action_scale": float(args.action_scale),
@@ -227,6 +229,12 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
             sig["pi0_port"] = args.pi0_port
             sig["pi0_prompt"] = args.pi0_prompt
             sig["pi0_execute_horizon"] = args.pi0_execute_horizon   # pi05 队列执行步幅,改变 base_action
+    # data_source 键仅在 lerobot 路加入:同一 --dataset 下 hdf5/lerobot 缓存 key 才不串台;
+    # 只在 lerobot 时加 → hdf5 路签名逐位不变(旧 hdf5 缓存仍命中)。
+    if getattr(args, "data_source", "hdf5") == "lerobot":
+        sig["data_source"] = "lerobot"
+        sig["lerobot_root"] = (os.path.abspath(args.lerobot_root)
+                               if args.lerobot_root else None)
     return sig
 
 
@@ -379,6 +387,10 @@ def build_parser():
                    help="LIBERO suite 内的 task id(--env_family libero 用)")
     p.add_argument("--libero_stats_json", default=None,
                    help="LIBERO LeRobot meta/stats.json 路径(直读建 scaler,不调 lerobot;libero 必填)")
+    # --- act_feat 数据源开关(dexmg 路:hdf5 默认行为不变;lerobot=从 LeRobot 数据集读 offline 锚,no-stage)---
+    p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
+                   help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
+    p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
     p.add_argument("--base_wandb_id", default="dexmg-boxcleanup-bc/d59wny58")
     p.add_argument("--dataset", default="ankile/dexmg-two-arm-box-cleanup")
     p.add_argument("--chunk_length", type=int, default=1)
@@ -505,6 +517,8 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     validate_libero_cfg(args)   # LIBERO 路守卫(dexmg 路 no-op)
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import validate_data_source_cfg
+    validate_data_source_cfg(args)   # --data_source lerobot 守卫(默认 hdf5 直接放行)
     torch.manual_seed(args.seed)
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 
@@ -743,13 +757,21 @@ def main():
                 lerobot_root, args.libero_suite, args.libero_task_id, num_demos=args.offline_num_demos)
             sig = _libero_offline_signature(args, image_keys, offline_cap, img_h)
         else:
-            assert args.offline_dataset_path is not None, \
-                "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
             from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
                 build_offline_buffer, count_offline_transitions)
-            # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
-            offline_cap = count_offline_transitions(args.offline_dataset_path,
-                                                    num_demos=args.offline_num_demos)
+            if args.data_source == "lerobot":
+                # LeRobot 数据源(no-stage, act_feat):不读 hdf5 states 定容,改按集 sum(T-1)。
+                # 取集序须与 build_offline_buffer 的 lerobot 路一致(同一 LeRobotDataset)。
+                from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
+                    open_lerobot, count_lerobot_transitions)
+                offline_cap = count_lerobot_transitions(
+                    open_lerobot(args.dataset, args.lerobot_root), args.offline_num_demos)
+            else:
+                assert args.offline_dataset_path is not None, \
+                    "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
+                # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
+                offline_cap = count_offline_transitions(args.offline_dataset_path,
+                                                        num_demos=args.offline_num_demos)
             sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode,
                                             potential=potential)
 
@@ -788,6 +810,8 @@ def main():
                     stage_cache=args.offline_stage_cache, potential=potential,
                     subgoal=subgoal, way_steps=args.subgoal_way_steps,
                     act_feat_seqs=_offline_act_feat_seqs,
+                    data_source=args.data_source, lerobot_repo_id=args.dataset,
+                    lerobot_root=args.lerobot_root,
                     base_policy=base_policy, base_mode=args.offline_base_mode,
                     base_device=args.device,)
             n_off = len(offline_rb)

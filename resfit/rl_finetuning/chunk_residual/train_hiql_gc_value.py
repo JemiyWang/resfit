@@ -21,7 +21,7 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
 )
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
     read_per_demo_states, validate_act_feat_cfg, setup_act_feat, add_act_feat_args,
-    unpack_state_aux,
+    unpack_state_aux, validate_data_source_cfg,
 )
 
 
@@ -76,6 +76,9 @@ def build_parser():
     p.add_argument("--state_mode", choices=["eef_piece", "act_feat"], default="eef_piece",
                    help="eef_piece(默认,sim 特权)|act_feat(冻结 ACT encoder ⊕ 本体)")
     add_act_feat_args(p)
+    p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
+                   help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
+    p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -111,12 +114,14 @@ def main():
     # 配置守卫先行(在重活 read_per_demo_states 之前 fail-fast)
     validate_stage_cache(args.stage_cache, needs_stage=gc_value_needs_stage(args))
     validate_act_feat_cfg(args)
+    validate_data_source_cfg(args)
     extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
         act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
-        act_proprio_key=args.act_proprio_key, pooling=args.pooling)
+        act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+        data_source=args.data_source, lerobot_root=args.lerobot_root)
     mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)

@@ -114,3 +114,18 @@ def test_assert_act_feat_pair_consistent():
         pass
     # eef_piece 同模式 → 通过(不校签名)
     assert_act_feat_pair_consistent({"state_mode": "eef_piece"}, None, "eef_piece")
+
+
+def test_data_source_flags_present_and_default_hdf5():
+    from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import build_parser as gc
+    from resfit.rl_finetuning.chunk_residual.train_hiql_high_actor import build_parser as ha
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser as tc
+    for p in (gc(), ha()):
+        actions = [x.dest for x in p._actions]
+        argv = ["--hdf5", "h", "--dataset", "d"]
+        if "gc_value_ckpt" in actions:
+            argv += ["--gc_value_ckpt", "g"]
+        a = p.parse_args(argv)
+        assert a.data_source == "hdf5" and a.lerobot_root is None
+    a = tc().parse_args(["--task", "TwoArmThreePieceAssembly", "--dataset", "d"])
+    assert a.data_source == "hdf5" and a.lerobot_root is None
