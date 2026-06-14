@@ -27,7 +27,9 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
                          device="cpu", cache_path=None,
                          act_feat_cache=None, act_extractor=None,
                          act_image_keys=None, act_ckpt_id=None, act_proprio_key="observation.state",
-                         pooling="mean", state_standardizer=None, _raw_obs_seqs=None):
+                         pooling="mean", state_standardizer=None,
+                         data_source="hdf5", lerobot_root=None, _lerobot_ds=None,
+                         _raw_obs_seqs=None):
     """读每条 demo 的标准化 state 序列(与 RL 训练同源 mean/std)。
 
     state_mode=eef: (T,18) 纯 eef。eef_piece: (T,30)=[eef18 | 标准化 rel_piece12]。
@@ -53,13 +55,28 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
             print(f"[read_per_demo_states] act_feat 缓存命中 {act_feat_cache}")
             return seqs_std, None, (np.asarray(stats[0]), np.asarray(stats[1]))
         assert act_extractor is not None, "act_feat build 需 act_extractor(真 ACT 或 stub)"
-        raw_seqs = _raw_obs_seqs if _raw_obs_seqs is not None else _build_raw_obs_seqs(
-            hdf5_path, act_image_keys, act_proprio_key, num_demos)
+        if _raw_obs_seqs is not None:
+            raw_seqs = _raw_obs_seqs
+        elif data_source == "lerobot":
+            from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
+                open_lerobot, lerobot_episode_count, lerobot_episode_frames)
+            ds = _lerobot_ds if _lerobot_ds is not None else open_lerobot(dataset_id, lerobot_root)
+            n = lerobot_episode_count(ds)
+            if num_demos is not None:
+                n = min(n, num_demos)
+            raw_seqs = []
+            for ep in range(n):
+                fr = lerobot_episode_frames(ds, ep, act_image_keys, act_proprio_key)
+                raw_seqs.append({**fr["images"], act_proprio_key: fr["state"]})
+        else:
+            raw_seqs = _build_raw_obs_seqs(hdf5_path, act_image_keys, act_proprio_key, num_demos)
         # 命门 B:proprio 全栈 dataset-标准化(与在线 obs.state 同款)。
         proprio_std = state_standardizer
         if proprio_std is None and _raw_obs_seqs is None:   # 真 build 且未显式传 → 从 dataset stats 建
             proprio_std = StateStandardizer.from_dataset_stats(
-                LeRobotDatasetMetadata(dataset_id).stats["observation.state"], device="cpu")
+                LeRobotDatasetMetadata(
+                    dataset_id, root=lerobot_root if data_source == "lerobot" else None
+                ).stats["observation.state"], device="cpu")
         if proprio_std is not None:
             for ro in raw_seqs:
                 ro[act_proprio_key] = proprio_std.standardize(
@@ -156,6 +173,16 @@ def validate_act_feat_cfg(args):
         raise ValueError("state_mode=act_feat 需 --act_feat_cache(已存在)或 --act_base_ckpt 以 build")
 
 
+def validate_data_source_cfg(args):
+    """--data_source lerobot 仅支持 act_feat 且需存在的本地 --lerobot_root;默认 hdf5 直接放行。"""
+    import os
+    if getattr(args, "data_source", "hdf5") != "lerobot":
+        return
+    assert getattr(args, "state_mode", None) == "act_feat", "--data_source lerobot 仅支持 --state_mode act_feat"
+    assert args.lerobot_root and os.path.isdir(args.lerobot_root), \
+        "--data_source lerobot 需 --lerobot_root(存在的本地数据目录)"
+
+
 def setup_act_feat(args):
     """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None)。
     非 act_feat → 全 None。缓存已存在 → 不建 extractor,从缓存签名取回 image_keys/ckpt(免重复传 flag);
@@ -223,6 +250,9 @@ def build_parser():
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     add_act_feat_args(p)
+    p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
+                   help="act_feat 数据源:hdf5(默认)|lerobot(从 LeRobot 数据集读,no-stage)")
+    p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 的本地数据根目录")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--expectile", type=float, default=0.7)
     p.add_argument("--ema", type=float, default=0.005)
@@ -237,12 +267,14 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
+    validate_data_source_cfg(args)
     extractor, act_ckpt_id, image_keys, _ = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
         act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
-        act_proprio_key=args.act_proprio_key, pooling=args.pooling)
+        act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+        data_source=args.data_source, lerobot_root=args.lerobot_root)
     s, s_next, done = build_transitions(seqs)
     print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
           f"transitions={s.shape[0]} state_dim={s.shape[1]}")
