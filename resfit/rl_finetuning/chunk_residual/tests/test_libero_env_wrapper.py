@@ -40,3 +40,27 @@ def test_wrapper_reset_runs_dummy_steps():
     env = _StubLiberoEnv()
     LiberoGymWrapper(env, init_states=np.zeros((1, 10)), num_steps_wait=5).reset()
     assert env.t == 5
+
+
+def test_wrapper_truncates_at_max_steps():
+    # LIBERO 只在成功时报 done(stub 永不成功)→ 必须靠 max_steps 超时截断,
+    # 否则会一路撞 robosuite horizon=1000 的守卫崩(executing action in terminated episode)。
+    w = LiberoGymWrapper(_StubLiberoEnv(), init_states=np.zeros((1, 10)),
+                         num_steps_wait=0, max_steps=3)
+    w.reset()
+    truncs, terms = [], []
+    for _ in range(3):
+        _, _, term, trunc, _ = w.step(np.zeros(7, np.float32))
+        truncs.append(bool(trunc)); terms.append(bool(term))
+    assert truncs == [False, False, True]   # 第 3 步(=max_steps)超时截断
+    assert terms == [False, False, False]   # stub 永不成功,terminated 始终 False
+
+
+def test_wrapper_reset_clears_step_counter():
+    w = LiberoGymWrapper(_StubLiberoEnv(), init_states=np.zeros((1, 10)),
+                         num_steps_wait=0, max_steps=2)
+    w.reset()
+    w.step(np.zeros(7, np.float32)); w.step(np.zeros(7, np.float32))   # 截到上限
+    w.reset()                                                          # 计数应清零
+    _, _, _, trunc, _ = w.step(np.zeros(7, np.float32))
+    assert not trunc   # reset 后第 1 步不应被截断
