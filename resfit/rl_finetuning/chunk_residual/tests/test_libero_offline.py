@@ -68,3 +68,47 @@ def test_read_libero_demo_shapes(tmp_path):
     assert d["action"].shape == (4, 7) and d["action"].dtype == np.float32
     assert d["agentview"].shape == (4, 256, 256, 3) and d["agentview"].dtype == np.uint8
     assert d["wrist"].shape == (4, 256, 256, 3) and d["wrist"].dtype == np.uint8
+
+
+class _IdScaler:
+    def scale(self, x):  # 恒等,便于断言值穿透
+        return x
+
+class _IdStd:
+    def standardize(self, x):
+        return x
+
+
+def _toy_demo(T=3):
+    # agentview 上半亮(255)下半暗(0):用来验"没被上下翻转"
+    av = np.zeros((T, 256, 256, 3), np.uint8); av[:, :128] = 255
+    wr = np.zeros((T, 256, 256, 3), np.uint8)
+    return {"state": np.arange(T * 8, dtype=np.float32).reshape(T, 8),
+            "action": np.arange(T * 7, dtype=np.float32).reshape(T, 7) * 0.1,
+            "agentview": av, "wrist": wr}
+
+
+def test_demo_to_transitions_schema_reward_noflip():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _demo_to_transitions, AGENTVIEW_KEY, WRIST_KEY
+    demo = _toy_demo(T=3)
+    tds = _demo_to_transitions(demo, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+                               base_actions=None, image_size=84)
+    assert len(tds) == 2                         # T-1 个 transition
+    td = tds[0]
+    obs = td["obs"]
+    assert set(obs.keys()) >= {"observation.state", "observation.base_action",
+                               "observation.stage_id", AGENTVIEW_KEY, WRIST_KEY}
+    assert obs["observation.state"].shape == (8,)
+    assert obs["observation.base_action"].shape == (7,)
+    assert obs[AGENTVIEW_KEY].shape == (3, 84, 84) and obs[AGENTVIEW_KEY].dtype == torch.uint8
+    assert obs["observation.stage_id"].item() == 0.0
+    # gt 模式(base_actions=None):base_action == action
+    assert torch.allclose(obs["observation.base_action"], td["action"])
+    # reward/done:仅末帧 transition 的 next 给 reward=1/done=True
+    assert tds[-1]["next"]["reward"].item() == 1.0 and bool(tds[-1]["next"]["done"]) is True
+    assert tds[0]["next"]["reward"].item() == 0.0 and bool(tds[0]["next"]["done"]) is False
+    assert td["max_stage"].item() == 0.0 and td["_priority"].item() == 10.0
+    # 命门①:没被上下翻转 → 上半(行<42)应远亮于下半
+    img = obs[AGENTVIEW_KEY].float()
+    assert img[:, :42, :].mean() > img[:, 42:, :].mean() + 50

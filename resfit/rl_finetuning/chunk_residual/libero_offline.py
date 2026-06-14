@@ -58,3 +58,52 @@ def read_libero_demo(parquet_path: str) -> dict:
     action = np.stack([np.asarray(x, np.float32) for x in df["actions"]], axis=0)
     return {"state": state, "action": action,
             "agentview": _decode_img_col(df["image"]), "wrist": _decode_img_col(df["wrist_image"])}
+
+
+def _img_chw_uint8(hwc_uint8, size):
+    """命门①:只 resize_with_pad(不翻转)→ CHW uint8。"""
+    from resfit.rl_finetuning.chunk_residual.libero_obs import resize_with_pad
+    resized = resize_with_pad(hwc_uint8, size, size)        # HWC uint8,无翻转
+    return np.transpose(resized, (2, 0, 1))                 # CHW uint8
+
+
+def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_actions, image_size):
+    """一条 demo → list[TensorDict],与在线 add_chunk_transition 同构。
+
+    base_actions: (T,7) 已缩放的 base 动作(base_policy 模式),或 None(gt 模式 → base=action)。
+    命门②:reward 仅末帧 transition=1.0、done 仅末帧 True(demo 是成功轨迹)。
+    命门③:state 用 state_standardizer、action 用 action_scaler(与在线同源)。
+    """
+    import torch
+    from tensordict import TensorDict
+    state = torch.as_tensor(demo["state"], dtype=torch.float32)
+    action_raw = torch.as_tensor(demo["action"], dtype=torch.float32)
+    T = state.shape[0]
+    if T < 2:
+        return []
+    state_std = state_standardizer.standardize(state)                  # (T,8)
+    action = action_scaler.scale(action_raw)                          # (T,7) 缩放
+    base = base_actions if base_actions is not None else action       # (T,7)
+    img_av = torch.stack([torch.as_tensor(_img_chw_uint8(demo["agentview"][t], image_size)) for t in range(T)])
+    img_wr = torch.stack([torch.as_tensor(_img_chw_uint8(demo["wrist"][t], image_size)) for t in range(T)])
+
+    def _obs(t):
+        return {"observation.state": state_std[t], "observation.base_action": base[t],
+                "observation.stage_id": torch.zeros(1, dtype=torch.float32),
+                AGENTVIEW_KEY: img_av[t], WRIST_KEY: img_wr[t]}
+
+    out = []
+    for t in range(T - 1):
+        last = (t == T - 2)
+        td = TensorDict({
+            "obs": TensorDict(_obs(t), batch_size=[]),
+            "next": TensorDict({"obs": TensorDict(_obs(t + 1), batch_size=[]),
+                                "done": torch.tensor(bool(last)),
+                                "reward": torch.tensor(1.0 if last else 0.0, dtype=torch.float32)},
+                               batch_size=[]),
+            "action": action[t],
+            "max_stage": torch.tensor(0.0, dtype=torch.float32),
+            "_priority": torch.tensor(10.0, dtype=torch.float32),
+        }, batch_size=[])
+        out.append(td)
+    return out
