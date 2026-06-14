@@ -119,3 +119,34 @@ def test_demo_to_transitions_single_frame_returns_empty():
     demo = _toy_demo(T=1)   # T<2 → 无 transition
     assert _demo_to_transitions(demo, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
                                 base_actions=None, image_size=84) == []
+
+
+class _StubBase:
+    """记录每次 select_action 的 raw_obs;返回固定原始动作。"""
+    def __init__(self):
+        self.seen = []
+        self.reset_calls = 0
+    def reset(self):
+        self.reset_calls += 1
+    def select_action(self, raw_obs):
+        import torch
+        self.seen.append({k: (v.clone() if hasattr(v, "clone") else v) for k, v in raw_obs.items()})
+        return torch.full((1, 7), 0.5)
+
+
+def test_libero_demo_base_actions_feeds_raw_state_and_noflip_84():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _libero_demo_base_actions, AGENTVIEW_KEY
+    demo = _toy_demo(T=3)
+    base = _StubBase()
+    out = _libero_demo_base_actions(demo, base, _IdScaler(), image_size=84, device="cpu")
+    assert out.shape == (3, 7)
+    assert torch.allclose(out, torch.full((3, 7), 0.5))      # 恒等 scaler 穿透
+    assert base.reset_calls == 1                              # 逐 demo reset 一次
+    first = base.seen[0]
+    # 命门③(base 侧):喂 raw(未标准化)state,即 demo["state"][0]
+    assert torch.allclose(first["observation.state"].reshape(-1), torch.as_tensor(demo["state"][0]))
+    # 喂 84 CHW float[0,1] 图、且没翻转(上半亮)
+    img = first[AGENTVIEW_KEY].reshape(3, 84, 84)
+    assert img.max() <= 1.0 + 1e-6
+    assert img[:, :42, :].mean() > img[:, 42:, :].mean() + 0.2

@@ -111,3 +111,27 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
         }, batch_size=[])
         out.append(td)
     return out
+
+
+def _libero_demo_base_actions(demo, base_policy, action_scaler, image_size, device):
+    """逐帧调 base_policy.select_action 出 base 动作(缩放后,(T,7))。
+
+    对齐在线 select_action:喂 raw(未标准化)state(8)+ 84 CHW float[0,1] 图(adapter 内部
+    build_libero_serve_obs 再 resize 224,无翻转)。逐 demo 先 reset 清队列、顺序不可批。
+    """
+    import torch
+    state = torch.as_tensor(demo["state"], dtype=torch.float32)
+    T = state.shape[0]
+    img_av = torch.stack([torch.as_tensor(_img_chw_uint8(demo["agentview"][t], image_size), dtype=torch.float32) / 255.0
+                          for t in range(T)])
+    img_wr = torch.stack([torch.as_tensor(_img_chw_uint8(demo["wrist"][t], image_size), dtype=torch.float32) / 255.0
+                          for t in range(T)])
+    base_policy.reset()
+    out = []
+    for t in range(T):
+        raw_obs = {"observation.state": state[t:t + 1].to(device),
+                   AGENTVIEW_KEY: img_av[t:t + 1].to(device),
+                   WRIST_KEY: img_wr[t:t + 1].to(device)}
+        out.append(base_policy.select_action(raw_obs).to("cpu"))
+    base_raw = torch.cat(out, dim=0)                                  # (T,7) 原始尺度
+    return action_scaler.scale(base_raw)                             # (T,7) 缩放
