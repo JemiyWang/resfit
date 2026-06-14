@@ -22,7 +22,7 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
     read_per_demo_states, validate_act_feat_cfg, setup_act_feat, add_act_feat_args,
     unpack_state_aux, validate_data_source_cfg,
-    _add_pi0_feat_args, validate_pi0_feat_cfg,
+    add_pi0_feat_args, validate_pi0_feat_cfg,
 )
 
 
@@ -77,7 +77,7 @@ def build_parser():
     p.add_argument("--state_mode", choices=["eef_piece", "act_feat", "pi0_feat"], default="eef_piece",
                    help="eef_piece(默认,sim 特权)|act_feat(冻结 ACT encoder ⊕ 本体)|pi0_feat(冻结 pi0 prefix 池化特征)")
     add_act_feat_args(p)
-    _add_pi0_feat_args(p)
+    add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
@@ -127,8 +127,9 @@ def main():
         for k, v in (("serve_ckpt_id", args.pi0_serve_ckpt_id), ("image_keys", args.pi0_image_keys),
                      ("proprio_key", args.pi0_proprio_key), ("pooling", args.pi0_pooling),
                      ("prompt", args.pi0_prompt)):
-            assert _cache_sig.get(k) == v, \
-                f"缓存签名 {k}={_cache_sig.get(k)!r} 与 CLI {v!r} 不符(指向了错误的缓存?)"
+            if _cache_sig.get(k) != v:
+                raise ValueError(
+                    f"缓存签名 {k}={_cache_sig.get(k)!r} 与 CLI {v!r} 不符(指向了错误的缓存?)")
         seqs, _standardizer, aux_stats = read_per_demo_states(
             args.hdf5, args.dataset, "pi0_feat", num_demos=args.num_demos,
             pi0_feat_cache=args.pi0_feat_cache, pi0_feat_signature=_cache_sig)   # 用缓存签名→自洽命中

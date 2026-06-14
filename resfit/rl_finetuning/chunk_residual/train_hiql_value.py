@@ -178,7 +178,7 @@ def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
     return out
 
 
-def _add_pi0_feat_args(p):
+def add_pi0_feat_args(p):
     p.add_argument("--pi0_feat_cache", default=None, help="pi0_feat 嵌入缓存 npz(仅 pi0_feat,须已存在)")
     p.add_argument("--pi0_serve_ckpt_id", default=None, help="serve 权重身份锚(仅 pi0_feat,同源签名)")
     p.add_argument("--pi0_image_keys", type=lambda s: s.split(","), default=None, help="逗号分隔图像键")
@@ -190,7 +190,6 @@ def _add_pi0_feat_args(p):
 def validate_pi0_feat_cfg(args):
     """pi0_feat 须给已存在的 --pi0_feat_cache + serve_ckpt_id/image_keys/proprio_key;否则 ValueError。
     非 pi0_feat 传 --pi0_* 忽略。"""
-    import os
     if getattr(args, "state_mode", None) != "pi0_feat":
         if getattr(args, "pi0_feat_cache", None):
             warnings.warn("非 pi0_feat 模式,--pi0_* 被忽略", stacklevel=2)
@@ -291,7 +290,7 @@ def build_parser():
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     add_act_feat_args(p)
-    _add_pi0_feat_args(p)
+    add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(从 LeRobot 数据集读,no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 的本地数据根目录")
