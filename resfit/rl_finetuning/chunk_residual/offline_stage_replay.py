@@ -373,7 +373,7 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
         act_n = action_scaler.scale(fr["actions"].float()).cpu()
         if base_mode == "base_policy":
             base_n = _demo_base_actions_lerobot(
-                base_policy, fr["images"], image_keys, action_scaler, base_device)
+                base_policy, fr["images"], image_keys, fr["state"], action_scaler, base_device)
         else:
             base_n = act_n                                                          # gt:GT-as-base
         imgs = {k: fr["images"][k] for k in image_keys}                            # (T,3,84,84) f01
@@ -415,11 +415,12 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
     return added
 
 
-def _demo_base_actions_lerobot(base_policy, images, image_keys, action_scaler, device):
-    """逐帧用冻结 base_policy 现算 base_action(缩放后)。images[k]=(T,3,84,84) f01。
+def _demo_base_actions_lerobot(base_policy, images, image_keys, states_raw, action_scaler, device):
+    """逐帧用冻结 base_policy 现算 base_action(缩放后)。images[k]=(T,3,84,84) f01;
+    states_raw=(T,Dp) 原始未标准化本体(喂 base_policy,对齐 hdf5 _demo_base_actions / 在线契约)。
 
     与 hdf5 的 _demo_base_actions 对齐:顺序复现 ACT action queue 语义(先 reset 清队列,再按帧
-    select_action),raw_obs 严格对齐 env 运行时;返回缩放后 (T, action_dim)。
+    select_action),raw_obs 严格对齐 env 运行时(含 observation.state);返回缩放后 (T, action_dim)。
     """
     base_policy.eval()
     T = images[image_keys[0]].shape[0]
@@ -428,6 +429,7 @@ def _demo_base_actions_lerobot(base_policy, images, image_keys, action_scaler, d
     with torch.no_grad():
         for t in range(T):
             raw = {k: images[k][t:t + 1].to(device) for k in image_keys}
+            raw["observation.state"] = states_raw[t:t + 1].to(device)
             a = base_policy.select_action(raw)                # (1, action_dim) 原始尺度
             outs.append(action_scaler.scale(a.float().cpu())[0])
     return torch.stack(outs)

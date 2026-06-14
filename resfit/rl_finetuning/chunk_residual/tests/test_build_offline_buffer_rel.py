@@ -176,3 +176,27 @@ def test_build_offline_buffer_lerobot_no_stage():
     td = rb.sample(1)
     assert "observation.subgoal" in td["obs"].keys()
     assert float(td["obs"]["observation.stage_id"].abs().max()) == 0.0   # no-stage
+
+
+def test_lerobot_base_policy_obs_has_state():
+    """base_policy 路喂给 select_action 的 raw_obs 必须含 observation.state(对齐 hdf5/在线契约)。"""
+    import torch
+    from resfit.rl_finetuning.chunk_residual.offline_stage_replay import _demo_base_actions_lerobot
+    seen = {}
+    class _StubBase:
+        def reset(self): pass
+        def eval(self): pass
+        def select_action(self, raw):
+            seen["keys"] = set(raw.keys())
+            seen["state_shape"] = tuple(raw["observation.state"].shape)
+            return torch.zeros(1, 7)
+    class _StubScaler:
+        def scale(self, x): return torch.as_tensor(x, dtype=torch.float32)
+    images = {"observation.images.agentview": torch.zeros(3, 3, 4, 4)}   # T=3
+    states_raw = torch.zeros(3, 18)
+    out = _demo_base_actions_lerobot(
+        _StubBase(), images, ["observation.images.agentview"], states_raw, _StubScaler(), "cpu")
+    assert out.shape == (3, 7)
+    assert "observation.state" in seen["keys"]
+    assert "observation.images.agentview" in seen["keys"]
+    assert seen["state_shape"] == (1, 18)            # batch=1 保持
