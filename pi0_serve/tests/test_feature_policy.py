@@ -1,6 +1,8 @@
+import numpy as np
 import jax.numpy as jnp
 import pytest
-from feature_policy import pool_prefix
+import serve_with_feat as _sf
+from feature_policy import FeaturePolicy, pool_prefix, wrap_with_feature
 
 
 def test_pool_last_picks_last_valid_token():
@@ -20,10 +22,6 @@ def test_pool_mean_ignores_padding():
 def test_pool_unknown_raises():
     with pytest.raises(ValueError):
         pool_prefix(jnp.zeros((1, 1, 2)), jnp.ones((1, 1)), "bogus")
-
-
-import numpy as np
-from feature_policy import FeaturePolicy, wrap_with_feature
 
 
 class _StubInner:
@@ -52,6 +50,7 @@ def test_feature_policy_adds_prefix_feat_and_keeps_actions():
     assert np.allclose(out["actions"], 0.0)               # 原 actions 透传
     assert np.allclose(out["prefix_feat"], np.arange(5))  # 新字段
     assert out["prefix_feat"].dtype == np.float32
+    assert inner.transform_calls == 0
 
 
 def test_feature_policy_metadata_passthrough():
@@ -64,3 +63,20 @@ def test_wrap_with_feature_returns_feature_policy():
     inner = _StubInner()
     fp = wrap_with_feature(inner, pooling="mean", prefix_feat_fn=lambda *a: np.zeros(2, np.float32))
     assert isinstance(fp, FeaturePolicy) and fp.pooling == "mean"
+
+
+class _FakeArgs:
+    def __init__(self, port, pooling):
+        self.host = "0.0.0.0"
+        self.port = port
+        self.pooling = pooling
+
+
+def test_serve_with_feat_wraps_and_serves(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_sf, "_create_policy", lambda args: _StubInner())
+    monkeypatch.setattr(_sf, "_serve",
+                        lambda policy, host, port: captured.update(policy=policy, port=port))
+    _sf.run(_FakeArgs(port=8000, pooling="last"))
+    assert isinstance(captured["policy"], FeaturePolicy)
+    assert captured["policy"].pooling == "last" and captured["port"] == 8000

@@ -38,7 +38,7 @@ def make_prefix_feat_fn():
     from openpi.models.pi0 import make_attn_mask
 
     def _fn(inner, obs, pooling):
-        inputs = jax.tree.map(lambda x: x, obs)                       # copy(同 Policy.infer)
+        inputs = jax.tree.map(lambda x: x, obs)                       # shallow tree map(镜像 Policy.infer:70 的 identity map)
         inputs = inner._input_transform(inputs)                        # 同款预处理(同源命门)
         inputs = jax.tree.map(lambda x: _jnp.asarray(x)[None, ...], inputs)  # 加 batch
         observation = _model.Observation.from_dict(inputs)
@@ -61,7 +61,7 @@ class FeaturePolicy:
     def __init__(self, inner, pooling="last", prefix_feat_fn=None):
         self.inner = inner
         self.pooling = pooling
-        self._prefix_feat_fn = prefix_feat_fn or make_prefix_feat_fn()
+        self._prefix_feat_fn = make_prefix_feat_fn() if prefix_feat_fn is None else prefix_feat_fn
 
     @property
     def metadata(self):
