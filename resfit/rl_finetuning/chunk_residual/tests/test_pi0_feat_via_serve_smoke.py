@@ -59,6 +59,7 @@ def test_end_to_end_serve_to_gc_value(tmp_path):
     assert len(seqs) > 0, "build 后缓存应有至少 1 条 demo"
 
     # Step 3: 构建 gc_data(空 stage_entries,用 demo 末帧作目标)
+    # smoke 不需要 stage 检测器;空 entries 使 gc_data 只用末帧作目标
     stage_entries = [np.empty(0, dtype=np.int64) for _ in seqs]
     data = build_gc_data(seqs, stage_entries)
 
@@ -66,3 +67,4 @@ def test_end_to_end_serve_to_gc_value(tmp_path):
     _model, v_stats = train_gc_value(data, steps=5)
     assert np.isfinite(v_stats["mean"]), f"V mean 非有限: {v_stats['mean']}"
     assert np.isfinite(v_stats["min"]), f"V min 非有限: {v_stats['min']}"
+    assert np.isfinite(v_stats["max"]), f"V max 非有限: {v_stats['max']}"
