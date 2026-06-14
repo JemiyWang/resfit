@@ -27,13 +27,13 @@ def pi0_feat_signature(dataset_id, num_demos, *, image_keys, proprio_key, poolin
     }
 
 
-def assemble_pi0_feat_seqs(raw_feats, propres):
+def assemble_pi0_feat_seqs(raw_feats, proprio_seqs):
     """list[(T,D_emb)] prefix 特征 + list[(T,D_p)] proprio → (seqs_std, mean, std)。
 
     逐 demo 尾拼 proprio → 全量算一组 (mean,std) → 标准化各 demo。
     """
     cat = [np.concatenate([np.asarray(f, np.float32), np.asarray(p, np.float32)], axis=1)
-           for f, p in zip(raw_feats, propres)]
+           for f, p in zip(raw_feats, proprio_seqs)]
     allcat = np.concatenate(cat, axis=0)
     mean = allcat.mean(0).astype(np.float32)
     std = np.maximum(allcat.std(0), 1e-6).astype(np.float32)
@@ -54,9 +54,15 @@ def _server_metadata(client):
 
 def build_main(client, *, hdf5, dataset_id, image_keys, proprio_key, prompt, pooling,
                serve_ckpt_id, out_cache, num_demos=None):
-    """核心流程(client 注入,便于 stub 测试)。"""
+    """核心流程(client 注入,便于 stub 测试)。
+
+    注意:pooling 仅作**声明值**写入签名——真正的池化由 serve 端(serve_with_feat.py 起服务时的
+    --pooling)决定,本端每帧只取 client.infer(obs)["prefix_feat"](serve 已池化好),不做聚合。
+    故 pooling 必须与起 serve 时的 --pooling 一致(与 serve_ckpt_id 同理,人工保证同源);它写入
+    签名是为了让缓存对 pooling 变更失效(换 pooling 重起 serve 后须重 build)。
+    """
     import h5py
-    raw_feats, propres = [], []
+    raw_feats, proprios = [], []
     with h5py.File(hdf5, "r") as f:
         eps = sorted_demo_keys(list(f["data"].keys()))
         if num_demos is not None:
@@ -66,14 +72,15 @@ def build_main(client, *, hdf5, dataset_id, image_keys, proprio_key, prompt, poo
             imgs = {k: grp[f"obs/{k}"][()] for k in image_keys}
             proprio = np.asarray(grp[f"obs/{proprio_key}"][()], np.float32)
             T = proprio.shape[0]
+            assert T > 0, f"demo {ep} has 0 frames"
             feats = []
             for t in range(T):
                 obs = {k: imgs[k][t] for k in image_keys}
                 obs["prompt"] = prompt
                 feats.append(np.asarray(client.infer(obs)["prefix_feat"], np.float32))
             raw_feats.append(np.stack(feats, axis=0))
-            propres.append(proprio)
-    seqs, mean, std = assemble_pi0_feat_seqs(raw_feats, propres)
+            proprios.append(proprio)
+    seqs, mean, std = assemble_pi0_feat_seqs(raw_feats, proprios)
     sig = pi0_feat_signature(dataset_id, num_demos, image_keys=image_keys, proprio_key=proprio_key,
                              pooling=pooling, prompt=prompt, serve_ckpt_id=serve_ckpt_id,
                              serve_metadata=_server_metadata(client))
