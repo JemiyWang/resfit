@@ -122,6 +122,7 @@ def _libero_demo_base_actions(demo, base_policy, action_scaler, image_size, devi
     import torch
     state = torch.as_tensor(demo["state"], dtype=torch.float32)
     T = state.shape[0]
+    # /255.0:policy 路要 float[0,1](buffer 路 _demo_to_transitions 存的是 uint8,两者用途不同)
     img_av = torch.stack([torch.as_tensor(_img_chw_uint8(demo["agentview"][t], image_size), dtype=torch.float32) / 255.0
                           for t in range(T)])
     img_wr = torch.stack([torch.as_tensor(_img_chw_uint8(demo["wrist"][t], image_size), dtype=torch.float32) / 255.0
@@ -129,9 +130,10 @@ def _libero_demo_base_actions(demo, base_policy, action_scaler, image_size, devi
     base_policy.reset()
     out = []
     for t in range(T):
-        raw_obs = {"observation.state": state[t:t + 1].to(device),
+        raw_obs = {"observation.state": state[t:t + 1].to(device),   # batch=1:adapter 按 shape[0] 取 b,须保持 (1,·)
                    AGENTVIEW_KEY: img_av[t:t + 1].to(device),
                    WRIST_KEY: img_wr[t:t + 1].to(device)}
         out.append(base_policy.select_action(raw_obs).to("cpu"))
     base_raw = torch.cat(out, dim=0)                                  # (T,7) 原始尺度
+    assert base_raw.shape == (T, 7), f"base_policy 每帧应返回 (1,7),得到 cat 后 {tuple(base_raw.shape)}"
     return action_scaler.scale(base_raw)                             # (T,7) 缩放

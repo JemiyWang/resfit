@@ -136,7 +136,7 @@ class _StubBase:
 
 def test_libero_demo_base_actions_feeds_raw_state_and_noflip_84():
     import torch
-    from resfit.rl_finetuning.chunk_residual.libero_offline import _libero_demo_base_actions, AGENTVIEW_KEY
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _libero_demo_base_actions, AGENTVIEW_KEY, WRIST_KEY
     demo = _toy_demo(T=3)
     base = _StubBase()
     out = _libero_demo_base_actions(demo, base, _IdScaler(), image_size=84, device="cpu")
@@ -146,7 +146,8 @@ def test_libero_demo_base_actions_feeds_raw_state_and_noflip_84():
     first = base.seen[0]
     # 命门③(base 侧):喂 raw(未标准化)state,即 demo["state"][0]
     assert torch.allclose(first["observation.state"].reshape(-1), torch.as_tensor(demo["state"][0]))
-    # 喂 84 CHW float[0,1] 图、且没翻转(上半亮)
+    # 喂 84 CHW float[0,1] 图、且没翻转(上半亮);agentview 与 wrist 都要在
     img = first[AGENTVIEW_KEY].reshape(3, 84, 84)
     assert img.max() <= 1.0 + 1e-6
     assert img[:, :42, :].mean() > img[:, 42:, :].mean() + 0.2
+    assert WRIST_KEY in first and first[WRIST_KEY].reshape(3, 84, 84).max() <= 1.0 + 1e-6
