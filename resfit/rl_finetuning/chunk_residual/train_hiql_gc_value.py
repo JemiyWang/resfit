@@ -22,6 +22,7 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
     read_per_demo_states, validate_act_feat_cfg, setup_act_feat, add_act_feat_args,
     unpack_state_aux, validate_data_source_cfg,
+    _add_pi0_feat_args, validate_pi0_feat_cfg,
 )
 
 
@@ -73,9 +74,10 @@ def build_parser():
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
-    p.add_argument("--state_mode", choices=["eef_piece", "act_feat"], default="eef_piece",
-                   help="eef_piece(默认,sim 特权)|act_feat(冻结 ACT encoder ⊕ 本体)")
+    p.add_argument("--state_mode", choices=["eef_piece", "act_feat", "pi0_feat"], default="eef_piece",
+                   help="eef_piece(默认,sim 特权)|act_feat(冻结 ACT encoder ⊕ 本体)|pi0_feat(冻结 pi0 prefix 池化特征)")
     add_act_feat_args(p)
+    _add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
@@ -114,15 +116,39 @@ def main():
     # 配置守卫先行(在重活 read_per_demo_states 之前 fail-fast)
     validate_stage_cache(args.stage_cache, needs_stage=gc_value_needs_stage(args))
     validate_act_feat_cfg(args)
+    validate_pi0_feat_cfg(args)
     validate_data_source_cfg(args)
-    extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
-    seqs, standardizer, aux = read_per_demo_states(
-        args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
-        cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
-        act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
-        act_proprio_key=args.act_proprio_key, pooling=args.pooling,
-        data_source=args.data_source, lerobot_root=args.lerobot_root)
-    mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
+
+    # --- pi0_feat dispatch:读缓存签名做自洽断言,然后走 read_per_demo_states ---
+    if args.state_mode == "pi0_feat":
+        from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+        _, _, _cache_sig = load_pi0_feat_cache(args.pi0_feat_cache)   # 缓存内签名(含 build 的 num_demos)
+        # 防张冠李戴:缓存签名核心字段须与 CLI 传入一致(serve_metadata 仅诊断、不断言)
+        for k, v in (("serve_ckpt_id", args.pi0_serve_ckpt_id), ("image_keys", args.pi0_image_keys),
+                     ("proprio_key", args.pi0_proprio_key), ("pooling", args.pi0_pooling),
+                     ("prompt", args.pi0_prompt)):
+            assert _cache_sig.get(k) == v, \
+                f"缓存签名 {k}={_cache_sig.get(k)!r} 与 CLI {v!r} 不符(指向了错误的缓存?)"
+        seqs, _standardizer, aux_stats = read_per_demo_states(
+            args.hdf5, args.dataset, "pi0_feat", num_demos=args.num_demos,
+            pi0_feat_cache=args.pi0_feat_cache, pi0_feat_signature=_cache_sig)   # 用缓存签名→自洽命中
+        import torch
+        mean, std = torch.as_tensor(aux_stats[0]), torch.as_tensor(aux_stats[1])
+        rel_stats = None
+        pi0_sig = _cache_sig
+        act_sig = None
+    else:
+        # --- 现有 eef_piece/act_feat dispatch 原样不动 ---
+        extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
+        seqs, standardizer, aux = read_per_demo_states(
+            args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
+            cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
+            act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
+            act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+            data_source=args.data_source, lerobot_root=args.lerobot_root)
+        mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
+        pi0_sig = None
+
     seq_lens = [len(s) for s in seqs]
     stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \
@@ -143,7 +169,7 @@ def main():
                   mean=mean, std=std,
                   dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats,
                   value_loss_mode=args.value_loss_mode, value_mask_mode=args.value_mask_mode,
-                  act_feat_signature=act_sig)
+                  act_feat_signature=act_sig, pi0_feat_signature=pi0_sig)
     print(f"[hiql_gc] saved {args.output}; v_stats={v_stats}")
 
 

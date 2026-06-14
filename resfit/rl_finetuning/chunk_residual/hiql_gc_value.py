@@ -266,12 +266,13 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
 def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
                   state_mode="eef_piece", rel_piece_stats=None,
                   value_loss_mode="shared_min", value_mask_mode="done_aware",
-                  act_feat_signature=None):
+                  act_feat_signature=None, pi0_feat_signature=None):
     """存 gc_value.pt:权重 + 维度 + v_stats + state mean/std + dataset_id + state_mode
     + value_loss_mode/value_mask_mode/value_rep_mode(provenance,旧档无此键时 load_gc_value
     分别回退 'shared_min'/'done_aware'/'concat';value_rep_mode 还决定 load 时 goal 编码器重建维度)
     (+ eef_piece 的 rel_piece mean/std,供 Phase 3 online 同源标准化)
-    (+ act_feat_signature:act_feat 模式下的 extractor 签名 dict,供 load 时重建同源 extractor)。"""
+    (+ act_feat_signature:act_feat 模式下的 extractor 签名 dict,供 load 时重建同源 extractor)
+    (+ pi0_feat_signature:pi0_feat 模式下的缓存签名 dict,供 load 时同源校验)。"""
     payload = {
         "state_dict": model.state_dict(),
         "state_dim": model.state_dim,
@@ -291,6 +292,8 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
     if act_feat_signature is not None:
         payload["act_feat_signature"] = act_feat_signature
+    if pi0_feat_signature is not None:
+        payload["pi0_feat_signature"] = pi0_feat_signature
     torch.save(payload, path)
 
 
@@ -311,6 +314,7 @@ def load_gc_value(path, map_location="cpu"):
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     info["act_feat_signature"] = ckpt.get("act_feat_signature")
+    info["pi0_feat_signature"] = ckpt.get("pi0_feat_signature")
     return model, info
 
 

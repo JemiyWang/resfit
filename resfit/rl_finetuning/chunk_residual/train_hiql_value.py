@@ -49,7 +49,7 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
     if state_mode == "pi0_feat":
         from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import pi0_feat_cache_reuse
         assert pi0_feat_signature is not None, "pi0_feat 需 pi0_feat_signature(build 时写的同款签名)"
-        nd = pi0_feat_signature.get("num_demos", num_demos)
+        nd = pi0_feat_signature.get("num_demos", num_demos)  # num_demos 取自缓存签名(gc_value 传缓存内签名→自洽命中);不用调用侧 num_demos
         hit = pi0_feat_cache_reuse(pi0_feat_cache, signature=pi0_feat_signature, num_demos=nd)
         if hit is None:
             raise RuntimeError(
@@ -178,6 +178,31 @@ def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
     return out
 
 
+def _add_pi0_feat_args(p):
+    p.add_argument("--pi0_feat_cache", default=None, help="pi0_feat 嵌入缓存 npz(仅 pi0_feat,须已存在)")
+    p.add_argument("--pi0_serve_ckpt_id", default=None, help="serve 权重身份锚(仅 pi0_feat,同源签名)")
+    p.add_argument("--pi0_image_keys", type=lambda s: s.split(","), default=None, help="逗号分隔图像键")
+    p.add_argument("--pi0_proprio_key", default=None, help="本体 obs 键(仅 pi0_feat)")
+    p.add_argument("--pi0_prompt", default="", help="pi05 prompt(仅 pi0_feat)")
+    p.add_argument("--pi0_pooling", choices=["last", "mean"], default="last")
+
+
+def validate_pi0_feat_cfg(args):
+    """pi0_feat 须给已存在的 --pi0_feat_cache + serve_ckpt_id/image_keys/proprio_key;否则 ValueError。
+    非 pi0_feat 传 --pi0_* 忽略。"""
+    import os
+    if getattr(args, "state_mode", None) != "pi0_feat":
+        if getattr(args, "pi0_feat_cache", None):
+            warnings.warn("非 pi0_feat 模式,--pi0_* 被忽略", stacklevel=2)
+        return
+    missing = [k for k in ("pi0_serve_ckpt_id", "pi0_image_keys", "pi0_proprio_key")
+               if not getattr(args, k, None)]
+    if missing:
+        raise ValueError(f"--state_mode pi0_feat 需提供 {missing}")
+    if not (args.pi0_feat_cache and os.path.exists(args.pi0_feat_cache)):
+        raise ValueError("--state_mode pi0_feat 需 --pi0_feat_cache(已存在);请先跑 build_pi0_feat_cache_via_serve.py")
+
+
 def validate_act_feat_cfg(args):
     """act_feat 须能命中缓存或能 build(给了 base ckpt);否则 ValueError。非 act_feat 传 act_* 忽略。"""
     if args.state_mode != "act_feat":
@@ -260,12 +285,13 @@ def build_parser():
     p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--output", default="value.pt")
-    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat"], default="eef",
-                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)")
+    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat", "pi0_feat"], default="eef",
+                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)|pi0_feat(冻结 pi0 prefix 池化特征)")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     add_act_feat_args(p)
+    _add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(从 LeRobot 数据集读,no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 的本地数据根目录")

@@ -21,7 +21,7 @@ def test_pi0_feat_cache_hit_returns_seqs_and_stats(tmp_path):
 
 
 def test_pi0_feat_cache_missing_raises(tmp_path):
-    with pytest.raises((FileNotFoundError, ValueError, RuntimeError)):
+    with pytest.raises(RuntimeError):
         read_per_demo_states("ignored.hdf5", "ds", "pi0_feat",
                              pi0_feat_cache=str(tmp_path / "nope.npz"),
                              pi0_feat_signature=dict(SIG, num_demos=None))
