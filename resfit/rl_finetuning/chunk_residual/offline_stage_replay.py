@@ -187,6 +187,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          image_keys, bonus, mode, gamma, num_demos=None,
                          stage_cache=None, potential=None, subgoal=None, way_steps=25,
                          act_feat_seqs=None,
+                         data_source="hdf5", lerobot_repo_id=None, lerobot_root=None, _lerobot_ds=None,
                          base_policy=None, base_mode="gt", base_device="cpu") -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
@@ -218,6 +219,13 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or _eef_subgoal
     _sg_rel_mean = subgoal.rel_mean.cpu() if _eef_subgoal else None
     _sg_rel_std = subgoal.rel_std.cpu() if _eef_subgoal else None
+    if data_source == "lerobot":      # LeRobot 数据源:逐集读帧、stage_id≡0、无 rel_piece(仅 act_feat)
+        return _build_offline_lerobot(
+            rb, action_scaler=action_scaler, state_standardizer=state_standardizer,
+            image_keys=image_keys, bonus=bonus, mode=mode, gamma=gamma, num_demos=num_demos,
+            subgoal=subgoal, way_steps=way_steps, act_feat_seqs=act_feat_seqs,
+            repo_id=lerobot_repo_id, root=lerobot_root, ds=_lerobot_ds,
+            base_policy=base_policy, base_mode=base_mode, base_device=base_device)
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
@@ -325,3 +333,101 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
         if env is not None:
             env.close()
     return added
+
+
+def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys, bonus, mode,
+                           gamma, num_demos, subgoal, way_steps, act_feat_seqs, repo_id, root, ds,
+                           base_policy, base_mode, base_device) -> int:
+    """LeRobot 数据源 / no-stage 路:逐集读帧灌装 offline transition,stage_id≡0、无 rel_piece。
+
+    td 骨架与 hdf5 路严格一致(obs/next{obs,done,reward}/action/max_stage/_priority);帧来自
+    lerobot_episode_frames(图=(T,3,84,84)f01、state=(T,Dp) raw、actions=(T,Da));stage 用全 0 瞬时
+    数组喂 transition_fields → stage_id/next_stage_id/max_stage 全 0、reward 仅 base 稀疏(末帧)。
+    base_action 同 hdf5 路:base_mode='gt' 用缩放后 GT;'base_policy' 逐帧用冻结 base 现算。
+    subgoal 仅支持 act_feat(530 缓存序列,无 eef_piece rel)。
+    """
+    from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
+        open_lerobot, lerobot_episode_count, lerobot_episode_frames)
+    assert subgoal is None or getattr(subgoal, "state_mode", "") == "act_feat", \
+        "lerobot 数据源仅支持 act_feat subgoal(无 eef_piece rel)"
+    if ds is None:
+        ds = open_lerobot(repo_id, root)
+    n = lerobot_episode_count(ds)
+    if num_demos is not None:
+        n = min(n, num_demos)
+    if subgoal is not None:
+        assert act_feat_seqs is not None, \
+            "act_feat subgoal 的 lerobot offline buffer 需 act_feat_seqs(530 缓存序列)"
+        assert len(act_feat_seqs) >= n, \
+            f"act_feat_seqs 数({len(act_feat_seqs)}) < demo 数({n})"
+    added = 0
+    for ep in range(n):
+        fr = lerobot_episode_frames(ds, ep, image_keys, "observation.state", "action")
+        T = fr["state"].shape[0]
+        if T < 2:
+            continue
+        state_n = state_standardizer.standardize(fr["state"].float()).cpu()         # (T,Dp) std
+        instant = np.zeros(T, dtype=np.int8)                                        # no-stage
+        fld = transition_fields(instant, bonus=bonus, mode=mode, gamma=gamma, success=True,
+                                potential=None, state_seq=state_n, rel_piece_seq=None)
+        act_n = action_scaler.scale(fr["actions"].float()).cpu()
+        if base_mode == "base_policy":
+            base_n = _demo_base_actions_lerobot(
+                base_policy, fr["images"], image_keys, action_scaler, base_device)
+        else:
+            base_n = act_n                                                          # gt:GT-as-base
+        imgs = {k: fr["images"][k] for k in image_keys}                            # (T,3,84,84) f01
+        sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
+        nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
+        subgoal_z = None
+        if subgoal is not None:
+            s530 = torch.as_tensor(act_feat_seqs[ep], dtype=torch.float32)          # (T,530) 已标准化
+            assert s530.shape[0] == T, \
+                f"act_feat 缓存帧数 {s530.shape[0]} != demo {T} (ep{ep})"
+            way = np.minimum(np.arange(T) + way_steps, T - 1)
+            subgoal_z = subgoal.subgoal_waypoint(s530, s530[way]).cpu()
+        for t in range(T - 1):
+            curr = {"observation.state": state_n[t],
+                    "observation.base_action": base_n[t],
+                    "observation.stage_id": sid[t:t + 1]}
+            nxt = {"observation.state": state_n[t + 1],
+                   "observation.base_action": base_n[t + 1],
+                   "observation.stage_id": nsid[t:t + 1]}
+            if subgoal_z is not None:
+                curr["observation.subgoal"] = subgoal_z[t]
+                nxt["observation.subgoal"] = subgoal_z[t + 1]
+            for k in image_keys:
+                curr[k] = imgs[k][t]
+                nxt[k] = imgs[k][t + 1]
+            td = TensorDict({
+                "obs": TensorDict(curr, batch_size=[]),
+                "next": TensorDict({
+                    "obs": TensorDict(nxt, batch_size=[]),
+                    "done": torch.tensor(bool(fld["done"][t])),
+                    "reward": torch.tensor(float(fld["reward"][t]), dtype=torch.float32),
+                }, batch_size=[]),
+                "action": act_n[t],
+                "max_stage": torch.tensor(float(fld["max_stage"][t]), dtype=torch.float32),
+                "_priority": torch.tensor(10.0, dtype=torch.float32),
+            }, batch_size=[]).unsqueeze(0)
+            rb.add(td)
+            added += 1
+    return added
+
+
+def _demo_base_actions_lerobot(base_policy, images, image_keys, action_scaler, device):
+    """逐帧用冻结 base_policy 现算 base_action(缩放后)。images[k]=(T,3,84,84) f01。
+
+    与 hdf5 的 _demo_base_actions 对齐:顺序复现 ACT action queue 语义(先 reset 清队列,再按帧
+    select_action),raw_obs 严格对齐 env 运行时;返回缩放后 (T, action_dim)。
+    """
+    base_policy.eval()
+    T = images[image_keys[0]].shape[0]
+    base_policy.reset()
+    outs = []
+    with torch.no_grad():
+        for t in range(T):
+            raw = {k: images[k][t:t + 1].to(device) for k in image_keys}
+            a = base_policy.select_action(raw)                # (1, action_dim) 原始尺度
+            outs.append(action_scaler.scale(a.float().cpu())[0])
+    return torch.stack(outs)

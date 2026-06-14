@@ -140,3 +140,39 @@ def test_signature_stage_source_backward_compatible():
     s = _offline_buffer_signature(_sig_args([]), img, 100, "staged")
     assert "hiql_value_ckpt" not in s
     assert "potential_source" not in s
+
+
+def test_build_offline_buffer_lerobot_no_stage():
+    import numpy as np
+    import torch
+    from tensordict import TensorDict
+    from torchrl.data import TensorDictReplayBuffer, LazyTensorStorage
+    from resfit.rl_finetuning.chunk_residual.offline_stage_replay import build_offline_buffer
+
+    class _StubDS:
+        def __init__(self):
+            self.episode_data_index = {"from": torch.tensor([0]), "to": torch.tensor([4])}
+        def __getitem__(self, i):
+            return {"observation.images.agentview": torch.zeros(3, 4, 4),
+                    "observation.state": torch.zeros(18), "action": torch.zeros(7)}
+
+    class _StubScaler:
+        def scale(self, x): return torch.as_tensor(x, dtype=torch.float32)
+    class _StubStd:
+        def standardize(self, x): return torch.as_tensor(x, dtype=torch.float32)
+    class _StubSubgoal:
+        state_mode = "act_feat"
+        def subgoal_waypoint(self, b, t): return torch.zeros(b.shape[0], 10)
+
+    rb = TensorDictReplayBuffer(storage=LazyTensorStorage(max_size=100, device="cpu"))
+    n = build_offline_buffer(
+        rb, "ignored.hdf5", action_scaler=_StubScaler(), state_standardizer=_StubStd(),
+        image_keys=["observation.images.agentview"], bonus=1.0, mode="none", gamma=0.99,
+        subgoal=_StubSubgoal(), way_steps=2,
+        act_feat_seqs=[np.zeros((4, 530), np.float32)],
+        data_source="lerobot", lerobot_repo_id="repo/id", lerobot_root="/x", _lerobot_ds=_StubDS(),
+        base_mode="gt")
+    assert n == 3                                  # T=4 → 3 transitions
+    td = rb.sample(1)
+    assert "observation.subgoal" in td["obs"].keys()
+    assert float(td["obs"]["observation.stage_id"].abs().max()) == 0.0   # no-stage
