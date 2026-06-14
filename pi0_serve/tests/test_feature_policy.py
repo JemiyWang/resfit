@@ -70,6 +70,7 @@ class _FakeArgs:
         self.host = "0.0.0.0"
         self.port = port
         self.pooling = pooling
+        self.default_prompt = None
 
 
 def test_serve_with_feat_wraps_and_serves(monkeypatch):

@@ -50,6 +50,8 @@ def run(args: "Args"):
 
 
 def main():
+    import logging
+    logging.basicConfig(level=logging.INFO, force=True)
     run(tyro.cli(Args))
 
 
