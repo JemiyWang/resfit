@@ -129,3 +129,25 @@ def test_data_source_flags_present_and_default_hdf5():
         assert a.data_source == "hdf5" and a.lerobot_root is None
     a = tc().parse_args(["--task", "TwoArmThreePieceAssembly", "--dataset", "d"])
     assert a.data_source == "hdf5" and a.lerobot_root is None
+
+
+def test_train_chunk_residual_lerobot_guard_injects_state_mode(tmp_path):
+    """回归锁:train_chunk_residual 无 --state_mode flag,lerobot 路守卫须注入 state_mode=act_feat +
+    强制 subgoal。此前 validate_data_source_cfg 被复用却没端到端走守卫,smoke 才暴露无条件 assert 失败。"""
+    import pytest
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        build_parser, _resolve_data_source_cfg)
+    base = ["--task", "TwoArmThreePieceAssembly", "--dataset", "d"]
+    # lerobot + subgoal + 存在 root → 注入 act_feat、放行
+    a = build_parser().parse_args(base + ["--data_source", "lerobot",
+                                          "--lerobot_root", str(tmp_path), "--subgoal_conditioned"])
+    _resolve_data_source_cfg(a)
+    assert a.state_mode == "act_feat"
+    # lerobot 缺 --subgoal_conditioned → AssertionError(本脚本 lerobot 仅经 act_feat 子目标)
+    b = build_parser().parse_args(base + ["--data_source", "lerobot", "--lerobot_root", str(tmp_path)])
+    with pytest.raises(AssertionError):
+        _resolve_data_source_cfg(b)
+    # hdf5 默认路 → 放行,不注入 state_mode=act_feat
+    c = build_parser().parse_args(base)
+    _resolve_data_source_cfg(c)
+    assert getattr(c, "state_mode", None) != "act_feat"

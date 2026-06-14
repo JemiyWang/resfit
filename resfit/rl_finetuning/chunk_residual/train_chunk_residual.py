@@ -514,11 +514,22 @@ def build_parser():
     return p
 
 
+def _resolve_data_source_cfg(args):
+    """train_chunk_residual 无 --state_mode flag(state_mode 由 gc_value ckpt 隐含);lerobot 数据源
+    在本脚本里只经 act_feat 子目标用,故显式标注 state_mode=act_feat + 强制 subgoal,再走共享数据源守卫。
+    hdf5 默认路直接放行(不注入 state_mode)。提成函数以便单测(端到端守卫此前漏测,smoke 才暴露)。"""
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import validate_data_source_cfg
+    if getattr(args, "data_source", "hdf5") == "lerobot":
+        assert args.subgoal_conditioned, \
+            "--data_source lerobot 在 train_chunk_residual 仅经 act_feat 子目标用,需 --subgoal_conditioned"
+        args.state_mode = "act_feat"
+    validate_data_source_cfg(args)
+
+
 def main():
     args = build_parser().parse_args()
     validate_libero_cfg(args)   # LIBERO 路守卫(dexmg 路 no-op)
-    from resfit.rl_finetuning.chunk_residual.train_hiql_value import validate_data_source_cfg
-    validate_data_source_cfg(args)   # --data_source lerobot 守卫(默认 hdf5 直接放行)
+    _resolve_data_source_cfg(args)   # --data_source lerobot 守卫(默认 hdf5 直接放行)
     torch.manual_seed(args.seed)
     sample_gen = torch.Generator().manual_seed(args.seed)   # stage-balanced 采样用
 
