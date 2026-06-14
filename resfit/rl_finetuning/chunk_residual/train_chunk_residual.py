@@ -233,7 +233,9 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
 def _libero_offline_signature(args, image_keys, offline_cap):
     """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸即失效重建)。"""
     return {
-        "env_family": "libero", "lerobot_root": os.path.abspath(args.libero_stats_json + "/../.."),
+        "env_family": "libero",
+        # 与 build 块的 lerobot_root 推导逐字一致(stats.json 在 <root>/meta/),否则缓存 key 与实际源路径分叉
+        "lerobot_root": os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), "..")),
         "suite": args.libero_suite, "task_id": int(args.libero_task_id),
         "base_mode": args.offline_base_mode, "base_policy_type": args.base_policy_type,
         "pi0_host": args.pi0_host, "pi0_port": args.pi0_port, "pi0_action_dim": args.pi0_action_dim,
@@ -323,7 +325,7 @@ def validate_libero_cfg(args):
         raise ValueError(
             "--env_family libero 不支持奖励整形,需 --reward_shaping none(且不传 --staged_reward);"
             f"当前 canonical shaping_mode={shaping_mode!r}")
-    if getattr(args, "offline_fraction", 0) and args.offline_fraction > 0:
+    if getattr(args, "offline_fraction", 0) > 0:
         if getattr(args, "actor", "raw") != "raw":
             raise ValueError(
                 "--env_family libero + offline_fraction>0 需 --actor raw(BC 锚走 raw actor);"
