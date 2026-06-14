@@ -112,3 +112,10 @@ def test_demo_to_transitions_schema_reward_noflip():
     # 命门①:没被上下翻转 → 上半(行<42)应远亮于下半
     img = obs[AGENTVIEW_KEY].float()
     assert img[:, :42, :].mean() > img[:, 42:, :].mean() + 50
+
+
+def test_demo_to_transitions_single_frame_returns_empty():
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _demo_to_transitions
+    demo = _toy_demo(T=1)   # T<2 → 无 transition
+    assert _demo_to_transitions(demo, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+                                base_actions=None, image_size=84) == []

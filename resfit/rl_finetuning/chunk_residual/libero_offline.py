@@ -73,6 +73,9 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
     base_actions: (T,7) 已缩放的 base 动作(base_policy 模式),或 None(gt 模式 → base=action)。
     命门②:reward 仅末帧 transition=1.0、done 仅末帧 True(demo 是成功轨迹)。
     命门③:state 用 state_standardizer、action 用 action_scaler(与在线同源)。
+
+    注:返回的 td 内含对同一帧张量的视图(相邻 transition 共享边界帧)——只读,调用者勿 in-place
+    改其内容;灌进 replay buffer 时 storage 会拷贝,无别名风险(与 offline_stage_replay 一致)。
     """
     import torch
     from tensordict import TensorDict
@@ -83,7 +86,8 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
         return []
     state_std = state_standardizer.standardize(state)                  # (T,8)
     action = action_scaler.scale(action_raw)                          # (T,7) 缩放
-    base = base_actions if base_actions is not None else action       # (T,7)
+    base = (torch.as_tensor(base_actions, dtype=torch.float32)        # 容忍 numpy/tensor 入参
+            if base_actions is not None else action)                  # (T,7)
     img_av = torch.stack([torch.as_tensor(_img_chw_uint8(demo["agentview"][t], image_size)) for t in range(T)])
     img_wr = torch.stack([torch.as_tensor(_img_chw_uint8(demo["wrist"][t], image_size)) for t in range(T)])
 
