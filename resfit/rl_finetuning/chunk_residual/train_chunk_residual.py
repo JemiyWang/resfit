@@ -230,6 +230,19 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
     return sig
 
 
+def _libero_offline_signature(args, image_keys, offline_cap):
+    """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸即失效重建)。"""
+    return {
+        "env_family": "libero", "lerobot_root": os.path.abspath(args.libero_stats_json + "/../.."),
+        "suite": args.libero_suite, "task_id": int(args.libero_task_id),
+        "base_mode": args.offline_base_mode, "base_policy_type": args.base_policy_type,
+        "pi0_host": args.pi0_host, "pi0_port": args.pi0_port, "pi0_action_dim": args.pi0_action_dim,
+        "action_scale": args.action_scale, "min_range_per_dim": args.min_range_per_dim,
+        "offline_cap": offline_cap, "image_keys": sorted(image_keys),
+        "gamma": args.gamma, "n_step": args.n_step, "num_demos": args.offline_num_demos,
+    }
+
+
 def _validate_offline_base_mode(args):
     """base_policy 模式需 queue(chunk_length==1 且 base_action_mode=="queue");gt 模式跳过。"""
     if args.offline_base_mode != "base_policy":
@@ -310,10 +323,13 @@ def validate_libero_cfg(args):
         raise ValueError(
             "--env_family libero 不支持奖励整形,需 --reward_shaping none(且不传 --staged_reward);"
             f"当前 canonical shaping_mode={shaping_mode!r}")
-    if getattr(args, "offline_fraction", 0) not in (0, 0.0, None):
-        raise ValueError(
-            "--env_family libero 不支持 offline 锚 buffer,需 --offline_fraction 0;当前 "
-            f"offline_fraction={getattr(args, 'offline_fraction', None)!r}")
+    if getattr(args, "offline_fraction", 0) and args.offline_fraction > 0:
+        if getattr(args, "actor", "raw") != "raw":
+            raise ValueError(
+                "--env_family libero + offline_fraction>0 需 --actor raw(BC 锚走 raw actor);"
+                f"当前 actor={getattr(args, 'actor', None)!r}")
+        # 注:subgoal/stage 仍由本函数后面的 stage_conditioned/subgoal_conditioned 检查拦截;
+        # offline demo 源是 LeRobot 数据集(自动按任务匹配),无需 --offline_dataset_path。
     if getattr(args, "pi0_action_dim", None) != 7:
         raise ValueError(
             "--env_family libero(单臂)需 --pi0_action_dim 7;当前 "
@@ -715,16 +731,25 @@ def main():
     offline_batch_size = int(args.batch_size * args.offline_fraction)
     offline_rb = None
     if args.offline_fraction > 0.0:
-        assert args.offline_dataset_path is not None, \
-            "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
         from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import concat_mixed_batch
-        from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
-            build_offline_buffer, count_offline_transitions)
-        # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
-        offline_cap = count_offline_transitions(args.offline_dataset_path,
-                                                num_demos=args.offline_num_demos)
-        sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode,
-                                        potential=potential)
+        is_libero = getattr(args, "env_family", "dexmg") == "libero"
+        if is_libero:
+            from resfit.rl_finetuning.chunk_residual.libero_offline import (
+                build_libero_offline_buffer, count_libero_offline_transitions)
+            lerobot_root = os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), ".."))
+            offline_cap = count_libero_offline_transitions(
+                lerobot_root, args.libero_suite, args.libero_task_id, num_demos=args.offline_num_demos)
+            sig = _libero_offline_signature(args, image_keys, offline_cap)
+        else:
+            assert args.offline_dataset_path is not None, \
+                "offline_fraction>0 需 --offline_dataset_path 指向源 dexmimicgen HDF5"
+            from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
+                build_offline_buffer, count_offline_transitions)
+            # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
+            offline_cap = count_offline_transitions(args.offline_dataset_path,
+                                                    num_demos=args.offline_num_demos)
+            sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode,
+                                            potential=potential)
 
         def _new_offline_rb(with_transform):
             # 命中缓存走 with_transform=False:存的是已合并 transition,勿让 MultiStepTransform 二次合并
@@ -745,16 +770,24 @@ def main():
             print(f"[offline] 命中缓存 {cache_dir}:loads {n_off} 条(跳过重建)")
         else:
             offline_rb = _new_offline_rb(with_transform=True)
-            build_offline_buffer(
-                offline_rb, args.offline_dataset_path,
-                action_scaler=action_scaler, state_standardizer=state_standardizer,
-                image_keys=image_keys, bonus=args.stage_reward_bonus,
-                mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
-                stage_cache=args.offline_stage_cache, potential=potential,
-                subgoal=subgoal, way_steps=args.subgoal_way_steps,
-                act_feat_seqs=_offline_act_feat_seqs,
-                base_policy=base_policy, base_mode=args.offline_base_mode,
-                base_device=args.device,)
+            if is_libero:
+                build_libero_offline_buffer(
+                    offline_rb, lerobot_root=lerobot_root,
+                    suite=args.libero_suite, task_id=args.libero_task_id,
+                    action_scaler=action_scaler, state_standardizer=state_standardizer,
+                    base_policy=base_policy, base_mode=args.offline_base_mode,
+                    base_device=args.device, image_size=img_h, num_demos=args.offline_num_demos)
+            else:
+                build_offline_buffer(
+                    offline_rb, args.offline_dataset_path,
+                    action_scaler=action_scaler, state_standardizer=state_standardizer,
+                    image_keys=image_keys, bonus=args.stage_reward_bonus,
+                    mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
+                    stage_cache=args.offline_stage_cache, potential=potential,
+                    subgoal=subgoal, way_steps=args.subgoal_way_steps,
+                    act_feat_seqs=_offline_act_feat_seqs,
+                    base_policy=base_policy, base_mode=args.offline_base_mode,
+                    base_device=args.device,)
             n_off = len(offline_rb)
             if cache_dir:
                 _save_offline_buffer(offline_rb, cache_dir, sig, n_off)
