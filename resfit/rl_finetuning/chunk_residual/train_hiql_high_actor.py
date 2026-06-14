@@ -55,6 +55,9 @@ def build_parser():
     p.add_argument("--state_mode", choices=["eef_piece", "act_feat"], default="eef_piece",
                    help="state 来源:eef_piece(默认,30 维 sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)")
     add_act_feat_args(p)
+    p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
+                   help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
+    p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
     return p
 
 
@@ -68,8 +71,10 @@ def high_actor_needs_stage(args):
 def main():
     args = build_parser().parse_args()
     from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
-        validate_act_feat_cfg, setup_act_feat, read_per_demo_states)
+        validate_act_feat_cfg, setup_act_feat, read_per_demo_states,
+        validate_data_source_cfg)
     validate_act_feat_cfg(args)
+    validate_data_source_cfg(args)
     if args.state_mode != "act_feat" and args.state30_cache is None:
         warnings.warn("--state30_cache 未设置,将触发完整 MuJoCo 回放(可能耗时数小时);建议指向 state30 缓存 npz", stacklevel=2)
     validate_stage_cache(args.stage_cache, needs_stage=high_actor_needs_stage(args))
@@ -79,7 +84,8 @@ def main():
             args.hdf5, args.dataset, "act_feat", num_demos=args.num_demos,
             act_feat_cache=args.act_feat_cache, act_extractor=extractor,
             act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
-            act_proprio_key=args.act_proprio_key, pooling=args.pooling)
+            act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+            data_source=args.data_source, lerobot_root=args.lerobot_root)
     else:
         seqs = load_or_build_state30(args.hdf5, args.dataset, args.num_demos, args.state30_cache)
         act_sig = None
