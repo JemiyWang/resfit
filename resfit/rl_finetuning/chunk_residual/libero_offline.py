@@ -143,26 +143,40 @@ def count_libero_offline_transitions(lerobot_root, suite, task_id, num_demos=Non
 def build_libero_offline_buffer(offline_rb, *, lerobot_root, suite, task_id,
                                 action_scaler, state_standardizer,
                                 base_policy, base_mode, base_device="cpu",
-                                image_size=84, num_demos=None) -> None:
-    """灌当前任务的 demo 进 offline_rb(prioritized + MultiStepTransform)。base_mode∈{gt,base_policy}。"""
+                                image_size=84, num_demos=None,
+                                subgoal=None, way_steps=25, feat_seqs=None) -> None:
+    """灌当前任务的 demo 进 offline_rb。base_mode∈{gt,base_policy}。
+    subgoal!=None 时逐 demo 用 feat_seqs[i](pi0_feat 缓存标准化序列)算真航点 z 存 observation.subgoal。"""
     if base_mode not in ("gt", "base_policy"):
         raise ValueError(f"base_mode 必须是 gt|base_policy,得到 {base_mode!r}")
     if base_mode == "base_policy" and base_policy is None:
         raise ValueError("base_mode=base_policy 需传 base_policy")
+    if subgoal is not None and feat_seqs is None:
+        raise ValueError("subgoal 离线子目标需 feat_seqs(pi0_feat 缓存 per-demo 标准化序列)")
+    import torch
     language = libero_task_language(suite, task_id)
     paths = find_demo_episodes(lerobot_root, language)
     if num_demos is not None:
         paths = paths[:num_demos]
-    for p in paths:
+    for i, p in enumerate(paths):
         demo = read_libero_demo(p)
-        if demo["state"].shape[0] < 2:
+        T = demo["state"].shape[0]
+        if T < 2:
             print(f"[libero-offline] 跳过 {p}(T<2)")
             continue
         base_actions = (_libero_demo_base_actions(demo, base_policy, action_scaler, image_size, base_device)
                         if base_mode == "base_policy" else None)
+        subgoal_z = None
+        if subgoal is not None:
+            seq = torch.as_tensor(feat_seqs[i], dtype=torch.float32)        # (T, 2056) 已标准化
+            assert seq.shape[0] == T, \
+                f"pi0_feat 缓存帧数 {seq.shape[0]} != demo {T} (ep#{i}, {p})"
+            way = np.minimum(np.arange(T) + way_steps, T - 1)
+            subgoal_z = subgoal.subgoal_waypoint(seq, seq[way]).cpu()       # (T, rep_dim)
         for td in _demo_to_transitions(demo, action_scaler=action_scaler,
                                        state_standardizer=state_standardizer,
-                                       base_actions=base_actions, image_size=image_size):
+                                       base_actions=base_actions, image_size=image_size,
+                                       subgoal_z=subgoal_z):
             offline_rb.add(td.unsqueeze(0))
 
 
