@@ -66,10 +66,12 @@ def _img_chw_uint8(hwc_uint8, size):
     return np.transpose(resized, (2, 0, 1))                 # CHW uint8
 
 
-def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_actions, image_size):
+def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_actions,
+                         image_size, subgoal_z=None):
     """一条 demo → list[TensorDict],与在线 add_chunk_transition 同构。
 
     base_actions: (T,7) 已缩放的 base 动作(base_policy 模式),或 None(gt 模式 → base=action)。
+    subgoal_z: (T, rep_dim) 子目标表征,非 None 时每帧 obs 含 observation.subgoal=subgoal_z[t](默认 None 不含)。
     命门②:reward 仅末帧 transition=1.0、done 仅末帧 True(demo 是成功轨迹)。
     命门③:state 用 state_standardizer、action 用 action_scaler(与在线同源)。
 
@@ -91,9 +93,12 @@ def _demo_to_transitions(demo, *, action_scaler, state_standardizer, base_action
     img_wr = torch.stack([torch.as_tensor(_img_chw_uint8(demo["wrist"][t], image_size)) for t in range(T)])
 
     def _obs(t):
-        return {"observation.state": state_std[t], "observation.base_action": base[t],
-                "observation.stage_id": torch.zeros(1, dtype=torch.float32),
-                AGENTVIEW_KEY: img_av[t], WRIST_KEY: img_wr[t]}
+        d = {"observation.state": state_std[t], "observation.base_action": base[t],
+             "observation.stage_id": torch.zeros(1, dtype=torch.float32),
+             AGENTVIEW_KEY: img_av[t], WRIST_KEY: img_wr[t]}
+        if subgoal_z is not None:
+            d["observation.subgoal"] = subgoal_z[t]
+        return d
 
     out = []
     for t in range(T - 1):

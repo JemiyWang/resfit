@@ -188,3 +188,25 @@ def test_count_num_demos_truncates_by_episode_index(monkeypatch, tmp_path):
     root = _make_stub_root(tmp_path, [(0, "L", 5), (1, "L", 3)])
     assert lo.count_libero_offline_transitions(root, "x", 0, num_demos=1) == 4   # ei=0:5-1,不是 3-1=2
     assert lo.count_libero_offline_transitions(root, "x", 0) == 6                # 全取:(5-1)+(3-1)
+
+
+def test_demo_to_transitions_stores_subgoal():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _demo_to_transitions
+    demo = _toy_demo(T=3)
+    sgz = torch.arange(3 * 10, dtype=torch.float32).reshape(3, 10)   # (T, rep_dim)
+    tds = _demo_to_transitions(demo, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+                               base_actions=None, image_size=84, subgoal_z=sgz)
+    assert len(tds) == 2
+    assert torch.allclose(tds[0]["obs"]["observation.subgoal"], sgz[0])
+    assert torch.allclose(tds[0]["next"]["obs"]["observation.subgoal"], sgz[1])
+    assert torch.allclose(tds[1]["next"]["obs"]["observation.subgoal"], sgz[2])
+
+
+def test_demo_to_transitions_no_subgoal_omits_key():
+    from resfit.rl_finetuning.chunk_residual.libero_offline import _demo_to_transitions
+    demo = _toy_demo(T=3)
+    tds = _demo_to_transitions(demo, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+                               base_actions=None, image_size=84)   # subgoal_z 默认 None
+    assert "observation.subgoal" not in tds[0]["obs"].keys()
+    assert "observation.subgoal" not in tds[0]["next"]["obs"].keys()
