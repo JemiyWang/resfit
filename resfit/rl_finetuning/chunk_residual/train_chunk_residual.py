@@ -744,11 +744,12 @@ def main():
         elif _sm == "pi0_feat":
             assert args.pi0_feat_cache, "pi0_feat 子目标需 --pi0_feat_cache(算 goal + 同源)"
             from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+            # _pi0_stats 未用:feat_mean/std 内嵌于 gc_value ckpt(from_ckpts 自取);此处仅用 seqs(算 goal)+ sig(同源校验)
             _pi0_seqs, _pi0_stats, _pi0_cache_sig = load_pi0_feat_cache(args.pi0_feat_cache)
             assert _gc_info.get("pi0_feat_signature"), \
                 "gc_value 缺 pi0_feat_signature(须用 --state_mode pi0_feat 重训该 gc_value)"
             _pi0_gv_sig = _gc_info["pi0_feat_signature"]
-            for k in ("image_keys", "proprio_key", "pooling"):
+            for k in ("serve_ckpt_id", "image_keys", "proprio_key", "pooling", "prompt"):
                 if _pi0_gv_sig.get(k) is not None:
                     assert _pi0_cache_sig.get(k) == _pi0_gv_sig.get(k), \
                         f"pi0_feat cache 与 gc_value 签名不符 [{k}]: {_pi0_cache_sig.get(k)} vs {_pi0_gv_sig.get(k)}"
