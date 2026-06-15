@@ -178,7 +178,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
                    future_mode="stage_entry", use_layer_norm=False,
                    value_loss_mode="shared_min", value_mask_mode="done_aware",
-                   value_rep_mode="concat"):
+                   value_rep_mode="concat", device="cpu"):
     """在扁平 GC 数据上训 action-free expectile goal-conditioned value。
 
     reward r(s,g)=0 if s==g else -1;TD mask 由 value_mask_mode 决定(见下)。
@@ -193,6 +193,9 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     value_rep_mode:
       - 'concat'(默认,底层旧行为):goal 编码器 φ 吃 concat([g,s]),输入维 2*state_dim。
       - 'goal_only'(对齐参考):φ 只吃 g,输入维 state_dim(HIQL rep_type='state',状态侧恒等)。
+    device:
+      - 'cpu'(默认,零回归):与原行为逐位等价。
+      - 'cuda'/'cuda:N':把 model/target/states/done_all 及训练中间 tensor 都搬 GPU,大 state_dim 时显著提速。
     """
     if value_loss_mode not in ("shared_min", "hiql"):
         raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")
@@ -202,10 +205,10 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         raise ValueError(f"unknown value_rep_mode: {value_rep_mode!r}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    states = data["states"]
+    states = data["states"].to(device)
     D = states.shape[1]
     model = GoalConditionedVF(D, rep_dim, hidden, use_layer_norm=use_layer_norm,
-                              rep_mode=value_rep_mode)
+                              rep_mode=value_rep_mode).to(device)
     target = copy.deepcopy(model)
     for p in target.parameters():
         p.requires_grad_(False)
@@ -213,7 +216,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     n = len(data["s_idx"])
     bs = min(batch_size, n)
     s_idx, sn_idx, traj_id = data["s_idx"], data["sn_idx"], data["traj_id"]
-    done_all = data["done"]
+    done_all = data["done"].to(device)
     for _ in range(steps):
         b = rng.integers(0, n, size=bs)
         si, sni, tj = s_idx[b], sn_idx[b], traj_id[b]
@@ -223,7 +226,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         s = states[si]
         s_next = states[sni]
         g = states[gi]
-        success = torch.tensor(si == gi, dtype=torch.float32)
+        success = torch.tensor(si == gi, dtype=torch.float32, device=device)
         reward = success - 1.0
         if value_mask_mode == "done_aware":
             mask = (1.0 - success) * (1.0 - done_all[b])

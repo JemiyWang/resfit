@@ -412,3 +412,30 @@ def test_gc_value_rep_mode_save_load_roundtrip(tmp_path):
     m2, info2 = load_gc_value(str(p))
     assert info2["value_rep_mode"] == "concat"
     assert m2.goal_encoder.net[0].in_features == 60
+
+
+def test_train_gc_value_device_cpu_finite():
+    """device='cpu' 时 v_stats 有限(smoke test,与默认行为等价)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(steps=20, batch_size=8, rep_dim=4, hidden=16, seed=0)
+    _model, v_stats = train_gc_value(data, device="cpu", **kw)
+    assert np.isfinite(v_stats["min"])
+    assert np.isfinite(v_stats["max"])
+    assert np.isfinite(v_stats["mean"])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_train_gc_value_device_cuda_finite():
+    """device='cuda' 时 v_stats 也有限(不要求 cpu/cuda 数值逐位相等)。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    kw = dict(steps=20, batch_size=8, rep_dim=4, hidden=16, seed=0)
+    model_cuda, v_stats = train_gc_value(data, device="cuda", **kw)
+    assert np.isfinite(v_stats["min"])
+    assert np.isfinite(v_stats["max"])
+    assert np.isfinite(v_stats["mean"])
+    # 确认 model 参数在 GPU 上
+    assert next(model_cuda.parameters()).is_cuda
