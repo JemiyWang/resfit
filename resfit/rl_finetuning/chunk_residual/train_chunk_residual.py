@@ -364,12 +364,13 @@ def validate_libero_cfg(args):
         raise ValueError(
             "--env_family libero(单臂)需 --pi0_action_dim 7;当前 "
             f"pi0_action_dim={getattr(args, 'pi0_action_dim', None)!r}")
-    if (getattr(args, "stage_conditioned", False)
-            or getattr(args, "stage_budget", None)
-            or getattr(args, "subgoal_conditioned", False)):
+    if getattr(args, "stage_conditioned", False) or getattr(args, "stage_budget", None):
         raise ValueError(
-            "--env_family libero 不支持 stage_conditioned / stage_budget / subgoal_conditioned;"
-            "请关闭这些选项")
+            "--env_family libero 不支持 stage_conditioned / stage_budget;请关闭这些选项")
+    if getattr(args, "subgoal_conditioned", False) and not getattr(args, "pi0_feat_cache", None):
+        raise ValueError(
+            "--env_family libero 的 subgoal_conditioned 目前仅支持 pi0_feat(需 --pi0_feat_cache);"
+            "eef_piece/act_feat 子目标在 libero 下尚未实现")
     if getattr(args, "potential_source", None) == "hiql":
         raise ValueError(
             "--env_family libero 不支持 --potential_source hiql;请用默认 stage")
