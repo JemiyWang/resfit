@@ -100,20 +100,21 @@ def build_main(client, *, hdf5, dataset_id, image_keys, proprio_key, prompt, poo
     print(f"[build_pi0_feat] wrote {out_cache}: {len(seqs)} demos, dim={seqs[0].shape[1]}")
 
 
-def build_main_libero(client, *, lerobot_root, suite, task_id, pooling, serve_ckpt_id,
-                      out_cache, num_demos=None):
+def build_main_libero(client, *, lerobot_root, language, pooling, serve_ckpt_id,
+                      out_cache, num_demos=None, dataset_id=None):
     """LIBERO 数据源:从 LeRobot 读 demo,逐帧经 serve 取 prefix_feat ⊕ state(8) → 缓存。
 
     obs 用 libero_obs.build_libero_serve_obs(与残差 rollout 同款 client 侧预处理→同源)。
+    language=任务语言串(直接传:数据集 episodes.jsonl 本身即任务语言;绕过 libero_task_language→
+    不依赖 LIBERO 库,residual 环境无 libero 也能跑)。find_demo_episodes 按 language 匹配 episode。
     """
     from resfit.rl_finetuning.chunk_residual.libero_offline import (
-        libero_task_language, find_demo_episodes, read_libero_demo)
+        find_demo_episodes, read_libero_demo)
     from resfit.rl_finetuning.chunk_residual.libero_obs import build_libero_serve_obs
     BASE = "observation.images.agentview"
     WRIST = "observation.images.robot0_eye_in_hand"
     STATE = "observation.state"
-    lang = libero_task_language(suite, task_id)
-    eps = find_demo_episodes(lerobot_root, lang)
+    eps = find_demo_episodes(lerobot_root, language)
     if num_demos is not None:
         eps = eps[:num_demos]
     raw_feats, proprios = [], []
@@ -125,14 +126,14 @@ def build_main_libero(client, *, lerobot_root, suite, task_id, pooling, serve_ck
         for t in range(T):
             raw = {BASE: demo["agentview"][t], WRIST: demo["wrist"][t], STATE: demo["state"][t]}
             obs = build_libero_serve_obs(raw, base_key=BASE, wrist_key=WRIST, state_key=STATE,
-                                        prompt=lang)
+                                        prompt=language)
             feats.append(np.asarray(client.infer(obs)["prefix_feat"], np.float32))
         raw_feats.append(np.stack(feats, axis=0))
         proprios.append(np.asarray(demo["state"], np.float32))
     seqs, mean, std = assemble_pi0_feat_seqs(raw_feats, proprios)
-    sig = pi0_feat_signature(f"libero_{suite}_{task_id}", num_demos,
+    sig = pi0_feat_signature(dataset_id or f"libero:{language}", num_demos,
                              image_keys=[BASE, WRIST], proprio_key=STATE, pooling=pooling,
-                             prompt=lang, serve_ckpt_id=serve_ckpt_id,
+                             prompt=language, serve_ckpt_id=serve_ckpt_id,
                              serve_metadata=_server_metadata(client))
     save_pi0_feat_cache(out_cache, seqs, (mean, std), signature=sig)
     print(f"[build_pi0_feat libero] wrote {out_cache}: {len(seqs)} demos, dim={seqs[0].shape[1]}")
@@ -167,8 +168,8 @@ def main():
     ap.add_argument("--prompt", default="")
     # libero 专用参数
     ap.add_argument("--lerobot_root", default=None, help="LeRobot 数据集根目录")
-    ap.add_argument("--suite", default=None, help="LIBERO suite 名,如 libero_object")
-    ap.add_argument("--task_id", type=int, default=None, help="LIBERO 任务 id")
+    ap.add_argument("--language", default=None,
+                    help="LIBERO 任务语言串(直接传,数据集 episodes.jsonl 即任务语言;不依赖 LIBERO 库)")
     # 公共参数
     ap.add_argument("--pooling", choices=["last", "mean"], default="last")
     ap.add_argument("--serve_ckpt_id", required=True)
@@ -184,17 +185,15 @@ def main():
             ap.error(f"data_source=dexmg_hdf5 时以下参数必须提供: {', '.join(missing)}")
     else:  # libero
         missing = [f for f, v in [("--lerobot_root", args.lerobot_root),
-                                   ("--suite", args.suite),
-                                   ("--task_id", args.task_id)] if v is None]
+                                   ("--language", args.language)] if v is None]
         if missing:
             ap.error(f"data_source=libero 时以下参数必须提供: {', '.join(missing)}")
 
     client = _connect(args.host, args.port)
     if args.data_source == "libero":
-        build_main_libero(client, lerobot_root=args.lerobot_root, suite=args.suite,
-                          task_id=args.task_id, pooling=args.pooling,
-                          serve_ckpt_id=args.serve_ckpt_id, out_cache=args.out_cache,
-                          num_demos=args.num_demos)
+        build_main_libero(client, lerobot_root=args.lerobot_root, language=args.language,
+                          pooling=args.pooling, serve_ckpt_id=args.serve_ckpt_id,
+                          out_cache=args.out_cache, num_demos=args.num_demos)
     else:
         build_main(client, hdf5=args.hdf5, dataset_id=args.dataset, image_keys=args.image_keys,
                    proprio_key=args.proprio_key, prompt=args.prompt, pooling=args.pooling,

@@ -62,7 +62,6 @@ def test_build_main_libero_writes_cache(tmp_path, monkeypatch):
     import resfit.rl_finetuning.chunk_residual.build_pi0_feat_cache_via_serve as M
     monkeypatch.setattr(M, "_server_metadata", lambda c: {})
     import resfit.rl_finetuning.chunk_residual.libero_offline as LO
-    monkeypatch.setattr(LO, "libero_task_language", lambda s, t: "do the task")
     monkeypatch.setattr(LO, "find_demo_episodes", lambda root, lang: ["ep0.parquet", "ep1.parquet"])
     def fake_read(pq):
         T = 3
@@ -81,7 +80,7 @@ def test_build_main_libero_writes_cache(tmp_path, monkeypatch):
 
     client = _StubLiberoClient()
     cache = str(tmp_path / "c.npz")
-    M.build_main_libero(client, lerobot_root="/x", suite="libero_object", task_id=0,
+    M.build_main_libero(client, lerobot_root="/x", language="do the task",
                         pooling="last", serve_ckpt_id="pi0_libero", out_cache=cache,
                         num_demos=None)
     assert client.calls == 6                                  # 2 demos * 3 frames
