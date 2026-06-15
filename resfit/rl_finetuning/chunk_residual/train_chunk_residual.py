@@ -250,8 +250,8 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
 
 
 def _libero_offline_signature(args, image_keys, offline_cap, image_size):
-    """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸即失效重建)。"""
-    return {
+    """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸/subgoal即失效重建)。"""
+    sig = {
         "env_family": "libero",
         # 与 build 块的 lerobot_root 推导逐字一致(stats.json 在 <root>/meta/),否则缓存 key 与实际源路径分叉
         "lerobot_root": os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), "..")),
@@ -264,6 +264,13 @@ def _libero_offline_signature(args, image_keys, offline_cap, image_size):
         "offline_cap": offline_cap, "image_keys": sorted(image_keys), "image_size": int(image_size),
         "gamma": args.gamma, "n_step": args.n_step, "num_demos": args.offline_num_demos,
     }
+    if getattr(args, "subgoal_conditioned", False):
+        # subgoal 离线 z 依赖 gc_value/high_actor ckpt 与 way_steps → 改其一缓存须失效重建
+        sig["subgoal"] = True
+        sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
+        sig["high_actor_ckpt"] = os.path.abspath(args.high_actor_ckpt)
+        sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
+    return sig
 
 
 def _validate_offline_base_mode(args):
@@ -710,6 +717,7 @@ def main():
 
     subgoal = None
     _offline_act_feat_seqs = None   # act_feat:离线 buffer subgoal 复用的 530 缓存序列
+    _pi0_seqs = None                # pi0_feat:离线 buffer subgoal 复用的 2056 缓存序列
     if args.subgoal_conditioned:
         assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
         assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
@@ -851,7 +859,8 @@ def main():
                     suite=args.libero_suite, task_id=args.libero_task_id,
                     action_scaler=action_scaler, state_standardizer=state_standardizer,
                     base_policy=base_policy, base_mode=args.offline_base_mode,
-                    base_device=args.device, image_size=img_h, num_demos=args.offline_num_demos)
+                    base_device=args.device, image_size=img_h, num_demos=args.offline_num_demos,
+                    subgoal=subgoal, way_steps=args.subgoal_way_steps, feat_seqs=_pi0_seqs)
             else:
                 build_offline_buffer(
                     offline_rb, args.offline_dataset_path,

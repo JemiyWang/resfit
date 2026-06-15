@@ -45,3 +45,31 @@ def test_compute_online_subgoal_eef_piece_uses_obs_rel():
 
     z = compute_online_subgoal(_SG3(), {"observation.state": np.zeros(18, np.float32)}, _Base(), cur_rel=None)
     assert z.shape[-1] == 30
+
+
+def test_libero_offline_signature_includes_subgoal_when_conditioned():
+    from types import SimpleNamespace
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import _libero_offline_signature
+    args = SimpleNamespace(
+        libero_stats_json="/x/meta/stats.json", libero_suite="libero_10", libero_task_id=8,
+        offline_base_mode="base_policy", base_policy_type="pi05", pi0_host="127.0.0.1",
+        pi0_port=8000, pi0_action_dim=7, pi0_execute_horizon=10, action_scale=0.05,
+        min_range_per_dim=0.1, gamma=0.99, n_step=3, offline_num_demos=None,
+        subgoal_conditioned=True, gc_value_ckpt="gc.pt", high_actor_ckpt="ha.pt", subgoal_way_steps=25)
+    sig = _libero_offline_signature(args, ["observation.images.agentview"], 100, 84)
+    assert sig["subgoal"] is True
+    assert sig["subgoal_way_steps"] == 25
+    assert sig["gc_value_ckpt"].endswith("gc.pt") and sig["high_actor_ckpt"].endswith("ha.pt")
+
+
+def test_libero_offline_signature_omits_subgoal_when_off():
+    from types import SimpleNamespace
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import _libero_offline_signature
+    args = SimpleNamespace(
+        libero_stats_json="/x/meta/stats.json", libero_suite="libero_10", libero_task_id=8,
+        offline_base_mode="base_policy", base_policy_type="pi05", pi0_host="127.0.0.1",
+        pi0_port=8000, pi0_action_dim=7, pi0_execute_horizon=10, action_scale=0.05,
+        min_range_per_dim=0.1, gamma=0.99, n_step=3, offline_num_demos=None,
+        subgoal_conditioned=False)
+    sig = _libero_offline_signature(args, ["observation.images.agentview"], 100, 84)
+    assert "subgoal" not in sig
