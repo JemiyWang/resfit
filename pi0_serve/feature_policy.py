@@ -34,8 +34,25 @@ def make_prefix_feat_fn():
     """
     import jax
     import jax.numpy as _jnp
+    from flax import nnx
     from openpi.models import model as _model
     from openpi.models.pi0 import make_attn_mask
+
+    # JIT 化 prefix 前向(照 openpi nnx_utils.module_jit 模式:freeze state + jax.jit)。
+    # 否则 eager 每帧重 trace,实测 ~8.2s/帧;jit 后只首帧编译,后续 ~数十 ms。
+    _cache = {}  # (id(model), pooling) -> (frozen_state, jitted_fn)
+
+    def _build(model, pooling):
+        graphdef, state = nnx.split(model)
+
+        def _fun(state, observation):
+            m = nnx.merge(graphdef, state)
+            tok, mask, ar = m.embed_prefix(observation)               # image+prompt,不含 state
+            (prefix_out, _), _ = m.PaliGemma.llm(
+                [tok, None], mask=make_attn_mask(mask, ar), positions=_jnp.cumsum(mask, 1) - 1)
+            return pool_prefix(prefix_out, mask, pooling)             # pooling 闭包捕获=静态
+
+        return state, jax.jit(_fun)
 
     def _fn(inner, obs, pooling):
         inputs = jax.tree.map(lambda x: x, obs)                       # shallow tree map(镜像 Policy.infer:70 的 identity map)
@@ -43,10 +60,11 @@ def make_prefix_feat_fn():
         inputs = jax.tree.map(lambda x: _jnp.asarray(x)[None, ...], inputs)  # 加 batch
         observation = _model.Observation.from_dict(inputs)
         model = inner._model
-        tok, mask, ar = model.embed_prefix(observation)               # image+prompt,不含 state
-        (prefix_out, _), _ = model.PaliGemma.llm(
-            [tok, None], mask=make_attn_mask(mask, ar), positions=_jnp.cumsum(mask, 1) - 1)
-        pooled = pool_prefix(prefix_out, mask, pooling)               # [1, D]
+        key = (id(model), pooling)
+        if key not in _cache:
+            _cache[key] = _build(model, pooling)
+        state, jitted = _cache[key]
+        pooled = jitted(state, observation)                           # [1, D];首帧编译,后续走 jit cache
         return np.asarray(pooled[0], dtype=np.float32)
 
     return _fn
