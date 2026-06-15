@@ -128,9 +128,9 @@ class HiqlSubgoal:
 
     @torch.no_grad()
     def subgoal_waypoint(self, s30_base, s30_target):
-        """离线:z = φ(base=s_t, target=s_{t+k})(真航点)。输入须是已拼好的 30 维 state
-        (来自 state30 缓存,18 std + 12 标准化 rel),不是 18 维原始 state。返回 [B, rep_dim]。"""
-        assert self.state_mode != "pi0_feat", "pi0_feat 暂不支持离线 waypoint(在线走 subgoal_online + prefix_feat)"
+        """离线:z = φ(base=s_t, target=s_{t+k})(真航点)。输入须是已拼好的、与 vf.state_dim
+        同维的**已标准化** state:eef_piece=30(18 std + 12 标准化 rel)、act_feat=530、
+        pi0_feat=2056(标准化 prefix_feat ⊕ proprio,来自 pi0_feat 缓存序列)。返回 [B, rep_dim]。"""
         b = torch.as_tensor(np.asarray(s30_base), dtype=torch.float32, device=self.device)
         t = torch.as_tensor(np.asarray(s30_target), dtype=torch.float32, device=self.device)
         if b.ndim == 1:

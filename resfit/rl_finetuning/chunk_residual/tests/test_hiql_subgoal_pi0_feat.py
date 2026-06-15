@@ -49,10 +49,28 @@ def test_subgoal_online_pi0_feat_needs_prefix_feat():
         sg.subgoal_online({"observation.state": np.ones(8, np.float32)}, prefix_feat=None)
 
 
-def test_subgoal_waypoint_rejects_pi0_feat():
-    ha = _StubHA()
-    sg = HiqlSubgoal(gc_value=None, high_actor=ha, goal=np.zeros(2056, np.float32), device="cpu",
-                     state_mode="pi0_feat",
+class _StubVF(torch.nn.Module):
+    rep_dim = 10
+    state_dim = 2056
+
+    def phi(self, b, t):
+        # 返回 (B, rep_dim);用 base-target 前 rep_dim 维做可辨识输出便于断言
+        return (b[..., :self.rep_dim] - t[..., :self.rep_dim])
+
+
+def test_subgoal_waypoint_pi0_feat_returns_z():
+    sg = HiqlSubgoal(gc_value=_StubVF(), high_actor=_StubHA(),
+                     goal=np.zeros(2056, np.float32), device="cpu", state_mode="pi0_feat",
+                     feat_stats=(np.zeros(2056, np.float32), np.ones(2056, np.float32)))
+    z = sg.subgoal_waypoint(np.ones((4, 2056), np.float32), np.zeros((4, 2056), np.float32))
+    assert z.shape == (4, 10) and torch.isfinite(z).all()
+    # base=1,target=0 → phi=1-0=1
+    assert torch.allclose(z, torch.ones(4, 10))
+
+
+def test_subgoal_waypoint_pi0_feat_wrong_dim_raises():
+    sg = HiqlSubgoal(gc_value=_StubVF(), high_actor=_StubHA(),
+                     goal=np.zeros(2056, np.float32), device="cpu", state_mode="pi0_feat",
                      feat_stats=(np.zeros(2056, np.float32), np.ones(2056, np.float32)))
     with pytest.raises(AssertionError):
-        sg.subgoal_waypoint(np.zeros(2056, np.float32), np.zeros(2056, np.float32))
+        sg.subgoal_waypoint(np.ones((4, 99), np.float32), np.zeros((4, 99), np.float32))
