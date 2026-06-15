@@ -54,6 +54,10 @@ class HiqlSubgoal:
             self.extractor = extractor
             self.feat_mean = torch.as_tensor(feat_stats[0], dtype=torch.float32, device=device)
             self.feat_std = torch.as_tensor(feat_stats[1], dtype=torch.float32, device=device)
+        elif state_mode == "pi0_feat":
+            assert feat_stats is not None, "pi0_feat 须给 feat_stats(缓存的 2056 mean/std)"
+            self.feat_mean = torch.as_tensor(feat_stats[0], dtype=torch.float32, device=device)
+            self.feat_std = torch.as_tensor(feat_stats[1], dtype=torch.float32, device=device)
         else:
             raise ValueError(f"unknown state_mode: {state_mode}")
 
@@ -63,12 +67,16 @@ class HiqlSubgoal:
         gc, info = load_gc_value(gc_value_ckpt, map_location=device)
         ha, _ = load_high_actor(high_actor_ckpt, map_location=device)
         sm = info["state_mode"]
-        assert sm in ("eef_piece", "act_feat"), f"分层路 gc_value state_mode 须 eef_piece/act_feat,got {sm}"
+        assert sm in ("eef_piece", "act_feat", "pi0_feat"), \
+            f"分层路 gc_value state_mode 须 eef_piece/act_feat/pi0_feat,got {sm}"
         assert ha.rep_dim == gc.rep_dim, f"rep_dim 不一致: high_actor={ha.rep_dim} gc_value={gc.rep_dim}"
         assert ha.state_dim == gc.state_dim, f"state_dim 不一致: high_actor={ha.state_dim} gc_value={gc.state_dim}"
         if sm == "eef_piece":
             return cls(gc, ha, goal, device=device, renorm_subgoal=renorm_subgoal,
                        state_mode="eef_piece", rel_stats=(info["rel_piece_mean"], info["rel_piece_std"]))
+        if sm == "pi0_feat":
+            return cls(gc, ha, goal, device=device, renorm_subgoal=renorm_subgoal,
+                       state_mode="pi0_feat", feat_stats=(info["mean"], info["std"]))
         assert base_policy is not None, "act_feat 在线子目标须传 base_policy 建特征器"
         from resfit.rl_finetuning.chunk_residual.act_feature import ActFeatureExtractor
         sig = info["act_feat_signature"] or {}
@@ -90,10 +98,21 @@ class HiqlSubgoal:
         return torch.cat([x, rel_n], dim=-1)
 
     @torch.no_grad()
-    def subgoal_online(self, obs, rel_raw=None):
+    def subgoal_online(self, obs, rel_raw=None, prefix_feat=None):
         """eef_piece: obs 传已 std 的 state([B,18]) 或含 observation.state 的 dict(+rel_raw);
-        act_feat: obs 传含 images+observation.state 的 dict。"""
-        if self.state_mode == "eef_piece":
+        act_feat: obs 传含 images+observation.state 的 dict;
+        pi0_feat: obs 含 observation.state(proprio),prefix_feat 传冻结 pi0 prefix 特征(2048 维)。"""
+        if self.state_mode == "pi0_feat":
+            assert prefix_feat is not None, "pi0_feat 在线需 prefix_feat(从 base policy last_prefix_feat 取)"
+            proprio = torch.as_tensor(np.asarray(obs["observation.state"]), dtype=torch.float32, device=self.device)
+            pf = torch.as_tensor(np.asarray(prefix_feat), dtype=torch.float32, device=self.device)
+            if pf.ndim == 1:
+                pf = pf.unsqueeze(0)
+            if proprio.ndim == 1:
+                proprio = proprio.unsqueeze(0)
+            feat = torch.cat([pf, proprio], dim=-1)  # [B, 2056] raw(prefix 在前)
+            s = (feat - self.feat_mean) / self.feat_std
+        elif self.state_mode == "eef_piece":
             state_std = obs["observation.state"] if isinstance(obs, dict) else obs
             s = self.build_state30(state_std, rel_raw)
         else:  # act_feat
