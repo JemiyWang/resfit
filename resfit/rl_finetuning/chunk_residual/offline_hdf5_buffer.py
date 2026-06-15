@@ -17,10 +17,58 @@ from resfit.rl_finetuning.chunk_residual.hiql_potential import potential_shaping
 
 # 18 维 observation.state 的构成与顺序，严格对齐 LeRobot ankile/dexmg-... 的 names：
 # 每臂 eef_pos(3) + eef_quat(4) + gripper_qpos(2)，robot0 在前 robot1 在后。
+# 仅 two-arm Panda(three_piece/threading,gripper_qpos==2)用；多指手任务(pouring/lifttray)
+# 走 expected_low_dim_keys / assemble_state_by_env(见下)。
 STATE18_KEYS = [
     ("robot0_eef_pos", 3), ("robot0_eef_quat", 4), ("robot0_gripper_qpos", 2),
     ("robot1_eef_pos", 3), ("robot1_eef_quat", 4), ("robot1_gripper_qpos", 2),
 ]
+
+# ---------------------------------------------------------------------------
+# env-aware proprio 拼装：observation.state 的 key 集与拼接语义，**唯一真相对齐
+# 在线 dexmg wrapper** resfit/dexmg/environments/dexmg.py::_get_expected_low_dim_keys
+# + _process_obs(按 key 顺序、**完整维度 np.concatenate、不截断**)。离线不能 import
+# dexmg.py(顶层硬 import robosuite-1.5,offline build 是纯读 hdf5 的 residual env),
+# 故在此复刻同款 key 选择;test_state_assembly 守护两者不漂移。
+#
+# 维度由 hdf5/env obs 字段自然决定(实测):Panda 夹爪 gripper_qpos==2 → three_piece/
+# threading 完整拼=18(与 STATE18_KEYS 逐位等价);pouring(humanoid 双臂手)=36;
+# lifttray(两臂多指手)=38。统一走完整拼对 4 task 全正确、对 18 维路零回归。
+LOW_DIM_KEYS_SINGLE = ["robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos"]
+LOW_DIM_KEYS_MULTI = LOW_DIM_KEYS_SINGLE + [
+    "robot1_eef_pos", "robot1_eef_quat", "robot1_gripper_qpos"]
+LOW_DIM_KEYS_HUMANOID = [
+    "robot0_right_eef_pos", "robot0_right_eef_quat", "robot0_right_gripper_qpos",
+    "robot0_left_eef_pos", "robot0_left_eef_quat", "robot0_left_gripper_qpos"]
+
+# 单臂 Panda 任务名(robosuite env_name 小写,精确匹配,与 dexmg 一致)。
+_SINGLE_ARM_ENVS = {"lift", "can", "pickplacecan", "square", "nutassemblysquare", "threading"}
+
+
+def expected_low_dim_keys(hint: str) -> list:
+    """按 task 提示选 observation.state 的 proprio key 集(复刻 dexmg._get_expected_low_dim_keys)。
+
+    hint 可为 robosuite env_name(如 'TwoArmPouring')或 LeRobot dataset_id
+    (如 'ankile/dexmg-two-arm-pouring')—两者小写后用同款包含/精确匹配，对现有
+    4 个 task(three_piece/threading/pouring/lifttray)结果一致(test 守护)。
+    """
+    h = str(hint).lower()
+    if any(t in h for t in ("pouring", "coffee", "cansort", "can_sort")):
+        return list(LOW_DIM_KEYS_HUMANOID)               # humanoid 双臂手
+    if h in _SINGLE_ARM_ENVS:                            # 精确单臂 Panda(env_name 专用)
+        return list(LOW_DIM_KEYS_SINGLE)
+    return list(LOW_DIM_KEYS_MULTI)                      # 默认 two-arm(three_piece/threading/lifttray)
+
+
+def assemble_state_by_env(obs, hint: str) -> np.ndarray:
+    """从 HDF5 obs(key -> (T,d) 数组)按 env 的 key 集**完整维度**拼 (T,D) observation.state。
+
+    语义严格对齐在线 dexmg._process_obs:按 expected_low_dim_keys(hint) 顺序、每个字段取
+    完整维度、np.concatenate(不截断)。three_piece/threading 得 18(== assemble_state18),
+    pouring 得 36,lifttray 得 38。缺字段直接 KeyError(同源命门:拼不出即数据/任务不匹配)。
+    """
+    keys = expected_low_dim_keys(hint)
+    return np.concatenate([np.asarray(obs[k]) for k in keys], axis=1)
 
 
 def concat_mixed_batch(online_batch, offline_batch):

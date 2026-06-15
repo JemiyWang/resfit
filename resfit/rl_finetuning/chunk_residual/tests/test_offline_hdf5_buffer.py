@@ -101,3 +101,57 @@ def test_stage_id_uses_instant_while_reward_uses_latch():
     # reward 走闩锁 [0,1,3,3,4]：回退那步(t=2)闩锁持平 → 既不罚也不奖(0)
     r = transition_rewards(instant, bonus=1.0, mode="staged", gamma=0.99, success=True)
     assert r.tolist() == [1.0, 2.0, 0.0, 2.0]
+
+
+def test_expected_low_dim_keys_per_task():
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
+        expected_low_dim_keys, LOW_DIM_KEYS_MULTI, LOW_DIM_KEYS_HUMANOID)
+    for hint in ("ankile/dexmg-two-arm-pouring", "TwoArmPouring"):
+        assert expected_low_dim_keys(hint) == LOW_DIM_KEYS_HUMANOID
+    for hint in ("ankile/dexmg-two-arm-three-piece-assembly", "TwoArmThreePieceAssembly",
+                 "ankile/dexmg-two-arm-threading", "TwoArmThreading",
+                 "ankile/dexmg-two-arm-lift-tray", "TwoArmLiftTray"):
+        assert expected_low_dim_keys(hint) == LOW_DIM_KEYS_MULTI
+
+
+def test_assemble_state_by_env_dims():
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import assemble_state_by_env
+    T = 2
+    pouring = {"robot0_right_eef_pos": np.zeros((T, 3)), "robot0_right_eef_quat": np.zeros((T, 4)),
+               "robot0_right_gripper_qpos": np.zeros((T, 11)),
+               "robot0_left_eef_pos": np.zeros((T, 3)), "robot0_left_eef_quat": np.zeros((T, 4)),
+               "robot0_left_gripper_qpos": np.zeros((T, 11))}
+    assert assemble_state_by_env(pouring, "TwoArmPouring").shape == (T, 36)
+    lifttray = {"robot0_eef_pos": np.zeros((T, 3)), "robot0_eef_quat": np.zeros((T, 4)),
+                "robot0_gripper_qpos": np.zeros((T, 12)),
+                "robot1_eef_pos": np.zeros((T, 3)), "robot1_eef_quat": np.zeros((T, 4)),
+                "robot1_gripper_qpos": np.zeros((T, 12))}
+    assert assemble_state_by_env(lifttray, "TwoArmLiftTray").shape == (T, 38)
+
+
+def test_assemble_state_by_env_equals_state18_for_two_arm_panda():
+    # two-arm Panda(gripper_qpos==2)：完整 concat 必须与 assemble_state18 逐位相等(零回归)
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
+        assemble_state_by_env, assemble_state18, STATE18_KEYS)
+    rs = np.random.RandomState(0)
+    obs = {k: rs.randn(3, d) for k, d in STATE18_KEYS}      # gripper d==2
+    a = assemble_state_by_env(obs, "TwoArmThreePieceAssembly")
+    b = assemble_state18(obs)
+    assert a.shape == (3, 18)
+    assert np.array_equal(a, b)
+
+
+def test_expected_low_dim_keys_consistent_with_dexmg():
+    # 守护离线复刻与在线 dexmg 不漂移；dexmg 顶层硬 import robosuite-1.5，import 失败则 skip
+    import pytest
+    dexmg = pytest.importorskip(
+        "resfit.dexmg.environments.dexmg",
+        reason="dexmg 需 robosuite-1.5，CI 缺失时跳过；硬编码期望值已由其余测试兜底")
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import expected_low_dim_keys
+    # 在线 dexmg wrapper 类(唯一拥有 _get_expected_low_dim_keys 的类);它只用 env_name 不碰 self,
+    # 故可用 cls._get_expected_low_dim_keys(None, env_name) 当静态函数调。
+    cls = dexmg.RobosuiteGymWrapper
+    assert hasattr(cls, "_get_expected_low_dim_keys")
+    for env_name in ("TwoArmPouring", "TwoArmThreePieceAssembly", "TwoArmThreading", "TwoArmLiftTray"):
+        ref = cls._get_expected_low_dim_keys(None, env_name)   # 仅用 env_name，self 未使用
+        assert expected_low_dim_keys(env_name) == list(ref)
