@@ -2,7 +2,7 @@
 # pouring hdf5 路线端到端 smoke：验证全链能跑通(非训好模型)。act_feat cache 走全集(hdf5 省解码
 # ~2min;主训 act_feat subgoal 要求 cache 覆盖全部 demo),gc/high 少步,主训 base_policy 40 步。
 # 用法: CUDA_VISIBLE_DEVICES=N MUJOCO_EGL_DEVICE_ID=N bash run_act_feat_hdf5_pouring_smoke.sh
-set -uo pipefail
+set -euo pipefail
 export PYTHONPATH=/mnt/mnt/data/resfit
 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl HF_HUB_OFFLINE=1
 export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
