@@ -18,7 +18,8 @@ from resfit.rl_finetuning.chunk_residual.hiql_value import (
     build_transitions, train_value, save_value,
 )
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
-    STATE18_KEYS, assemble_state18, sorted_demo_keys,
+    STATE18_KEYS, assemble_state18, assemble_state_by_env, expected_low_dim_keys,
+    sorted_demo_keys,
 )
 from resfit.rl_finetuning.utils.normalization import StateStandardizer
 
@@ -85,7 +86,8 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
                 fr = lerobot_episode_frames(ds, ep, act_image_keys, act_proprio_key)
                 raw_seqs.append({**fr["images"], act_proprio_key: fr["state"]})
         else:
-            raw_seqs = _build_raw_obs_seqs(hdf5_path, act_image_keys, act_proprio_key, num_demos)
+            raw_seqs = _build_raw_obs_seqs(hdf5_path, act_image_keys, act_proprio_key,
+                                           num_demos, env_hint=dataset_id)
         # 命门 B:proprio 全栈 dataset-标准化(与在线 obs.state 同款)。
         proprio_std = state_standardizer
         if proprio_std is None and _raw_obs_seqs is None:   # 真 build 且未显式传 → 从 dataset stats 建
@@ -158,13 +160,19 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
     return seqs30, standardizer, (mean, std)
 
 
-def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
-    """每条 demo -> 一个 raw_obs dict(整段 T 帧):ACT image_features 键 + proprio_key。"""
+def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos, env_hint=None):
+    """每条 demo -> 一个 raw_obs dict(整段 T 帧):ACT image_features 键 + proprio_key。
+
+    proprio 按 env_hint(dataset_id/env_name)的 key 集**完整维度**拼,源头对齐在线 dexmg
+    (three_piece/threading=18、pouring=36、lifttray=38);env_hint=None 回退 18 维 STATE18(旧默认)。
+    """
     out = []
     with h5py.File(hdf5_path, "r") as f:
         eps = sorted_demo_keys(list(f["data"].keys()))
         if num_demos is not None:
             eps = eps[:num_demos]
+        keys = expected_low_dim_keys(env_hint) if env_hint is not None \
+            else [k for k, _ in STATE18_KEYS]
         for ep in eps:
             grp = f[f"data/{ep}"]
             ro = {}
@@ -172,8 +180,12 @@ def _build_raw_obs_seqs(hdf5_path, image_keys, proprio_key, num_demos):
                 name = k.replace("observation.images.", "")
                 img = torch.as_tensor(grp[f"obs/{name}_image"][()])
                 ro[k] = img.float().div(255.0).permute(0, 3, 1, 2)   # (T,H,W,C) uint8 -> (T,C,H,W) float [0,1]
-            obs_arrays = {kk: grp[f"obs/{kk}"][()] for kk, _ in STATE18_KEYS}
-            ro[proprio_key] = torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)
+            obs_arrays = {kk: grp[f"obs/{kk}"][()] for kk in keys}
+            if env_hint is not None:
+                state = assemble_state_by_env(obs_arrays, env_hint)
+            else:
+                state = assemble_state18(obs_arrays)
+            ro[proprio_key] = torch.as_tensor(state, dtype=torch.float32)
             out.append(ro)
     return out
 

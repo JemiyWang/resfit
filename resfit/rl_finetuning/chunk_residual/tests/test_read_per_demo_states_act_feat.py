@@ -124,3 +124,44 @@ def test_act_feat_lerobot_source(tmp_path):
     assert std is None and seqs[0].shape == (3, 22)
     # proprio 经 dataset-标准化:(5-1)/2 = 2.0
     assert torch.allclose(_RecExtractor.captured["proprio"], torch.full((3, 18), 2.0))
+
+
+def test_build_raw_obs_seqs_env_hint_pouring(tmp_path):
+    """env_hint=pouring → proprio 按 humanoid key 集完整拼 36 维；图像处理不变。"""
+    import h5py
+    import numpy as np
+    import torch
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import _build_raw_obs_seqs
+    T = 3
+    p = str(tmp_path / "pour.hdf5")
+    fields = {"robot0_right_eef_pos": 3, "robot0_right_eef_quat": 4, "robot0_right_gripper_qpos": 11,
+              "robot0_left_eef_pos": 3, "robot0_left_eef_quat": 4, "robot0_left_gripper_qpos": 11}
+    with h5py.File(p, "w") as f:
+        g = f.create_group("data/demo_0")
+        g.create_dataset("obs/agentview_image",
+                         data=(np.arange(T * 84 * 84 * 3).reshape(T, 84, 84, 3) % 256).astype(np.uint8))
+        for k, d in fields.items():
+            g.create_dataset(f"obs/{k}", data=np.zeros((T, d), np.float32))
+    seqs = _build_raw_obs_seqs(p, ["observation.images.agentview"], "observation.state",
+                               num_demos=None, env_hint="ankile/dexmg-two-arm-pouring")
+    assert seqs[0]["observation.state"].shape == (T, 36)
+    assert seqs[0]["observation.images.agentview"].shape == (T, 3, 84, 84)
+
+
+def test_build_raw_obs_seqs_env_hint_none_backcompat(tmp_path):
+    """env_hint=None → 回退旧 18 维 STATE18 行为(零回归)。"""
+    import h5py
+    import numpy as np
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import _build_raw_obs_seqs
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import STATE18_KEYS
+    T = 2
+    p = str(tmp_path / "tp.hdf5")
+    with h5py.File(p, "w") as f:
+        g = f.create_group("data/demo_0")
+        g.create_dataset("obs/agentview_image",
+                         data=np.zeros((T, 84, 84, 3), np.uint8))
+        for k, d in STATE18_KEYS:
+            g.create_dataset(f"obs/{k}", data=np.zeros((T, d), np.float32))
+    seqs = _build_raw_obs_seqs(p, ["observation.images.agentview"], "observation.state",
+                               num_demos=None)
+    assert seqs[0]["observation.state"].shape == (T, 18)
