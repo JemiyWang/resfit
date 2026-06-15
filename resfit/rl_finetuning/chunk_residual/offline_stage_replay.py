@@ -23,6 +23,8 @@ import dexmimicgen  # noqa: F401  注册 dexmg 环境(import 副作用必需)
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
     STATE18_KEYS,
     assemble_state18,
+    assemble_state_by_env,
+    expected_low_dim_keys,
     load_stage_cache,
     save_stage_cache,
     sorted_demo_keys,
@@ -153,16 +155,21 @@ def precompute_stage_cache(dataset_path, out_path, num_demos=None) -> int:
     return len(stages)
 
 
-def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device):
+def _demo_base_actions(base_policy, grp, image_keys, action_scaler, device, env_hint=None):
     """逐帧顺序复现在线 queue 语义,返回 scale 后的 base_action (T, action_dim)。
 
     与在线 chunk_env_wrapper._base_chunk_flat(queue,:94-97)对齐:每 demo 先 base_policy.reset()
     清 ACT action queue,再按帧顺序调 select_action(内部自管队列,空了才前向、否则弹队列),
-    故必须顺序、不可批。raw_obs 严格对齐 env 运行时 _process_obs:observation.state=原始18维
-    float32(未标准化);图像 uint8 HWC → float32 CHW /255。action_scaler.scale 把原始尺度 base
+    故必须顺序、不可批。raw_obs 严格对齐 env 运行时 _process_obs:observation.state=原始 D 维
+    float32(未标准化；D 由 env_hint 决定,默认 18);图像 uint8 HWC → float32 CHW /255。action_scaler.scale 把原始尺度 base
     动作转到与 act_n 同一缩放空间。
+    env_hint 非 None 时按 task 拼装 env-aware proprio(pouring=36/lifttray=38),否则回退 STATE18。
     """
-    state_raw = assemble_state18({k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS})  # (T,18) 原始
+    if env_hint is not None:
+        keys = expected_low_dim_keys(env_hint)
+        state_raw = assemble_state_by_env({k: grp[f"obs/{k}"][()] for k in keys}, env_hint)
+    else:
+        state_raw = assemble_state18({k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS})  # (T,18) 原始
     state_t = torch.as_tensor(np.asarray(state_raw), dtype=torch.float32)
     T = state_t.shape[0]
     if T == 0:
@@ -188,11 +195,11 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                          stage_cache=None, potential=None, subgoal=None, way_steps=25,
                          act_feat_seqs=None,
                          data_source="hdf5", lerobot_repo_id=None, lerobot_root=None, _lerobot_ds=None,
-                         base_policy=None, base_mode="gt", base_device="cpu") -> int:
+                         base_policy=None, base_mode="gt", base_device="cpu", env_hint=None) -> int:
     """从源 HDF5 灌装 offline demo transition 到 rb,返回新增条数。
 
     GT-as-base:obs.base_action 与 action 都用缩放后的 GT 动作(残差目标 = 0,把 actor
-    锚在 demo 流形)。obs.state=18 维标准化;图像 HWC uint8 → CHW;obs.stage_id=瞬时;
+    锚在 demo 流形)。obs.state=D 维标准化(D 由 env_hint 决定,默认 18);图像 HWC uint8 → CHW;obs.stage_id=瞬时;
     reward/done/max_stage 由 transition_fields 给(reward 闩锁、stage_id 瞬时,见解耦)。
     transition 结构严格对齐 train_chunk_residual.add_chunk_transition。
 
@@ -238,6 +245,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 _af_by_ep = dict(zip(demos, act_feat_seqs))
             if num_demos is not None:
                 demos = demos[:num_demos]
+            _env_keys = expected_low_dim_keys(env_hint) if env_hint is not None else None
             for ep in demos:
                 grp = f[f"data/{ep}"]
                 states = grp["states"][()]
@@ -257,9 +265,14 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                 T = len(instant)
                 if T < 2:
                     continue
-                obs_arrays = {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS}
+                if _env_keys is not None:
+                    _state_raw = assemble_state_by_env(
+                        {k: grp[f"obs/{k}"][()] for k in _env_keys}, env_hint)
+                else:
+                    _state_raw = assemble_state18(
+                        {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS})
                 state_n = state_standardizer.standardize(
-                    torch.as_tensor(assemble_state18(obs_arrays), dtype=torch.float32)).cpu()
+                    torch.as_tensor(_state_raw, dtype=torch.float32)).cpu()
                 rel_seq = None
                 if need_rel:                          # eef_piece:replay 算 raw rel_piece(T,12)
                     if env is None:                   # 懒建(stage cache 命中时 stage 分支没起 env)
@@ -276,7 +289,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
                 if base_mode == "base_policy":
                     base_n = _demo_base_actions(base_policy, grp, image_keys,
-                                                action_scaler, base_device)  # (T,D) base 现算
+                                                action_scaler, base_device, env_hint=env_hint)  # (T,D) base 现算
                 else:
                     base_n = act_n                                            # gt:GT-as-base(逐位等价)
                 imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])
