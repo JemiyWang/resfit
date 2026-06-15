@@ -2,7 +2,7 @@
 
 验证:
   命门 A (image): online env obs 图像与 offline build 一致 (CHW float32 [0,1])。
-  命门 B (proprio): online observation.state (原始18维) 经同款 dataset-standardize
+  命门 B (proprio): online observation.state (原始 Dp 维(env-aware,由 task 决定)) 经同款 dataset-standardize
                     后与 offline HDF5 同帧 proprio 对齐。
   净结论: 同一物理状态的冻结-ACT 530-dim 特征 offline ≈ online (max_abs_diff 水平)。
 
@@ -77,8 +77,7 @@ def main():
 
     extractor = ActFeatureExtractor(act, image_keys, proprio_key="observation.state",
                                     pooling="mean", proprio_dim=18)
-    feat_dim = extractor.feature_dim
-    print(f"  feature_dim={feat_dim}")
+    # feature_dim will be re-printed after state_raw is read (Fix 2: reflect actual per-task Dp)
 
     # ------------------------------------------------------------------
     # 2. Build StateStandardizer from dataset stats
@@ -97,7 +96,7 @@ def main():
     # 3. Identify demo + pick frames
     # ------------------------------------------------------------------
     from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
-        STATE18_KEYS, assemble_state18, sorted_demo_keys)
+        assemble_state_by_env, expected_low_dim_keys, sorted_demo_keys)
 
     with h5py.File(hdf5_path, "r") as f:
         demo_keys = sorted_demo_keys(list(f["data"].keys()))
@@ -120,9 +119,12 @@ def main():
         def hdf5_img_key(lerobot_key: str) -> str:
             return lerobot_key.split("observation.images.")[-1] + "_image"
 
-        # Read all needed data
-        obs_arrays = {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS}
-        state18_raw = assemble_state18(obs_arrays)  # (T,18) float64
+        # Read all needed data (env-aware proprio keys)
+        keys = expected_low_dim_keys(args.task)
+        obs_arrays = {k: grp[f"obs/{k}"][()] for k in keys}
+        state_raw = assemble_state_by_env(obs_arrays, args.task)   # (T,Dp) raw
+        # Fix 2: update extractor's proprio_dim to match actual task dim so feature_dim prints correctly
+        extractor._proprio_dim = int(state_raw.shape[1])
         demo_states = grp["states"][()]             # (T, state_dim) mujoco flat states
         model_file = grp.attrs["model_file"]
         ep_meta = grp.attrs.get("ep_meta", None)
@@ -131,6 +133,9 @@ def main():
         for k in image_keys:
             hk = hdf5_img_key(k)
             imgs_hdf5[k] = grp[f"obs/{hk}"][()]   # (T,H,W,3) uint8
+
+    # Print feature_dim now that proprio_dim reflects the actual task dim (Fix 2)
+    print(f"  feature_dim={extractor.feature_dim}  (dim_model={act.config.dim_model} + proprio_dim={extractor._proprio_dim})")
 
     # ------------------------------------------------------------------
     # 4. Build OFFLINE features for selected frames
@@ -145,18 +150,18 @@ def main():
             img_t = torch.as_tensor(img_np, dtype=torch.float32).div(255.0).permute(2, 0, 1)  # (3,H,W)
             off_imgs[ik] = img_t.unsqueeze(0)      # (1,3,H,W)
 
-        # Proprio: assemble_state18 → dataset-standardize
-        s18 = torch.as_tensor(state18_raw[k], dtype=torch.float32).unsqueeze(0)  # (1,18)
-        s18_std = state_std.standardize(s18)       # (1,18) normalized
+        # Proprio: assemble_state_by_env → dataset-standardize
+        s_raw = torch.as_tensor(state_raw[k], dtype=torch.float32).unsqueeze(0)  # (1,Dp)
+        s_std = state_std.standardize(s_raw)       # (1,Dp) normalized
 
         raw_obs = {ik: off_imgs[ik].to(device) for ik in image_keys}
-        raw_obs["observation.state"] = s18_std.to(device)
+        raw_obs["observation.state"] = s_std.to(device)
 
         feat = extractor.embed_batch(raw_obs).cpu().numpy()  # (1, feat_dim)
         feat_offs[k] = feat[0]
         print(f"  frame {k}: offline feat shape={feat.shape}  finite={np.all(np.isfinite(feat))}")
-        print(f"           offline s18_raw[:5]={state18_raw[k][:5]}")
-        print(f"           offline s18_std[:5]={s18_std.numpy()[0][:5]}")
+        print(f"           offline state_raw[:5]={state_raw[k][:5]}")
+        print(f"           offline state_std[:5]={s_std.numpy()[0][:5]}")
 
     # ------------------------------------------------------------------
     # 5. Build ONLINE features via env replay (exact-state path)
@@ -200,12 +205,15 @@ def main():
     print(f"  MUJOCO_EGL_DEVICE_ID={egl_id}")
 
     print(f"  Creating rendering env for {args.task} ...")
-    robots_map = {
-        "TwoArmThreePieceAssembly": ["Panda", "Panda"],
-        "TwoArmThreading": ["Panda", "Panda"],
-        "TwoArmTransport": ["Panda", "Panda"],
-    }
-    robots = robots_map.get(args.task, ["Panda", "Panda"])
+    # Read robots from already-read env_meta_str (no second HDF5 open needed)
+    robots = ["Panda", "Panda"]
+    if env_meta_str is not None:
+        _ek = json.loads(env_meta_str).get("env_kwargs", {})
+        if _ek.get("robots"):
+            robots = _ek["robots"]
+            if isinstance(robots, str):
+                robots = [robots]
+    print(f"  robots={robots}")
 
     render_env = robosuite.make(
         env_name=args.task,
@@ -239,6 +247,9 @@ def main():
     exact_state_path = True
     feat_ons = {}
     online_img_stats = {}
+    # Fix 3a: hoist on_keys out of per-frame loop (computed once, same for all frames)
+    on_keys = expected_low_dim_keys(args.task)
+    b_proprio_matches = []  # Fix 1b: accumulate per-frame proprio match for 命门B verdict
 
     for k in frames:
         # Set to exact demo state
@@ -281,35 +292,37 @@ def main():
         if not exact_state_path:
             break
 
-        # Proprio: env uses same keys as assemble_state18 → concatenate raw floats
+        # Proprio: env uses same keys as expected_low_dim_keys(task) → concatenate raw floats (full dim, no truncation)
         on_state_parts = []
-        for key_name, dim in STATE18_KEYS:
+        for key_name in on_keys:
             if key_name in raw_rs_obs:
-                arr = np.asarray(raw_rs_obs[key_name]).astype(np.float32)
-                on_state_parts.append(arr[:dim])
+                on_state_parts.append(np.asarray(raw_rs_obs[key_name]).astype(np.float32))
             else:
                 print(f"  WARNING: proprio key {key_name} not in env obs")
                 exact_state_path = False
                 break
-
         if not exact_state_path:
             break
 
-        on_s18_raw = np.concatenate(on_state_parts)  # (18,)
-        on_s18_t = torch.as_tensor(on_s18_raw, dtype=torch.float32).unsqueeze(0)  # (1,18)
-        on_s18_std = state_std.standardize(on_s18_t)  # (1,18) normalized
+        on_state_raw = np.concatenate(on_state_parts)  # (Dp,)
+        on_state_t = torch.as_tensor(on_state_raw, dtype=torch.float32).unsqueeze(0)  # (1,Dp)
+        on_state_std = state_std.standardize(on_state_t)  # (1,Dp) normalized
 
-        print(f"  frame {k}: online s18_raw[:5]={on_s18_raw[:5]}")
-        print(f"           online s18_std[:5]={on_s18_std.numpy()[0][:5]}")
+        print(f"  frame {k}: online state_raw[:5]={on_state_raw[:5]}")
+        print(f"           online state_std[:5]={on_state_std.numpy()[0][:5]}")
 
         # Compare proprio (命门 B structure check)
-        off_s18_raw = state18_raw[k].astype(np.float32)
-        proprio_raw_match = np.allclose(on_s18_raw, off_s18_raw, atol=1e-4)
-        print(f"  frame {k}: proprio raw allclose(atol=1e-4)={proprio_raw_match}  "
-              f"max_diff={np.abs(on_s18_raw - off_s18_raw).max():.2e}")
+        # atol=1e-2: EGL set_state_from_flattened + forward-kinematics introduces ~6e-4 float
+        # noise on frames away from reset. 1e-4 would false-FAIL; 1e-2 is safely above that
+        # noise floor but far below any real key-set/layout mismatch (~0.1+).
+        off_state_raw = state_raw[k].astype(np.float32)
+        proprio_raw_match = np.allclose(on_state_raw, off_state_raw, atol=1e-2)
+        print(f"  frame {k}: proprio raw allclose(atol=1e-2)={proprio_raw_match}  "
+              f"max_diff={np.abs(on_state_raw - off_state_raw).max():.2e}")
+        b_proprio_matches.append(bool(proprio_raw_match))  # Fix 1b: accumulate for 命门B verdict
 
         raw_obs_on = {ik: on_imgs[ik].to(device) for ik in image_keys}
-        raw_obs_on["observation.state"] = on_s18_std.to(device)
+        raw_obs_on["observation.state"] = on_state_std.to(device)
 
         feat_on = extractor.embed_batch(raw_obs_on).cpu().numpy()  # (1, feat_dim)
         feat_ons[k] = feat_on[0]
@@ -336,16 +349,10 @@ def main():
 
     if exact_state_path and feat_ons:
         # --- 命门 B: proprio convention ---
-        b_ok = True
-        for k in frames:
-            if k not in feat_ons:
-                continue
-            off_s18 = state18_raw[k].astype(np.float32)
-            on_s18_t = torch.as_tensor(state18_raw[k], dtype=torch.float32).unsqueeze(0)
-            # recompute from env directly via comparing offline HDF5 s18_raw vs what env gave
-            # (checked per-frame above); here just reconfirm from feat comparison proxy
-            b_ok = True  # tracked per-frame above, summarise
-        all_pass &= _verdict("命门B: online proprio raw == offline HDF5 proprio (same 18-dim concatenation)", b_ok)
+        # Fix 1b: verdict is AND of per-frame proprio allclose (atol=1e-2) collected in the loop.
+        # A real key-set/layout mismatch yields max_diff ~0.1+; EGL replay noise is ~6e-4 — gate is meaningful.
+        b_ok = bool(b_proprio_matches) and all(b_proprio_matches)
+        all_pass &= _verdict("命门B: online proprio raw == offline HDF5 proprio (env-aware full-dim concatenation)", b_ok)
 
         # --- numeric feature allclose ---
         for k in frames:
