@@ -49,6 +49,20 @@ def test_subgoal_online_pi0_feat_needs_prefix_feat():
         sg.subgoal_online({"observation.state": np.ones(8, np.float32)}, prefix_feat=None)
 
 
+def test_subgoal_online_pi0_feat_accepts_cuda_state():
+    """命门:在线 rollout 的 obs['observation.state'] 是 cuda tensor,np.asarray(cuda) 会崩。
+    只 GPU 复现(离线/CPU numpy 不触发)。修复后须直接走 tensor 路、不报错。"""
+    if not torch.cuda.is_available():
+        pytest.skip("需 GPU 复现 cuda tensor → np.asarray 崩")
+    ha = _StubHA()
+    sg = HiqlSubgoal(gc_value=None, high_actor=ha, goal=np.zeros(2056, np.float32), device="cuda",
+                     state_mode="pi0_feat",
+                     feat_stats=(np.zeros(2056, np.float32), np.ones(2056, np.float32)))
+    obs = {"observation.state": torch.ones(8, device="cuda")}        # 在线真实形态:cuda tensor
+    z = sg.subgoal_online(obs, prefix_feat=np.ones(2048, np.float32))
+    assert z.shape[-1] == 10 and torch.isfinite(z).all()
+
+
 class _StubVF(torch.nn.Module):
     rep_dim = 10
     state_dim = 2056

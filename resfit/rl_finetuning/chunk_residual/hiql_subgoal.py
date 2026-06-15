@@ -106,8 +106,12 @@ class HiqlSubgoal:
         pi0_feat: obs 含 observation.state(proprio),prefix_feat 传冻结 pi0 prefix 特征(2048 维)。"""
         if self.state_mode == "pi0_feat":
             assert prefix_feat is not None, "pi0_feat 在线需 prefix_feat(从 base policy last_prefix_feat 取)"
-            proprio = torch.as_tensor(np.asarray(obs["observation.state"]), dtype=torch.float32, device=self.device)
-            pf = torch.as_tensor(np.asarray(prefix_feat), dtype=torch.float32, device=self.device)
+            def _to_dev(x):   # 在线 obs.state 是 cuda tensor(env 在 device 上);np.asarray(cuda) 会崩,须先判 tensor
+                if isinstance(x, torch.Tensor):
+                    return x.detach().to(dtype=torch.float32, device=self.device)
+                return torch.as_tensor(np.asarray(x), dtype=torch.float32, device=self.device)
+            proprio = _to_dev(obs["observation.state"])
+            pf = _to_dev(prefix_feat)
             if pf.ndim == 1:
                 pf = pf.unsqueeze(0)
             if proprio.ndim == 1:
