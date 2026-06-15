@@ -22,7 +22,8 @@ from resfit.rl_finetuning.chunk_residual.train_hiql_gc_value import (
     stage_entries_aligned, validate_stage_cache,
 )
 from resfit.rl_finetuning.chunk_residual.train_hiql_value import (
-    add_act_feat_args, assert_act_feat_pair_consistent,
+    add_act_feat_args, add_pi0_feat_args, assert_act_feat_pair_consistent,
+    validate_pi0_feat_cfg,
 )
 
 
@@ -52,9 +53,11 @@ def build_parser():
                    help="clamp_to_goal 下高层 goal 取 random 的概率(HIQL 默认 0.3;fixed_waypoint 下须为 0)")
     p.add_argument("--adv_agg", choices=["min", "mean"], default="mean",
                    help="高层优势双 critic 聚合:min=min(vw)-min(vs)旧行为;mean=均值(对齐HIQL,默认)")
-    p.add_argument("--state_mode", choices=["eef_piece", "act_feat"], default="eef_piece",
-                   help="state 来源:eef_piece(默认,30 维 sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)")
+    p.add_argument("--state_mode", choices=["eef_piece", "act_feat", "pi0_feat"], default="eef_piece",
+                   help="state 来源:eef_piece(默认,30 维 sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)"
+                        "|pi0_feat(冻结 pi0 prefix 特征,须已存在 --pi0_feat_cache)")
     add_act_feat_args(p)
+    add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 本地数据根目录")
@@ -74,11 +77,28 @@ def main():
         validate_act_feat_cfg, setup_act_feat, read_per_demo_states,
         validate_data_source_cfg)
     validate_act_feat_cfg(args)
+    validate_pi0_feat_cfg(args)
     validate_data_source_cfg(args)
-    if args.state_mode != "act_feat" and args.state30_cache is None:
+    if args.state_mode not in ("act_feat", "pi0_feat") and args.state30_cache is None:
         warnings.warn("--state30_cache 未设置,将触发完整 MuJoCo 回放(可能耗时数小时);建议指向 state30 缓存 npz", stacklevel=2)
     validate_stage_cache(args.stage_cache, needs_stage=high_actor_needs_stage(args))
-    if args.state_mode == "act_feat":
+    if args.state_mode == "pi0_feat":
+        from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+        _, _, _cache_sig = load_pi0_feat_cache(args.pi0_feat_cache)
+        # 防张冠李戴:缓存签名核心字段须与 CLI 传入一致
+        for k, v in (("serve_ckpt_id", args.pi0_serve_ckpt_id), ("image_keys", args.pi0_image_keys),
+                     ("proprio_key", args.pi0_proprio_key), ("pooling", args.pi0_pooling),
+                     ("prompt", args.pi0_prompt)):
+            if _cache_sig.get(k) != v:
+                raise ValueError(
+                    f"缓存签名 {k}={_cache_sig.get(k)!r} 与 CLI {v!r} 不符(指向了错误的缓存?)")
+        seqs, _, _ = read_per_demo_states(
+            args.hdf5, args.dataset, "pi0_feat", num_demos=args.num_demos,
+            pi0_feat_cache=args.pi0_feat_cache, pi0_feat_signature=_cache_sig)
+        pi0_sig = _cache_sig
+        act_sig = None
+        effective_num_demos = _cache_sig.get("num_demos")
+    elif args.state_mode == "act_feat":
         extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
         seqs, _, _ = read_per_demo_states(
             args.hdf5, args.dataset, "act_feat", num_demos=args.num_demos,
@@ -86,11 +106,16 @@ def main():
             act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
             act_proprio_key=args.act_proprio_key, pooling=args.pooling,
             data_source=args.data_source, lerobot_root=args.lerobot_root)
+        pi0_sig = None
+        effective_num_demos = args.num_demos
     else:
         seqs = load_or_build_state30(args.hdf5, args.dataset, args.num_demos, args.state30_cache)
         act_sig = None
+        pi0_sig = None
+        effective_num_demos = args.num_demos
     seq_lens = [len(s) for s in seqs]
-    stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, args.num_demos, seq_lens)
+    # pi0_feat 时用缓存签名的 num_demos(与 seqs 长度自洽);其余用 CLI args.num_demos
+    stage_entries = stage_entries_aligned(args.hdf5, args.stage_cache, effective_num_demos, seq_lens)
     assert len(seqs) == len(stage_entries), \
         f"seqs/stage_entries 长度不一致: {len(seqs)} vs {len(stage_entries)}"
     data = build_gc_data(seqs, stage_entries)
@@ -113,6 +138,7 @@ def main():
                     way_steps=args.way_steps, beta=args.beta,
                     target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal,
                     adv_agg=args.adv_agg, act_feat_signature=act_sig,
+                    pi0_feat_signature=pi0_sig,
                     state_mode=args.state_mode)
     print(f"[hiql_high] saved {args.output}")
 
