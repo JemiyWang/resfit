@@ -27,6 +27,7 @@ class LiberoPi05Adapter:
         self.device = device
         self._queues = []                    # per-env deque
         self.config = _Cfg({self.BASE_KEY: None, self.WRIST_KEY: None})
+        self._last_prefix_feat = None        # 最近一次 serve infer 返回的 prefix_feat
 
     @classmethod
     def from_policy(cls, policy, *, prompt, action_dim=7, device="cpu",
@@ -39,8 +40,13 @@ class LiberoPi05Adapter:
         while len(self._queues) < b:
             self._queues.append(deque())
 
+    def last_prefix_feat(self):
+        """最近一次 serve infer 返回的 prefix_feat(queue 边界更新);serve 未透特征则 None。"""
+        return self._last_prefix_feat
+
     def _infer_chunk(self, obs):
         result = self.policy.infer(obs)
+        self._last_prefix_feat = result.get("prefix_feat")   # None 当 serve 不透特征
         if "actions" not in result:
             raise ValueError("policy.infer(...) 必须返回含 'actions' 的 mapping")
         actions = np.asarray(result["actions"], dtype=np.float32)
