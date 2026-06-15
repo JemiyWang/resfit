@@ -158,6 +158,10 @@ def build_libero_offline_buffer(offline_rb, *, lerobot_root, suite, task_id,
     paths = find_demo_episodes(lerobot_root, language)
     if num_demos is not None:
         paths = paths[:num_demos]
+    if subgoal is not None:
+        assert len(feat_seqs) >= len(paths), \
+            f"feat_seqs 数 {len(feat_seqs)} < demo 数 {len(paths)}" \
+            "(须传与 find_demo_episodes 同序的全量 pi0_feat 缓存序列)"
     for i, p in enumerate(paths):
         demo = read_libero_demo(p)
         T = demo["state"].shape[0]

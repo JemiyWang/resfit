@@ -273,3 +273,20 @@ def test_build_libero_offline_buffer_subgoal_frame_mismatch(monkeypatch):
             action_scaler=_IdScaler(), state_standardizer=_IdStd(), base_policy=None,
             base_mode="gt", base_device="cpu", image_size=84,
             subgoal=_StubSubgoal(), way_steps=2, feat_seqs=[np.zeros((99, 2056), np.float32)])
+
+
+def test_build_libero_offline_buffer_subgoal_too_few_feat_seqs(monkeypatch):
+    import pytest
+    from torchrl.data import LazyTensorStorage, TensorDictPrioritizedReplayBuffer
+    import resfit.rl_finetuning.chunk_residual.libero_offline as lo
+    monkeypatch.setattr(lo, "find_demo_episodes", lambda root, lang: ["p0", "p1"])  # 2 demo
+    monkeypatch.setattr(lo, "read_libero_demo", lambda p: _toy_demo(T=3))
+    monkeypatch.setattr(lo, "libero_task_language", lambda s, t: "L")
+    rb = TensorDictPrioritizedReplayBuffer(
+        storage=LazyTensorStorage(max_size=4, device="cpu"),
+        alpha=0.0, beta=0.0, eps=1e-6, priority_key="_priority", batch_size=2)
+    with pytest.raises(AssertionError):
+        lo.build_libero_offline_buffer(rb, lerobot_root="root", suite="libero_10", task_id=8,
+            action_scaler=_IdScaler(), state_standardizer=_IdStd(), base_policy=None,
+            base_mode="gt", base_device="cpu", image_size=84,
+            subgoal=_StubSubgoal(), way_steps=2, feat_seqs=[np.ones((3, 2056), np.float32)])  # 只给 1 条,<2 demo
