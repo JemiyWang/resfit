@@ -267,10 +267,12 @@ def unpack_state_aux(standardizer, aux, state_mode):
     return standardizer._mean.cpu(), standardizer._std.cpu(), aux
 
 
-def assert_act_feat_pair_consistent(gc_info, act_sig, state_mode):
+def assert_act_feat_pair_consistent(gc_info, act_sig, state_mode, *, pi0_sig=None):
     """high_actor 加载 gc_value 时的同源校验:state_mode 必须一致;
     act_feat 时再比对特征签名的核心字段(act_ckpt_id/image_keys/proprio_key/pooling),
-    容忍一侧多带 dataset_id/num_demos(build 路是 4 字段,cache-hit 路是 6 字段)。"""
+    容忍一侧多带 dataset_id/num_demos(build 路是 4 字段,cache-hit 路是 6 字段)。
+    pi0_feat 时比对 gc_value 与 high_actor 的 pi0_feat_signature 核心字段
+    (serve_ckpt_id/image_keys/proprio_key/pooling/prompt),防止异源缓存静默通过。"""
     assert gc_info.get("state_mode") == state_mode, (
         f"high_actor state_mode={state_mode} 与 gc_value state_mode={gc_info.get('state_mode')} 不一致(异源)")
     if state_mode == "act_feat":
@@ -280,6 +282,13 @@ def assert_act_feat_pair_consistent(gc_info, act_sig, state_mode):
         bad = [k for k in core if gv.get(k) != ha.get(k)]
         assert not bad, (
             f"act_feat gc_value/high_actor 特征签名核心字段不一致 {bad}: gc_value={gv} vs high_actor={ha}")
+    if state_mode == "pi0_feat":
+        core = ("serve_ckpt_id", "image_keys", "proprio_key", "pooling", "prompt")
+        gv = gc_info.get("pi0_feat_signature") or {}
+        ha = pi0_sig or {}
+        bad = [k for k in core if gv.get(k) != ha.get(k)]
+        assert not bad, (
+            f"pi0_feat gc_value/high_actor 签名核心字段不一致 {bad}: gc={gv} vs ha={ha}")
 
 
 def add_act_feat_args(p):

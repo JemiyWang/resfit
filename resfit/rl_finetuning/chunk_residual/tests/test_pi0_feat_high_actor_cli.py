@@ -42,3 +42,16 @@ def test_validate_pi0_feat_cfg_noop_for_eef_piece():
     a = build_parser().parse_args(["--hdf5", "x", "--dataset", "d", "--gc_value_ckpt", "gc.pt"])
     # 默认 eef_piece -> validate 应不 raise
     validate_pi0_feat_cfg(a)
+
+
+def test_assert_pair_consistent_pi0_feat_signature_mismatch():
+    """pi0_feat 时,gc_value 与 high_actor 签名核心字段不一致应 AssertionError;一致则通过。"""
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import assert_act_feat_pair_consistent
+    gc_info = {"state_mode": "pi0_feat",
+               "pi0_feat_signature": {"serve_ckpt_id": "pi0_libero", "image_keys": ["a"],
+                                      "proprio_key": "observation.state", "pooling": "last", "prompt": "x"}}
+    ha_sig = dict(gc_info["pi0_feat_signature"], pooling="mean")   # 故意不一致
+    with pytest.raises(AssertionError):
+        assert_act_feat_pair_consistent(gc_info, None, "pi0_feat", pi0_sig=ha_sig)
+    # 一致则不报
+    assert_act_feat_pair_consistent(gc_info, None, "pi0_feat", pi0_sig=gc_info["pi0_feat_signature"])

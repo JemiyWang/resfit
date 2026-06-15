@@ -10,6 +10,7 @@
 
 state30_cache 命中则秒读回放后的 30 维 state(否则首次 MuJoCo 回放全 demo 并落盘)。
 支持 --state_mode act_feat(配 --act_feat_cache/--act_base_ckpt,走 read_per_demo_states 取冻结 ACT 特征)。
+也支持 --state_mode pi0_feat(配 --pi0_feat_cache/--pi0_serve_ckpt_id 等,走缓存 pi0 prefix 特征当 state)。
 设计见 docs/superpowers/specs/2026-06-08-hiql-hierarchy-residual-design.md。
 """
 import argparse
@@ -124,7 +125,7 @@ def main():
         f"gc_value 训练集 {info['dataset_id']!r} 与当前 --dataset {args.dataset!r} 不一致(异源 ckpt)"
     assert data["states"].shape[1] == vf.state_dim, \
         f"state_dim {data['states'].shape[1]} != gc_value {vf.state_dim}(gc_value state_mode={info['state_mode']},须同源)"
-    assert_act_feat_pair_consistent(info, act_sig, args.state_mode)
+    assert_act_feat_pair_consistent(info, act_sig, args.state_mode, pi0_sig=pi0_sig)
     print(f"[hiql_high] demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={vf.state_dim} rep_dim={vf.rep_dim} way_steps={args.way_steps} "
           f"target_mode={args.target_mode} high_p_randomgoal={args.high_p_randomgoal} "
