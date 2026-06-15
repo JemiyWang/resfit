@@ -173,6 +173,17 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
     return base_policy
 
 
+def compute_online_subgoal(subgoal, obs, base_policy, cur_rel=None):
+    """按 state_mode 选特征来源出 z。
+
+    pi0_feat: 取 base_policy.last_prefix_feat()(冻结 pi0 prefix 特征)传 subgoal_online。
+    act_feat / eef_piece: 走 subgoal_online(obs, cur_rel)(原有路径,不变)。
+    """
+    if subgoal.state_mode == "pi0_feat":
+        return subgoal.subgoal_online(obs, prefix_feat=base_policy.last_prefix_feat())
+    return subgoal.subgoal_online(obs, cur_rel)
+
+
 def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, potential=None):
     """决定 offline buffer 内容的全部参数;任一变化都意味着旧缓存失效需重建。
 
@@ -433,6 +444,8 @@ def build_parser():
                    help="关闭 online z 投球面(回到旧版逐位行为)")
     p.add_argument("--act_feat_cache", default=None,
                    help="act_feat 子目标:530 序列缓存(算 goal + 同源签名校验);仅 act_feat gc_value 用")
+    p.add_argument("--pi0_feat_cache", default=None,
+                   help="pi0_feat 子目标:pi0 prefix 特征序列缓存(算 goal + 同源签名校验);仅 pi0_feat gc_value 用")
     p.add_argument("--stage_budget", default=None,
                    help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
     p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="base_policy",
@@ -728,6 +741,23 @@ def main():
             subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
                                              goal=goal, device=args.device,
                                              renorm_subgoal=args.renorm_subgoal, base_policy=base_policy)
+        elif _sm == "pi0_feat":
+            assert args.pi0_feat_cache, "pi0_feat 子目标需 --pi0_feat_cache(算 goal + 同源)"
+            from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+            _pi0_seqs, _pi0_stats, _pi0_cache_sig = load_pi0_feat_cache(args.pi0_feat_cache)
+            assert _gc_info.get("pi0_feat_signature"), \
+                "gc_value 缺 pi0_feat_signature(须用 --state_mode pi0_feat 重训该 gc_value)"
+            _pi0_gv_sig = _gc_info["pi0_feat_signature"]
+            for k in ("image_keys", "proprio_key", "pooling"):
+                if _pi0_gv_sig.get(k) is not None:
+                    assert _pi0_cache_sig.get(k) == _pi0_gv_sig.get(k), \
+                        f"pi0_feat cache 与 gc_value 签名不符 [{k}]: {_pi0_cache_sig.get(k)} vs {_pi0_gv_sig.get(k)}"
+            goal = representative_goal(_pi0_seqs)
+            assert goal.shape[0] == _gc_info["mean"].shape[0], "goal 维度须 == gc_value state_dim"
+            # pi0_feat 在线子目标:base_policy.last_prefix_feat() 在线提特征(无需离线 extractor)
+            subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
+                                             goal=goal, device=args.device,
+                                             renorm_subgoal=args.renorm_subgoal, base_policy=None)
         else:  # eef_piece:现状不变
             assert args.subgoal_state30_cache or args.offline_dataset_path, \
                 "eef_piece 子目标需 --subgoal_state30_cache 或 --offline_dataset_path"
@@ -870,14 +900,14 @@ def main():
     while env_steps <= total:
         next_rel = None   # FIX D: silence unbound-var lint; overwritten below when subgoal_conditioned
         if args.subgoal_conditioned:
-            obs["observation.subgoal"] = subgoal.subgoal_online(obs, cur_rel).to(
+            obs["observation.subgoal"] = compute_online_subgoal(subgoal, obs, base_policy, cur_rel).to(
                 obs["observation.state"].device)
         with torch.no_grad(), utils.eval_mode(agent):
             action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,480] 残差
         next_obs, reward, terminated, truncated, info = env.step(action)
         if args.subgoal_conditioned:
             next_rel = info.get("rel_piece")
-            next_obs["observation.subgoal"] = subgoal.subgoal_online(next_obs, next_rel).to(
+            next_obs["observation.subgoal"] = compute_online_subgoal(subgoal, next_obs, base_policy, next_rel).to(
                 next_obs["observation.state"].device)
         done = terminated | truncated
         add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
@@ -959,7 +989,8 @@ def main():
                                              global_step=env_steps, save_video=False,
                                              save_q_plots=False, run_name=f"chunk_{args.actor}",
                                              output_dir=args.output_dir,
-                                             subgoal=(subgoal if args.subgoal_conditioned else None))
+                                             subgoal=(subgoal if args.subgoal_conditioned else None),
+                                             base_policy=base_policy)
             sr = m["eval/success_rate"]
             if sr > best_sr:
                 best_sr = sr

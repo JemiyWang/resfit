@@ -17,6 +17,13 @@ from resfit.dexmg.environments.dexmg import VectorizedEnvWrapper
 from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
 
 
+def _eval_inject_subgoal(subgoal, obs, base_policy, rel_raw):
+    """按 state_mode 路由子目标注入(eval 路复用;对称 compute_online_subgoal)。"""
+    if subgoal.state_mode == "pi0_feat":
+        return subgoal.subgoal_online(obs, prefix_feat=base_policy.last_prefix_feat())
+    return subgoal.subgoal_online(obs, rel_raw)
+
+
 def run_dexmg_evaluation(
     *,
     env: VectorizedEnvWrapper,
@@ -29,6 +36,7 @@ def run_dexmg_evaluation(
     run_name: str | None = None,
     output_dir: str | Path | None = "outputs",
     subgoal=None,
+    base_policy=None,
 ) -> tuple[dict[str, float], float]:
     """Extended evaluation to match the richer functionality available in
     the *residual_td3_dexmg* evaluator.  In particular, this version:
@@ -172,8 +180,8 @@ def run_dexmg_evaluation(
     # ------------------------------------------------------------------
     if subgoal is not None:
         _eval_info = reset_info  # track latest info for rel_piece
-        obs["observation.subgoal"] = subgoal.subgoal_online(
-            obs,
+        obs["observation.subgoal"] = _eval_inject_subgoal(
+            subgoal, obs, base_policy,
             _eval_info.get("rel_piece") if _eval_info is not None else None,
         ).to(obs["observation.state"].device)
     else:
@@ -213,8 +221,8 @@ def run_dexmg_evaluation(
         # Inject subgoal into next_obs so the next iteration's act() works
         if subgoal is not None:
             _eval_info = step_info
-            next_obs["observation.subgoal"] = subgoal.subgoal_online(
-                next_obs,
+            next_obs["observation.subgoal"] = _eval_inject_subgoal(
+                subgoal, next_obs, base_policy,
                 _eval_info.get("rel_piece") if _eval_info is not None else None,
             ).to(next_obs["observation.state"].device)
 
