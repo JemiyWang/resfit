@@ -61,7 +61,7 @@ def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
 def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                      batch_size=256, steps=50_000, hidden=256, seed=0,
                      target_mode="fixed_waypoint", high_p_randomgoal=0.0,
-                     adv_agg="min"):
+                     adv_agg="min", device="cpu"):
     """AWR 抽高层 π^h。vf:冻结 GoalConditionedVF。复用 Phase 1 的 data(build_gc_data)。
 
     优势 Ã^h 由 adv_agg 决定(见下);回归目标 z=vf.phi(s_t, s_{t+k})。返回训练后的 HighActor。
@@ -82,13 +82,13 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
             f"当前 target_mode={target_mode!r} 会静默忽略它")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    vf = copy.deepcopy(vf).eval()
+    vf = copy.deepcopy(vf).eval().to(device)
     for p in vf.parameters():
         p.requires_grad_(False)
-    states = data["states"]
+    states = data["states"].to(device)
     D = states.shape[1]
     rep_dim = vf.rep_dim
-    ha = HighActor(D, rep_dim, hidden)
+    ha = HighActor(D, rep_dim, hidden).to(device)
     opt = torch.optim.Adam(ha.parameters(), lr=lr)
     s_idx, traj_id = data["s_idx"], data["traj_id"]
     last_arr = np.array([data["last_idx_of"][int(d)] for d in traj_id], dtype=np.int64)

@@ -47,6 +47,7 @@ def build_parser():
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="cpu", help="训练设备(cpu/cuda);默认 cpu 保持零回归,GPU 训练传 cuda")
     p.add_argument("--target_mode", choices=["fixed_waypoint", "clamp_to_goal"],
                    default="clamp_to_goal",
                    help="高层 AWR 航点:clamp_to_goal(默认,HIQL,近 goal 塌到 goal)| fixed_waypoint(旧口径,恒 +way)")
@@ -134,7 +135,7 @@ def main():
                           batch_size=args.batch_size, steps=args.steps, hidden=args.hidden,
                           seed=args.seed, target_mode=args.target_mode,
                           high_p_randomgoal=args.high_p_randomgoal,
-                          adv_agg=args.adv_agg)
+                          adv_agg=args.adv_agg, device=args.device)
     save_high_actor(args.output, ha, gc_value_ckpt=args.gc_value_ckpt,
                     way_steps=args.way_steps, beta=args.beta,
                     target_mode=args.target_mode, high_p_randomgoal=args.high_p_randomgoal,

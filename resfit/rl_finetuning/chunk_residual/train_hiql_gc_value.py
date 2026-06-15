@@ -90,6 +90,7 @@ def build_parser():
     p.add_argument("--rep_dim", type=int, default=10)
     p.add_argument("--value_hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="cpu", help="训练设备(cpu/cuda);默认 cpu 保持零回归,GPU 训练传 cuda")
     p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="geometric",
                    help="未来目标采样:geometric(默认,HIQL 口径,几何分布取任意未来帧,覆盖中间态、填洞)| "
                         "stage_entry(旧口径,只锚 stage 入口)")
@@ -169,7 +170,8 @@ def main():
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
         hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
         use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode,
-        value_mask_mode=args.value_mask_mode, value_rep_mode=args.value_rep_mode)
+        value_mask_mode=args.value_mask_mode, value_rep_mode=args.value_rep_mode,
+        device=args.device)
     save_gc_value(args.output, model, v_stats=v_stats,
                   mean=mean, std=std,
                   dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats,
