@@ -833,7 +833,7 @@ def main():
                     data_source=args.data_source, lerobot_repo_id=args.dataset,
                     lerobot_root=args.lerobot_root,
                     base_policy=base_policy, base_mode=args.offline_base_mode,
-                    base_device=args.device,)
+                    base_device=args.device, env_hint=args.task,)
             n_off = len(offline_rb)
             if cache_dir:
                 _save_offline_buffer(offline_rb, cache_dir, sig, n_off)
