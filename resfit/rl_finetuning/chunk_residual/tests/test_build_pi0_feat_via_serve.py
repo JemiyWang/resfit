@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 from resfit.rl_finetuning.chunk_residual.build_pi0_feat_cache_via_serve import (
-    assemble_pi0_feat_seqs, pi0_feat_signature, build_main,
+    assemble_pi0_feat_seqs, pi0_feat_signature, build_main, build_main_libero,
 )
 
 
@@ -56,3 +56,36 @@ def test_build_main_writes_cache_and_uses_client(tmp_path):
     seqs, (mean, std), sig = load_pi0_feat_cache(cache)
     assert len(seqs) == 2 and seqs[0].shape[1] == 3 + 2     # prefix3 + proprio2
     assert sig["serve_ckpt_id"] == "pi05_base"
+
+
+def test_build_main_libero_writes_cache(tmp_path, monkeypatch):
+    import resfit.rl_finetuning.chunk_residual.build_pi0_feat_cache_via_serve as M
+    monkeypatch.setattr(M, "_server_metadata", lambda c: {})
+    import resfit.rl_finetuning.chunk_residual.libero_offline as LO
+    monkeypatch.setattr(LO, "libero_task_language", lambda s, t: "do the task")
+    monkeypatch.setattr(LO, "find_demo_episodes", lambda root, lang: ["ep0.parquet", "ep1.parquet"])
+    def fake_read(pq):
+        T = 3
+        return {"state": np.ones((T, 8), np.float32), "action": np.zeros((T, 7), np.float32),
+                "agentview": np.zeros((T, 256, 256, 3), np.uint8),
+                "wrist": np.zeros((T, 256, 256, 3), np.uint8)}
+    monkeypatch.setattr(LO, "read_libero_demo", fake_read)
+
+    class _StubLiberoClient:
+        def __init__(self): self.calls = 0
+        def get_server_metadata(self): return {}
+        def infer(self, obs):
+            self.calls += 1
+            return {"actions": np.zeros((50, 7), np.float32),
+                    "prefix_feat": np.ones(2048, np.float32)}
+
+    client = _StubLiberoClient()
+    cache = str(tmp_path / "c.npz")
+    M.build_main_libero(client, lerobot_root="/x", suite="libero_object", task_id=0,
+                        pooling="last", serve_ckpt_id="pi0_libero", out_cache=cache,
+                        num_demos=None)
+    assert client.calls == 6                                  # 2 demos * 3 frames
+    from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+    seqs, (mean, std), sig = load_pi0_feat_cache(cache)
+    assert len(seqs) == 2 and seqs[0].shape[1] == 2048 + 8   # prefix2048 + state8
+    assert sig["serve_ckpt_id"] == "pi0_libero" and sig["proprio_key"] == "observation.state"
