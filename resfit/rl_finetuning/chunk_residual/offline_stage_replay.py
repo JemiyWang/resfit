@@ -246,6 +246,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
             if num_demos is not None:
                 demos = demos[:num_demos]
             _env_keys = expected_low_dim_keys(env_hint) if env_hint is not None else None
+            _no_stage = bool(env_hint) and get_stage_detector(env_hint) is None
             for ep in demos:
                 grp = f[f"data/{ep}"]
                 states = grp["states"][()]
@@ -255,13 +256,19 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                         raise ValueError(
                             f"stage 缓存与数据不符 {ep}: {len(instant)} vs {len(states)}(缓存过期?)")
                 else:
-                    if env is None:                       # 懒建:仅 cache miss 才起 env replay
-                        env, env_name = make_replay_env(dataset_path)
-                        detector = get_stage_detector(env_name)
-                    instant = replay_instant_stages(
-                        env, states, model_file=grp.attrs["model_file"],
-                        detector=detector, ep_meta=grp.attrs.get("ep_meta"))
-                    new_stages[ep] = instant
+                    if _no_stage:
+                        instant = np.zeros(len(states), dtype=np.int8)   # no-stage:stage 全 0(对齐 _build_offline_lerobot)
+                    else:
+                        if env is None:                       # 懒建:仅 cache miss 才起 env replay
+                            env, env_name = make_replay_env(dataset_path)
+                            detector = get_stage_detector(env_name)
+                        if detector is None:                  # 兜底:env_hint 未给但任务实为 no-stage
+                            instant = np.zeros(len(states), dtype=np.int8)
+                        else:
+                            instant = replay_instant_stages(
+                                env, states, model_file=grp.attrs["model_file"],
+                                detector=detector, ep_meta=grp.attrs.get("ep_meta"))
+                            new_stages[ep] = instant
                 T = len(instant)
                 if T < 2:
                     continue
