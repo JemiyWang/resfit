@@ -58,6 +58,8 @@ class HiqlSubgoal:
             assert feat_stats is not None, "pi0_feat 须给 feat_stats(缓存的 2056 mean/std)"
             self.feat_mean = torch.as_tensor(feat_stats[0], dtype=torch.float32, device=device)
             self.feat_std = torch.as_tensor(feat_stats[1], dtype=torch.float32, device=device)
+            assert self.feat_mean.shape[0] == high_actor.state_dim, \
+                f"feat_mean 维 {self.feat_mean.shape[0]} != high_actor.state_dim {high_actor.state_dim}"
         else:
             raise ValueError(f"unknown state_mode: {state_mode}")
 
@@ -110,7 +112,7 @@ class HiqlSubgoal:
                 pf = pf.unsqueeze(0)
             if proprio.ndim == 1:
                 proprio = proprio.unsqueeze(0)
-            feat = torch.cat([pf, proprio], dim=-1)  # [B, 2056] raw(prefix 在前)
+            feat = torch.cat([pf, proprio], dim=-1)  # [B, prefix_dim+proprio_dim] raw(prefix 在前;LIBERO=2048+8)
             s = (feat - self.feat_mean) / self.feat_std
         elif self.state_mode == "eef_piece":
             state_std = obs["observation.state"] if isinstance(obs, dict) else obs
@@ -128,6 +130,7 @@ class HiqlSubgoal:
     def subgoal_waypoint(self, s30_base, s30_target):
         """离线:z = φ(base=s_t, target=s_{t+k})(真航点)。输入须是已拼好的 30 维 state
         (来自 state30 缓存,18 std + 12 标准化 rel),不是 18 维原始 state。返回 [B, rep_dim]。"""
+        assert self.state_mode != "pi0_feat", "pi0_feat 暂不支持离线 waypoint(在线走 subgoal_online + prefix_feat)"
         b = torch.as_tensor(np.asarray(s30_base), dtype=torch.float32, device=self.device)
         t = torch.as_tensor(np.asarray(s30_target), dtype=torch.float32, device=self.device)
         if b.ndim == 1:

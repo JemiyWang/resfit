@@ -47,3 +47,12 @@ def test_subgoal_online_pi0_feat_needs_prefix_feat():
                      feat_stats=(np.zeros(2056, np.float32), np.ones(2056, np.float32)))
     with pytest.raises(AssertionError):
         sg.subgoal_online({"observation.state": np.ones(8, np.float32)}, prefix_feat=None)
+
+
+def test_subgoal_waypoint_rejects_pi0_feat():
+    ha = _StubHA()
+    sg = HiqlSubgoal(gc_value=None, high_actor=ha, goal=np.zeros(2056, np.float32), device="cpu",
+                     state_mode="pi0_feat",
+                     feat_stats=(np.zeros(2056, np.float32), np.ones(2056, np.float32)))
+    with pytest.raises(AssertionError):
+        sg.subgoal_waypoint(np.zeros(2056, np.float32), np.zeros(2056, np.float32))
