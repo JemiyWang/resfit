@@ -28,6 +28,7 @@ class LiberoPi05Adapter:
         self._queues = []                    # per-env deque
         self.config = _Cfg({self.BASE_KEY: None, self.WRIST_KEY: None})
         self._last_prefix_feat = None        # 最近一次 serve infer 返回的 prefix_feat
+        self._prefix_feat_per_env = []       # per-env 最近一次 infer 的 prefix_feat(与 _queues 等长)
 
     @classmethod
     def from_policy(cls, policy, *, prompt, action_dim=7, device="cpu",
@@ -39,10 +40,14 @@ class LiberoPi05Adapter:
     def _ensure_queues(self, b):
         while len(self._queues) < b:
             self._queues.append(deque())
+            self._prefix_feat_per_env.append(None)
 
     def last_prefix_feat(self):
-        """最近一次 serve infer 返回的 prefix_feat(queue 边界更新);serve 未透特征则 None。"""
-        return self._last_prefix_feat
+        """per-env 就位时返回堆叠 [b,2048](向量化 eval);未就位(直调 _infer_chunk/无 select_action/
+        serve 不透特征含 None)回退单帧 _last_prefix_feat(向后兼容 + None)。"""
+        if not self._prefix_feat_per_env or any(f is None for f in self._prefix_feat_per_env):
+            return self._last_prefix_feat
+        return np.stack([np.asarray(f, dtype=np.float32) for f in self._prefix_feat_per_env])
 
     def _infer_chunk(self, obs):
         result = self.policy.infer(obs)
@@ -67,6 +72,7 @@ class LiberoPi05Adapter:
                     raw_obs, base_key=self.BASE_KEY, wrist_key=self.WRIST_KEY,
                     state_key=self.STATE_KEY, prompt=self.prompt, env_index=i)
                 self._queues[i].extend(self._infer_chunk(obs))
+                self._prefix_feat_per_env[i] = self._last_prefix_feat   # 记下本 env 特征(_infer_chunk 刚 set)
             out.append(self._queues[i].popleft())
         return torch.as_tensor(np.stack(out), dtype=torch.float32, device=self.device)
 

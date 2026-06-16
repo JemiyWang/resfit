@@ -103,3 +103,39 @@ def test_infer_missing_actions_key_raises():
     ad = LiberoPi05Adapter(_NoActionsPolicy(), prompt="x", action_dim=7)
     with pytest.raises(ValueError):
         ad.select_action(_raw_obs(1))
+
+
+class _FeatPolicy:
+    """每次 infer 返回可辨识 prefix_feat=full(2048, call_idx),验证 per-env 堆叠顺序/沿用。"""
+    def __init__(self):
+        self.calls = 0
+
+    def infer(self, obs):
+        idx = self.calls
+        self.calls += 1
+        return {"actions": np.arange(10 * 8, dtype=np.float32).reshape(10, 8),
+                "prefix_feat": np.full(2048, float(idx), dtype=np.float32)}
+
+
+def test_last_prefix_feat_multi_env_stacks_per_env():
+    ad = LiberoPi05Adapter(_FeatPolicy(), prompt="x", action_dim=7, execute_horizon=5)
+    ad.select_action(_raw_obs(3))          # 3 env 队列全空 → 3 次 infer:call 0,1,2
+    pf = np.asarray(ad.last_prefix_feat())
+    assert pf.shape == (3, 2048)
+    assert np.allclose(pf[0], 0.0) and np.allclose(pf[1], 1.0) and np.allclose(pf[2], 2.0)
+
+
+def test_last_prefix_feat_single_env_shape():
+    ad = LiberoPi05Adapter(_FeatPolicy(), prompt="x", action_dim=7, execute_horizon=5)
+    ad.select_action(_raw_obs(1))
+    assert np.asarray(ad.last_prefix_feat()).shape == (1, 2048)
+
+
+def test_last_prefix_feat_carries_over_non_reinferred_env():
+    # execute_horizon=5 → 首次 select_action 后每 env 队列剩 4;第二次不重 infer,per-env 沿用。
+    ad = LiberoPi05Adapter(_FeatPolicy(), prompt="x", action_dim=7, execute_horizon=5)
+    ad.select_action(_raw_obs(2))          # call 0,1 → per-env [0,1]
+    ad.select_action(_raw_obs(2))          # 队列非空,不 infer
+    pf = np.asarray(ad.last_prefix_feat())
+    assert pf.shape == (2, 2048)
+    assert np.allclose(pf[0], 0.0) and np.allclose(pf[1], 1.0)   # 仍是首次特征,未被清/覆盖
