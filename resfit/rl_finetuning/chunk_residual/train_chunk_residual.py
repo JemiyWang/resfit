@@ -991,7 +991,9 @@ def main():
             if args.env_family == "libero":
                 from resfit.rl_finetuning.chunk_residual.libero_eval import run_libero_evaluation
                 m = run_libero_evaluation(env=eval_env, agent=agent,
-                                          num_episodes=args.eval_num_episodes, device=args.device)
+                                          num_episodes=args.eval_num_episodes, device=args.device,
+                                          subgoal=(subgoal if args.subgoal_conditioned else None),
+                                          base_policy=eval_base_policy)
             else:
                 from resfit.rl_finetuning.utils.evaluate_dexmg import run_dexmg_evaluation
                 with torch.no_grad():
