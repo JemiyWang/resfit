@@ -245,7 +245,7 @@ def setup_act_feat(args):
     cache_ready = bool(args.act_feat_cache) and Path(args.act_feat_cache).exists()
     if cache_ready:
         from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
-        _, _, sig = load_act_feat_cache(args.act_feat_cache)
+        _, _, sig, _ = load_act_feat_cache(args.act_feat_cache)
         ckpt = str(args.act_base_ckpt) if args.act_base_ckpt else sig.get("act_ckpt_id")
         image_keys = args.act_image_keys if args.act_image_keys is not None else sig.get("image_keys")
         return None, ckpt, image_keys, sig
