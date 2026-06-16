@@ -21,9 +21,12 @@ def to_chw01(v) -> torch.Tensor:
 
 
 def open_lerobot(repo_id, root):
-    """打开本地 LeRobot 数据集(pyav 解码)。"""
+    """打开本地 LeRobot 数据集(torchcodec 解码,~8x faster than pyav)。
+    需先 `source resfit/lerobot/shell/torchcodec_env.sh` 配 LD_LIBRARY_PATH(指向 nvidia-npp 等
+    pip 库),否则 torchcodec 加载 libnppicc.so.12 失败。torchcodec vs pyav 解码实测同帧逐像素
+    一致(max abs diff=0),act_feat 离线 cache 同源无忧。"""
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-    return LeRobotDataset(repo_id, root=root, video_backend="pyav")
+    return LeRobotDataset(repo_id, root=root, video_backend="torchcodec")
 
 
 def lerobot_episode_count(ds) -> int:

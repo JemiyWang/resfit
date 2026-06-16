@@ -49,7 +49,7 @@ def main():
     std = StateStandardizer.from_dataset_stats(
         LeRobotDatasetMetadata(args.dataset, root=args.root).stats["observation.state"], device="cpu")
 
-    ds = LeRobotDataset(args.dataset, root=args.root, video_backend="pyav")
+    ds = LeRobotDataset(args.dataset, root=args.root, video_backend="torchcodec")  # 需先 source resfit/lerobot/shell/torchcodec_env.sh
     edi = ds.episode_data_index
     print("LeRobot episodes:", len(edi["from"]))
     s0 = ds[0]

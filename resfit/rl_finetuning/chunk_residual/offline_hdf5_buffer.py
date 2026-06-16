@@ -53,7 +53,7 @@ def expected_low_dim_keys(hint: str) -> list:
     4 个 task(three_piece/threading/pouring/lifttray)结果一致(test 守护)。
     """
     h = str(hint).lower()
-    if any(t in h for t in ("pouring", "coffee", "cansort", "can_sort")):
+    if any(t in h for t in ("pouring", "coffee", "cansort", "can_sort", "can-sort")):
         return list(LOW_DIM_KEYS_HUMANOID)               # humanoid 双臂手
     if h in _SINGLE_ARM_ENVS:                            # 精确单臂 Panda(env_name 专用)
         return list(LOW_DIM_KEYS_SINGLE)

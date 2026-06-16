@@ -119,7 +119,8 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
     - cuda_to_egl_device_id(cuda_device_id: int)：单 int,逻辑号(env_id % num_visible_gpus)在调用侧算好再传。
     - VectorizedEnvWrapper(vec_env, video_key, device)：video_key 是必填位置参,不是只给 device。
     """
-    from resfit.rl_finetuning.chunk_residual.vec_env_util import VectorizedEnvWrapper
+    from resfit.rl_finetuning.chunk_residual.vec_env_util import (
+        VectorizedEnvWrapper, cuda_to_egl_device_id)
 
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if cuda_visible is not None:
@@ -130,12 +131,15 @@ def create_libero_vectorized_env(suite, task_id, num_envs, device="cpu",
     num_visible_gpus = len(visible) if visible else 1
 
     def _factory(env_id):
-        # robosuite 1.4.1(LIBERO)的 EGL 约定:MUJOCO_EGL_DEVICE_ID 必须 ∈ CUDA_VISIBLE_DEVICES
-        # 的物理卡号(binding_utils 有此断言),与 dexmg 的 robosuite 1.5(EGL 枚举下标,
-        # cuda_to_egl_device_id)不同。EGL 按物理卡枚举、不受 CUDA mask 影响,故直接用物理号。
-        phys = visible[env_id % num_visible_gpus] if visible else 0
-        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(phys)
-        env, _ = make_libero_env(suite, task_id, render_gpu_device_id=phys)
+        # EGL 渲染设备:与 dexmg 路一致,用逻辑号 env_id%N 经 cuda_to_egl_device_id 转成指向
+        # 同一物理卡的 EGL 枚举下标。本机 EGL 枚举序≠物理卡序,旧代码直接用物理号会被 EGL
+        # 当下标 → 渲染漏到别的物理卡(如 CVD=7 漏到 gpu5)。需配合放宽后的 robosuite
+        # binding_utils assert(EGL 下标可能 ∉ CUDA_VISIBLE_DEVICES)。
+        # 2026-06-15 实测:CVD=2 → egl_id=1 → 渲染落物理 GPU2(原物理号写法会漏到 GPU0)。
+        logical = env_id % num_visible_gpus if visible else 0
+        egl_id = cuda_to_egl_device_id(logical)
+        os.environ["MUJOCO_EGL_DEVICE_ID"] = str(egl_id)
+        env, _ = make_libero_env(suite, task_id, render_gpu_device_id=egl_id)
         return env
 
     env_fns = [lambda i=i: _factory(i) for i in range(num_envs)]

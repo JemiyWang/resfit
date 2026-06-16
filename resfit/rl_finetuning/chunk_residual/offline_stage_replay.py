@@ -396,7 +396,8 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
                 base_policy, fr["images"], image_keys, fr["state"], action_scaler, base_device)
         else:
             base_n = act_n                                                          # gt:GT-as-base
-        imgs = {k: fr["images"][k] for k in image_keys}                            # (T,3,84,84) f01
+        imgs = {k: (fr["images"][k] * 255.0).round().clamp_(0, 255).to(torch.uint8)
+                for k in image_keys}                                               # (T,3,84,84) uint8(对齐 hdf5 路,offcache 省 4x;base_action 仍用 fr["images"] float)
         sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
         nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
         subgoal_z = None
