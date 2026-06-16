@@ -17,6 +17,9 @@ class _StubExtractor:
         emb = torch.zeros(b, 4)
         return torch.cat([emb, torch.as_tensor(raw["observation.state"], dtype=torch.float32)], -1)
 
+    def weight_fingerprint(self):
+        return "stub-sha-0000"
+
 
 def _raw_seq():
     return [{"observation.images.agentview": torch.zeros(3, 3, 4, 4),

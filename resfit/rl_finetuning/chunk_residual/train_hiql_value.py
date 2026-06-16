@@ -105,7 +105,8 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
         std = np.maximum(allf.std(axis=0), 1e-6).astype(np.float32)
         seqs_std = [((s - mean) / std).astype(np.float32) for s in raw_feat]
         if act_feat_cache and num_demos is None:
-            save_act_feat_cache(act_feat_cache, seqs_std, (mean, std), signature=sig)
+            save_act_feat_cache(act_feat_cache, seqs_std, (mean, std), signature=sig,
+                                act_weight_sha=act_extractor.weight_fingerprint())
             print(f"[read_per_demo_states] 已写 act_feat 缓存 {act_feat_cache}")
         return seqs_std, None, (mean, std)
 
@@ -236,26 +237,26 @@ def validate_data_source_cfg(args):
 
 
 def setup_act_feat(args):
-    """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None)。
+    """为 act_feat 准备 (extractor, act_ckpt_id, image_keys, signature_or_None, act_weight_sha_or_None)。
     非 act_feat → 全 None。缓存已存在 → 不建 extractor,从缓存签名取回 image_keys/ckpt(免重复传 flag);
     否则加载冻结 ACT 建 extractor。"""
     from pathlib import Path
     if getattr(args, "state_mode", None) != "act_feat":
-        return None, None, None, None
+        return None, None, None, None, None
     cache_ready = bool(args.act_feat_cache) and Path(args.act_feat_cache).exists()
     if cache_ready:
         from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
-        _, _, sig, _ = load_act_feat_cache(args.act_feat_cache)
+        _, _, sig, sha = load_act_feat_cache(args.act_feat_cache)
         ckpt = str(args.act_base_ckpt) if args.act_base_ckpt else sig.get("act_ckpt_id")
         image_keys = args.act_image_keys if args.act_image_keys is not None else sig.get("image_keys")
-        return None, ckpt, image_keys, sig
+        return None, ckpt, image_keys, sig, sha
     from resfit.lerobot.utils.load_policy import load_policy
     from resfit.rl_finetuning.chunk_residual.act_feature import ActFeatureExtractor
     cand = Path(args.act_base_ckpt) / "policy"
     act = load_policy(cand if cand.is_dir() else Path(args.act_base_ckpt))
     image_keys = args.act_image_keys or list(act.config.image_features.keys())
     ext = ActFeatureExtractor(act, image_keys, args.act_proprio_key, args.pooling)
-    return ext, str(args.act_base_ckpt), image_keys, ext.signature(str(args.act_base_ckpt))
+    return ext, str(args.act_base_ckpt), image_keys, ext.signature(str(args.act_base_ckpt)), ext.weight_fingerprint()
 
 
 def unpack_state_aux(standardizer, aux, state_mode):
@@ -330,7 +331,7 @@ def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
     validate_data_source_cfg(args)
-    extractor, act_ckpt_id, image_keys, _ = setup_act_feat(args)
+    extractor, act_ckpt_id, image_keys, _, _ = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,

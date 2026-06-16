@@ -139,9 +139,10 @@ def main():
         rel_stats = None
         pi0_sig = _cache_sig
         act_sig = None
+        act_sha = None
     else:
         # --- 现有 eef_piece/act_feat dispatch 原样不动 ---
-        extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
+        extractor, act_ckpt_id, image_keys, act_sig, act_sha = setup_act_feat(args)
         seqs, standardizer, aux = read_per_demo_states(
             args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
             cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
@@ -176,7 +177,7 @@ def main():
                   mean=mean, std=std,
                   dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats,
                   value_loss_mode=args.value_loss_mode, value_mask_mode=args.value_mask_mode,
-                  act_feat_signature=act_sig, pi0_feat_signature=pi0_sig)
+                  act_feat_signature=act_sig, pi0_feat_signature=pi0_sig, act_weight_sha=act_sha)
     print(f"[hiql_gc] saved {args.output}; v_stats={v_stats}")
 
 

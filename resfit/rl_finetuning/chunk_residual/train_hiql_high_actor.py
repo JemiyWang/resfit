@@ -101,7 +101,7 @@ def main():
         act_sig = None
         effective_num_demos = _cache_sig.get("num_demos")
     elif args.state_mode == "act_feat":
-        extractor, act_ckpt_id, image_keys, act_sig = setup_act_feat(args)
+        extractor, act_ckpt_id, image_keys, act_sig, _act_sha = setup_act_feat(args)
         seqs, _, _ = read_per_demo_states(
             args.hdf5, args.dataset, "act_feat", num_demos=args.num_demos,
             act_feat_cache=args.act_feat_cache, act_extractor=extractor,
