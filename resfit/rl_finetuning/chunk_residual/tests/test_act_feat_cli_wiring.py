@@ -57,11 +57,12 @@ def test_setup_act_feat_recovers_image_keys_and_ckpt_from_cache(tmp_path):
     args = argparse.Namespace(state_mode="act_feat", act_feat_cache=cache,
                               act_base_ckpt=None, act_image_keys=None,
                               act_proprio_key="observation.state", pooling="mean")
-    ext, ckpt, image_keys, got_sig, _got_sha = setup_act_feat(args)
+    ext, ckpt, image_keys, got_sig, got_sha = setup_act_feat(args)
     assert ext is None
     assert ckpt == "ckptA"                                       # 从缓存签名取回
     assert image_keys == ["observation.images.agentview"]        # 从缓存签名取回(用户没传 flag)
     assert got_sig["dataset_id"] == "ds"
+    assert got_sha is None                                       # 旧缓存未存 act_weight_sha → 第5位为 None
 
 
 def test_chunk_residual_parser_has_act_feat_cache():
