@@ -1,7 +1,10 @@
+import warnings
+
+import pytest
 import torch
 from torch import nn
 
-from resfit.rl_finetuning.chunk_residual.act_feature import act_weight_fingerprint
+from resfit.rl_finetuning.chunk_residual.act_feature import act_weight_fingerprint, assert_act_base_samesource
 
 
 def _tiny():
@@ -44,12 +47,6 @@ def test_fingerprint_differs_for_different_structure():
     assert act_weight_fingerprint(m1) != act_weight_fingerprint(m2)
 
 
-import warnings
-import pytest
-
-from resfit.rl_finetuning.chunk_residual.act_feature import assert_act_base_samesource
-
-
 def test_samesource_old_artifact_warns_and_skips():
     # gv_sha=None（旧产物）→ warn，不 raise
     with pytest.warns(UserWarning):
@@ -76,3 +73,10 @@ def test_samesource_online_mismatch_raises_by_default():
 def test_samesource_online_mismatch_warns_with_escape():
     with pytest.warns(UserWarning):
         assert_act_base_samesource(gv_sha="a", cache_sha="a", base_sha="b", allow_mismatch=True)
+
+
+def test_samesource_old_cache_new_gcvalue_passes_when_base_matches():
+    # gv_sha 有、cache_sha=None（旧 cache 无指纹但 gc_value 有）、base 匹配 → 静默通过（不 warn 不 raise）
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert_act_base_samesource(gv_sha="a", cache_sha=None, base_sha="a")

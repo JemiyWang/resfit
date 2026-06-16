@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 
 import torch
 
@@ -117,7 +118,6 @@ def assert_act_base_samesource(*, gv_sha, cache_sha, base_sha, allow_mismatch=Fa
     - base_sha == gv_sha → 同源，静默返回。
     - base_sha != gv_sha → 默认 raise；allow_mismatch=True 则降级 warn。
     """
-    import warnings
     if cache_sha and gv_sha and cache_sha != gv_sha:
         raise ValueError(
             f"[act_feat] cache 与 gc_value 权重指纹不符: {cache_sha} vs {gv_sha}（离线就异源）")
