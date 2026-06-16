@@ -452,6 +452,8 @@ def build_parser():
                    help="关闭 online z 投球面(回到旧版逐位行为)")
     p.add_argument("--act_feat_cache", default=None,
                    help="act_feat 子目标:530 序列缓存(算 goal + 同源签名校验);仅 act_feat gc_value 用")
+    p.add_argument("--allow_act_base_mismatch", action="store_true",
+                   help="act_feat：在线 base 权重指纹 != 离线时，把硬失败降级为 warning 放行")
     p.add_argument("--pi0_feat_cache", default=None,
                    help="pi0_feat 子目标:pi0 prefix 特征序列缓存(算 goal + 同源签名校验);仅 pi0_feat gc_value 用")
     p.add_argument("--stage_budget", default=None,
@@ -728,7 +730,7 @@ def main():
         if _sm == "act_feat":
             assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
             from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
-            _seqs, _stats, _cache_sig = load_act_feat_cache(args.act_feat_cache)
+            _seqs, _stats, _cache_sig, _cache_sha = load_act_feat_cache(args.act_feat_cache)
             _offline_act_feat_seqs = _seqs   # 离线 buffer subgoal 复用同一份 530 序列
             assert _gc_info.get("act_feat_signature"), \
                 "gc_value 缺 act_feat_signature(须用 --state_mode act_feat 重训该 gc_value)"
@@ -736,15 +738,13 @@ def main():
             for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
                 assert _cache_sig.get(k) == _gv_sig.get(k), \
                     f"act_feat cache 与 gc_value 签名不符 [{k}]: {_cache_sig.get(k)} vs {_gv_sig.get(k)}"
-            import warnings   # 注:勿在此再 import os —— 会让 os 成为 main() 的局部变量,
-                              # 致其它分支(libero offline 等)在此行前用 os 触发 UnboundLocalError
-            _base_id = os.path.normpath(str(getattr(args, "base_wandb_id", "") or ""))
-            _cache_ckpt = os.path.normpath(str(_gv_sig.get("act_ckpt_id") or ""))
-            if _base_id and _cache_ckpt and _base_id != _cache_ckpt:
-                warnings.warn(
-                    f"[act_feat] 残差 base_policy(--base_wandb_id={_base_id}) 与 act_feat cache 的 ACT "
-                    f"(act_ckpt_id={_cache_ckpt}) 不同 → 在线特征可能与离线不同源;务必先过一致性 smoke",
-                    stacklevel=2)
+            from resfit.rl_finetuning.chunk_residual.act_feature import (
+                act_weight_fingerprint, assert_act_base_samesource)
+            assert_act_base_samesource(
+                gv_sha=_gc_info.get("act_weight_sha"),
+                cache_sha=_cache_sha,
+                base_sha=act_weight_fingerprint(base_policy),
+                allow_mismatch=args.allow_act_base_mismatch)
             goal = representative_goal(_seqs)
             assert goal.shape[0] == _gc_info["mean"].shape[0], "goal 维度须 == gc_value state_dim"
             subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
