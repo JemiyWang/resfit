@@ -3,6 +3,7 @@ import numpy as np
 from resfit.rl_finetuning.chunk_residual.act_feat_cache import (
     save_act_feat_cache, act_feat_cache_reuse,
 )
+from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
 
 SIG = {"act_ckpt_id": "ckptA", "image_keys": ["observation.images.agentview"],
        "proprio_key": "observation.state", "pooling": "mean",
@@ -53,4 +54,24 @@ def test_num_demos_param_overrides_signature(tmp_path):
     save_act_feat_cache(p, [np.ones((1, 5), np.float32)],
                         (np.zeros(5, np.float32), np.ones(5, np.float32)), signature=SIG)
     assert act_feat_cache_reuse(p, signature=SIG, num_demos=5) is None
+    assert act_feat_cache_reuse(p, signature=SIG, num_demos=None) is not None
+
+
+def test_load_returns_sha_when_present(tmp_path):
+    p = str(tmp_path / "c.npz")
+    save_act_feat_cache(p, [np.ones((1, 5), np.float32)],
+                        (np.zeros(5, np.float32), np.ones(5, np.float32)),
+                        signature=SIG, act_weight_sha="deadbeef")
+    seqs, stats, sig, sha = load_act_feat_cache(p)
+    assert sha == "deadbeef"
+    assert sig == SIG and len(seqs) == 1
+
+
+def test_load_returns_none_sha_when_absent(tmp_path):
+    # 旧缓存（不带 sha）→ 第 4 项 None，且 reuse 仍照常命中（向后兼容）
+    p = str(tmp_path / "c.npz")
+    save_act_feat_cache(p, [np.ones((1, 5), np.float32)],
+                        (np.zeros(5, np.float32), np.ones(5, np.float32)), signature=SIG)
+    seqs, stats, sig, sha = load_act_feat_cache(p)
+    assert sha is None
     assert act_feat_cache_reuse(p, signature=SIG, num_demos=None) is not None

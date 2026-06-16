@@ -10,8 +10,9 @@ def _norm_sig(sig):
     return json.loads(json.dumps(sig, sort_keys=True))
 
 
-def save_act_feat_cache(path, seqs, emb_stats, *, signature, fp16=False):
-    """存每条 demo 的(已标准化)嵌入序列 + (mean,std) + 签名 json。fp16 仅压 seqs 存盘。"""
+def save_act_feat_cache(path, seqs, emb_stats, *, signature, fp16=False, act_weight_sha=None):
+    """存每条 demo 的（已标准化）嵌入序列 + (mean,std) + 签名 json + 可选权重指纹。
+    fp16 仅压 seqs 存盘。act_weight_sha 旁挂，不进 signature（不影响 reuse 命中）。"""
     mean, std = emb_stats
     payload = {
         "n": np.int64(len(seqs)),
@@ -19,6 +20,8 @@ def save_act_feat_cache(path, seqs, emb_stats, *, signature, fp16=False):
         "emb_std": np.asarray(std, dtype=np.float32),
         "signature": np.asarray(json.dumps(_norm_sig(signature), sort_keys=True)),
     }
+    if act_weight_sha is not None:
+        payload["act_weight_sha"] = np.asarray(str(act_weight_sha))
     dt = np.float16 if fp16 else np.float32
     for i, s in enumerate(seqs):
         payload[f"s{i}"] = np.asarray(s, dtype=dt)
@@ -31,19 +34,20 @@ def _load(path):
         seqs = [np.asarray(z[f"s{i}"], dtype=np.float32) for i in range(n)]
         stats = (np.asarray(z["emb_mean"], np.float32), np.asarray(z["emb_std"], np.float32))
         sig = json.loads(str(z["signature"]))
-    return seqs, stats, sig
+        sha = str(z["act_weight_sha"]) if "act_weight_sha" in z.files else None
+    return seqs, stats, sig, sha
 
 
 def load_act_feat_cache(path):
-    """读缓存 → (seqs[float32], (mean,std), signature_dict)。无签名校验,仅读取。"""
+    """读缓存 → (seqs[float32], (mean,std), signature_dict, act_weight_sha_or_None)。无签名校验，仅读取。"""
     return _load(path)
 
 
 def act_feat_cache_reuse(path, *, signature, num_demos):
-    """签名全等(含 num_demos)才命中,否则 None。"""
+    """签名全等（含 num_demos）才命中，否则 None。sha 不参与命中比较。"""
     if not (path and os.path.exists(path)):
         return None
-    seqs, stats, sig = _load(path)
+    seqs, stats, sig, _sha = _load(path)
     want = _norm_sig(signature)
     want["num_demos"] = num_demos
     if sig != want:
