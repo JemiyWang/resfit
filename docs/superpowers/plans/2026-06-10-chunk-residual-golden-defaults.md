@@ -21,6 +21,8 @@
 
 `--wandb_project` 默认已是 `dexmg-chunk-residual`,不动。spec: `docs/superpowers/specs/2026-06-10-chunk-residual-golden-defaults-design.md`。
 
+**⚠️ code review 更新(2026-06-10):`--base_n_action_steps` 撤回、不改默认(留 None)** —— 改 10 会 break pi05 base(`train_chunk_residual.py:452` 在该参数非 None 时 assert `base_policy_type=="act"`,pi05 吃默认 10 即崩、None 又传不了)。act 金标准命令本就显式传 10,零实际影响。**Task 1 实际只改 3 个带值参数**(chunk_length/actor_lr/base_action_mode),测试相应去掉 base_n_action_steps 断言(改为 `assert is None`)。总计改 5 个参数。
+
 ---
 
 ### Task 1: 4 个带值参数默认(chunk_length/actor_lr/base_action_mode/base_n_action_steps)

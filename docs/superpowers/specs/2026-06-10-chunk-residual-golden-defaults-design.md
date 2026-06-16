@@ -30,6 +30,8 @@
 
 带值的 4 个(`chunk_length`/`actor_lr`/`base_action_mode`/`base_n_action_steps`)直接改 `default=`,旧值可显式传回退。`offline_base_mode` 同理(choices 保留 `gt`)。
 
+**⚠️ code review 更新(2026-06-10):`--base_n_action_steps` 撤回、不改默认(留 None)。** 改 10 会 break pi05 base:`train_chunk_residual.py:452-454` 在 `base_n_action_steps is not None` 时 assert `base_policy_type=="act"`,pi05 base 不传该参数就吃到默认 10 → assert 崩,而 argparse 传不了 None 回退 → pi05 线被硬 break。act 金标准命令本就显式传 `--base_n_action_steps 10`(零实际影响)。**故实际改 5 个参数**(chunk_length/actor_lr/base_action_mode/stage_balanced/offline_base_mode)。
+
 ## 4. `stage_balanced` 的 `--no_` 写法(为什么需要)
 
 `store_true` 的 flag 一旦默认 True 就**无法在命令行关闭**(只能往 True 设)。为保住"回退到旧行为 False"的能力,改为:
