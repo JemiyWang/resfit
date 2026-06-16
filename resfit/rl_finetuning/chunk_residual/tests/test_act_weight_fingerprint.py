@@ -42,3 +42,37 @@ def test_fingerprint_differs_for_different_structure():
     m1 = nn.Linear(4, 3)
     m2 = nn.Linear(3, 4)
     assert act_weight_fingerprint(m1) != act_weight_fingerprint(m2)
+
+
+import warnings
+import pytest
+
+from resfit.rl_finetuning.chunk_residual.act_feature import assert_act_base_samesource
+
+
+def test_samesource_old_artifact_warns_and_skips():
+    # gv_sha=None（旧产物）→ warn，不 raise
+    with pytest.warns(UserWarning):
+        assert_act_base_samesource(gv_sha=None, cache_sha=None, base_sha="x")
+
+
+def test_samesource_match_is_silent():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")   # 任何 warning 都会失败
+        assert_act_base_samesource(gv_sha="a", cache_sha="a", base_sha="a")  # 不抛即通过
+
+
+def test_samesource_offline_inconsistent_raises():
+    # cache 与 gc_value 两边都有指纹且不等 → 离线异源
+    with pytest.raises(ValueError):
+        assert_act_base_samesource(gv_sha="a", cache_sha="b", base_sha="a")
+
+
+def test_samesource_online_mismatch_raises_by_default():
+    with pytest.raises(ValueError):
+        assert_act_base_samesource(gv_sha="a", cache_sha="a", base_sha="b")
+
+
+def test_samesource_online_mismatch_warns_with_escape():
+    with pytest.warns(UserWarning):
+        assert_act_base_samesource(gv_sha="a", cache_sha="a", base_sha="b", allow_mismatch=True)

@@ -107,3 +107,32 @@ def act_weight_fingerprint(policy) -> str:
         h.update(repr(tuple(t.shape)).encode("utf-8") + b"\x00")
         h.update(t.numpy().tobytes())
     return h.hexdigest()
+
+
+def assert_act_base_samesource(*, gv_sha, cache_sha, base_sha, allow_mismatch=False):
+    """act_feat 在线 base ACT 同源校验（纯逻辑，便于单测）。
+
+    - cache_sha 与 gv_sha 两边都有且不等 → 离线就异源（cache≠gc_value），raise。
+    - gv_sha is None（旧 cache/gc_value 无指纹）→ 无法校验，warn 并跳过。
+    - base_sha == gv_sha → 同源，静默返回。
+    - base_sha != gv_sha → 默认 raise；allow_mismatch=True 则降级 warn。
+    """
+    import warnings
+    if cache_sha and gv_sha and cache_sha != gv_sha:
+        raise ValueError(
+            f"[act_feat] cache 与 gc_value 权重指纹不符: {cache_sha} vs {gv_sha}（离线就异源）")
+    if gv_sha is None:
+        warnings.warn(
+            "[act_feat] 产物无权重指纹（旧 cache/gc_value），无法校验在线 base 同源；"
+            "务必先过一致性 smoke", stacklevel=2)
+        return
+    if base_sha == gv_sha:
+        return
+    if allow_mismatch:
+        warnings.warn(
+            f"[act_feat] 在线 base 权重指纹 != 离线（{base_sha} vs {gv_sha}），"
+            "--allow_act_base_mismatch 已放行", stacklevel=2)
+        return
+    raise ValueError(
+        f"[act_feat] 在线 base_policy 权重 != 离线 build cache 的 ACT"
+        f"（指纹 {base_sha} vs {gv_sha}）；确认同源，或加 --allow_act_base_mismatch 放行")
