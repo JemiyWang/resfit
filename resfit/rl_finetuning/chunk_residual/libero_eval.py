@@ -17,7 +17,12 @@ def _inject_subgoal(subgoal, obs, base_policy):
     """LIBERO eval 子目标注入:返回该 obs 的 z(调用方写进 obs['observation.subgoal'])。
     对称 evaluate_dexmg._eval_inject_subgoal,但 LIBERO 无 rel_piece,当前只支持 pi0_feat。"""
     if subgoal.state_mode == "pi0_feat":
-        return subgoal.subgoal_online(obs, prefix_feat=base_policy.last_prefix_feat())
+        pf = base_policy.last_prefix_feat()
+        if pf is None:
+            raise ValueError(
+                "run_libero_evaluation: base_policy.last_prefix_feat() 返回 None — "
+                "serve 未透 prefix_feat,或 base_policy 尚未 forward(queue 未预热)")
+        return subgoal.subgoal_online(obs, prefix_feat=pf)
     raise NotImplementedError(
         f"LIBERO eval 子目标注入目前只支持 state_mode=pi0_feat,得到 {subgoal.state_mode!r}")
 
@@ -47,21 +52,22 @@ def run_libero_evaluation(*, env, agent, num_episodes: int, device: str = "cpu",
     episode_lengths: list[int] = []
 
     done_episodes = 0
-    obs, _ = env.reset()
-    if subgoal is not None:
-        obs["observation.subgoal"] = _inject_subgoal(subgoal, obs, base_policy)
-
     dots = ["."] * num_episodes
     print(f"[libero-eval] {num_episodes} episodes: {''.join(dots)}", end="", flush=True)
 
     try:
+        obs, _ = env.reset()
+        if subgoal is not None:
+            obs["observation.subgoal"] = _inject_subgoal(subgoal, obs, base_policy).to(
+                obs["observation.state"].device)
         while done_episodes < num_episodes:
             with torch.no_grad():
                 actions = agent.act(obs, eval_mode=True, stddev=0.0, cpu=False)
 
             next_obs, reward, terminated, truncated, _info = env.step(actions)
             if subgoal is not None:
-                next_obs["observation.subgoal"] = _inject_subgoal(subgoal, next_obs, base_policy)
+                next_obs["observation.subgoal"] = _inject_subgoal(subgoal, next_obs, base_policy).to(
+                    next_obs["observation.state"].device)
             done_flags = terminated | truncated
 
             for env_idx in range(num_envs):

@@ -165,7 +165,7 @@ class _StubSubgoalPi0Feat:
         return torch.zeros(b, self.rep_dim)
 
 
-class _StubSubgoalEefPiece(_StubSubgoalPi0Feat):
+class _StubSubgoalEefPiece:
     state_mode = "eef_piece"                     # 非 pi0_feat → 应 fail-fast
 
 
@@ -203,3 +203,15 @@ def test_subgoal_rejects_non_pi0_feat():
     with pytest.raises(NotImplementedError):
         run_libero_evaluation(env=env, agent=_StubAgent(), num_episodes=1, device="cpu",
                               subgoal=_StubSubgoalEefPiece(), base_policy=_StubBasePolicy())
+
+
+class _StubBasePolicyNoFeat:
+    def last_prefix_feat(self):
+        return None
+
+
+def test_subgoal_none_prefix_feat_raises():
+    env = _ScriptedVecEnv(num_envs=1, ep_len=1, terminal_rewards=[1.0])
+    with pytest.raises(ValueError):
+        run_libero_evaluation(env=env, agent=_StubAgent(), num_episodes=1, device="cpu",
+                              subgoal=_StubSubgoalPi0Feat(), base_policy=_StubBasePolicyNoFeat())
