@@ -139,3 +139,67 @@ def test_restores_train_mode_on_exception():
     with pytest.raises(RuntimeError):
         run_libero_evaluation(env=env, agent=agent, num_episodes=1, device="cpu")
     assert agent.mode == "train"   # finally 即便异常也还原训练模式
+
+
+# --- subgoal 在线注入(pi0_feat) ---
+
+class _RecordingAgent(_StubAgent):
+    """记录每次 act 收到的 obs 里 observation.subgoal 的形状(无则记 None)。"""
+    def __init__(self):
+        super().__init__()
+        self.seen_subgoal = []
+
+    def act(self, obs, *, eval_mode=False, stddev=0.0, cpu=True):
+        sg = obs.get("observation.subgoal")
+        self.seen_subgoal.append(None if sg is None else tuple(sg.shape))
+        return super().act(obs, eval_mode=eval_mode, stddev=stddev, cpu=cpu)
+
+
+class _StubSubgoalPi0Feat:
+    state_mode = "pi0_feat"
+    rep_dim = 10
+
+    def subgoal_online(self, obs, rel_raw=None, prefix_feat=None):
+        assert prefix_feat is not None          # 注入必须经 base_policy.last_prefix_feat()
+        b = obs["observation.state"].shape[0]
+        return torch.zeros(b, self.rep_dim)
+
+
+class _StubSubgoalEefPiece(_StubSubgoalPi0Feat):
+    state_mode = "eef_piece"                     # 非 pi0_feat → 应 fail-fast
+
+
+class _StubBasePolicy:
+    def last_prefix_feat(self):
+        return torch.zeros(2048)
+
+
+def test_injects_subgoal_each_act_when_conditioned():
+    agent = _RecordingAgent()
+    env = _ScriptedVecEnv(num_envs=1, ep_len=1, terminal_rewards=[1.0, 1.0])
+    run_libero_evaluation(env=env, agent=agent, num_episodes=2, device="cpu",
+                          subgoal=_StubSubgoalPi0Feat(), base_policy=_StubBasePolicy())
+    assert len(agent.seen_subgoal) == 2
+    assert all(s == (1, 10) for s in agent.seen_subgoal)   # 每次 act 都注入了 (B, rep_dim)
+
+
+def test_no_subgoal_omits_key():
+    agent = _RecordingAgent()
+    env = _ScriptedVecEnv(num_envs=1, ep_len=1, terminal_rewards=[1.0, 1.0])
+    run_libero_evaluation(env=env, agent=agent, num_episodes=2, device="cpu")   # subgoal 默认 None
+    assert len(agent.seen_subgoal) == 2
+    assert all(s is None for s in agent.seen_subgoal)      # 旧路径不注入,零回归
+
+
+def test_subgoal_requires_base_policy():
+    env = _ScriptedVecEnv(num_envs=1, ep_len=1, terminal_rewards=[1.0])
+    with pytest.raises(ValueError):
+        run_libero_evaluation(env=env, agent=_StubAgent(), num_episodes=1, device="cpu",
+                              subgoal=_StubSubgoalPi0Feat(), base_policy=None)
+
+
+def test_subgoal_rejects_non_pi0_feat():
+    env = _ScriptedVecEnv(num_envs=1, ep_len=1, terminal_rewards=[1.0])
+    with pytest.raises(NotImplementedError):
+        run_libero_evaluation(env=env, agent=_StubAgent(), num_episodes=1, device="cpu",
+                              subgoal=_StubSubgoalEefPiece(), base_policy=_StubBasePolicy())
