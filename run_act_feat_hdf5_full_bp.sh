@@ -4,11 +4,12 @@
 # 去 --data_source lerobot;真同源在线 env + ~100x 提速(省 pyav 解码)。
 # 用法: CUDA_VISIBLE_DEVICES=<卡> bash run_act_feat_hdf5_full_bp.sh <pouring|lifttray>
 set -euo pipefail
-KEY="${1:?用法: CUDA_VISIBLE_DEVICES=N bash $0 pouring|lifttray}"
+KEY="${1:?用法: CUDA_VISIBLE_DEVICES=N bash $0 pouring|lifttray|cansort}"
 case "$KEY" in
   pouring)  TASK=TwoArmPouring;  SUB=dexmg-two-arm-pouring;   HDF5=resfit/dataset/two_arm_pouring.hdf5;   BASE=/mnt/mnt/data/wjm/residual/residual-offpolicy-rl/artifacts/run_anw5pphu_best:v2 ;;
   lifttray) TASK=TwoArmLiftTray; SUB=dexmg-two-arm-lift-tray; HDF5=resfit/dataset/two_arm_lift_tray.hdf5; BASE=/mnt/mnt/data/wjm/residual/residual-offpolicy-rl/artifacts/run_e0o0sckj_best:v4 ;;
-  *) echo "未知 task: $KEY (只支持 pouring|lifttray)"; exit 2 ;;
+  cansort)  TASK=TwoArmCanSortRandom; SUB=dexmg-two-arm-can-sort-random; HDF5=resfit/dataset/two_arm_can_sort_random.hdf5; BASE=/mnt/mnt/data/resfit/resfit/out/can_sort/best ;;
+  *) echo "未知 task: $KEY (只支持 pouring|lifttray|cansort)"; exit 2 ;;
 esac
 
 export PYTHONPATH=/mnt/mnt/data/resfit
