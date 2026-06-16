@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+
 import torch
 
 
@@ -76,3 +78,32 @@ class ActFeatureExtractor:
 
     def signature(self, act_ckpt_id) -> dict:
         return act_feat_signature(act_ckpt_id, self.image_keys, self.proprio_key, self.pooling)
+
+    def weight_fingerprint(self) -> str:
+        """对冻结的 self.act 算权重指纹（同源校验用）。"""
+        return act_weight_fingerprint(self.act)
+
+
+def act_weight_fingerprint(policy) -> str:
+    """对 policy.state_dict() 的确定性 sha256 指纹（hexdigest）。
+
+    确定性：按 key 排序；浮点张量先 detach().cpu().float().contiguous() 去掉
+    设备/内存布局/当前精度差异；整型/bool 缓冲按原 dtype 取字节。key/dtype/shape/bytes
+    全部进哈希。保证：同一份内存权重 → 同一 hash；改任一权重 → hash 变。
+    不保证 fp16 存档 vs fp32 存档相等（那本就是两份不同的值）。
+    """
+    h = hashlib.sha256()
+    sd = policy.state_dict()
+    for k in sorted(sd.keys()):
+        t = sd[k]
+        if not torch.is_tensor(t):
+            continue
+        t = t.detach().cpu()
+        if t.is_floating_point():
+            t = t.float()
+        t = t.contiguous()
+        h.update(k.encode("utf-8"))
+        h.update(str(t.dtype).encode("utf-8"))
+        h.update(repr(tuple(t.shape)).encode("utf-8"))
+        h.update(t.numpy().tobytes())
+    return h.hexdigest()
