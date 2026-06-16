@@ -35,3 +35,10 @@ def test_fingerprint_handles_int_buffer():
 def test_fingerprint_is_hexdigest_str():
     h = act_weight_fingerprint(_tiny())
     assert isinstance(h, str) and len(h) == 64 and all(c in "0123456789abcdef" for c in h)
+
+
+def test_fingerprint_differs_for_different_structure():
+    torch.manual_seed(0)
+    m1 = nn.Linear(4, 3)
+    m2 = nn.Linear(3, 4)
+    assert act_weight_fingerprint(m1) != act_weight_fingerprint(m2)

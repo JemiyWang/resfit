@@ -102,8 +102,8 @@ def act_weight_fingerprint(policy) -> str:
         if t.is_floating_point():
             t = t.float()
         t = t.contiguous()
-        h.update(k.encode("utf-8"))
-        h.update(str(t.dtype).encode("utf-8"))
-        h.update(repr(tuple(t.shape)).encode("utf-8"))
+        h.update(k.encode("utf-8") + b"\x00")
+        h.update(str(t.dtype).encode("utf-8") + b"\x00")
+        h.update(repr(tuple(t.shape)).encode("utf-8") + b"\x00")
         h.update(t.numpy().tobytes())
     return h.hexdigest()
