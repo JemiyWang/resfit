@@ -182,6 +182,54 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
     return goal.astype(np.int64)
 
 
+def value_update_step(model, target, opt, s, s_next, g, success, done, *,
+                      gamma, expectile, ema, value_loss_mode="shared_min",
+                      value_mask_mode="done_aware"):
+    """GC value 的单步更新(buffer-agnostic;离线/在线共享)。
+
+    s/s_next/g: [B,D] 标准化 state(在 model/target 的 device 上)。
+    success: [B] float,1=goal 命中当前态;done: [B] float demo 末步 mask。
+    reward=success-1;mask 由 value_mask_mode 决定;loss 由 value_loss_mode 决定。
+    opt.step() 后 EMA 更新 target。返回标量 loss。
+    """
+    if value_loss_mode not in ("shared_min", "hiql"):
+        raise ValueError(f"unknown value_loss_mode: {value_loss_mode!r}")
+    if value_mask_mode not in ("done_aware", "hiql"):
+        raise ValueError(f"unknown value_mask_mode: {value_mask_mode!r}")
+    reward = success - 1.0
+    if value_mask_mode == "done_aware":
+        mask = (1.0 - success) * (1.0 - done)
+    else:  # "hiql"
+        mask = 1.0 - success
+    if value_loss_mode == "shared_min":
+        with torch.no_grad():
+            nv1, nv2 = target(s_next, g)
+            nv = torch.minimum(nv1, nv2)
+            y = reward + gamma * mask * nv
+        v1, v2 = model(s, g)
+        loss = expectile_loss(y - v1, expectile) + expectile_loss(y - v2, expectile)
+    else:  # "hiql"
+        with torch.no_grad():
+            nv1, nv2 = target(s_next, g)
+            nv = torch.minimum(nv1, nv2)
+            q = reward + gamma * mask * nv
+            v1t, v2t = target(s, g)
+            v_t = 0.5 * (v1t + v2t)
+            adv = q - v_t
+            q1 = reward + gamma * mask * nv1
+            q2 = reward + gamma * mask * nv2
+        v1, v2 = model(s, g)
+        loss = (expectile_loss_weighted(adv, q1 - v1, expectile)
+                + expectile_loss_weighted(adv, q2 - v2, expectile))
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+    with torch.no_grad():
+        for tp, mp in zip(target.parameters(), model.parameters()):
+            tp.mul_(1.0 - ema).add_(ema * mp)
+    return float(loss)
+
+
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
                    batch_size=256, steps=50_000, rep_dim=10, hidden=256,
                    value_layers=2, seed=0,
@@ -238,37 +286,9 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
         s_next = states[sni]
         g = states[gi]
         success = torch.tensor(si == gi, dtype=torch.float32, device=device)
-        reward = success - 1.0
-        if value_mask_mode == "done_aware":
-            mask = (1.0 - success) * (1.0 - done_all[b])
-        else:  # "hiql"
-            mask = 1.0 - success
-        if value_loss_mode == "shared_min":
-            with torch.no_grad():
-                nv1, nv2 = target(s_next, g)
-                nv = torch.minimum(nv1, nv2)
-                y = reward + gamma * mask * nv
-            v1, v2 = model(s, g)
-            loss = expectile_loss(y - v1, expectile) + expectile_loss(y - v2, expectile)
-        else:  # "hiql"
-            with torch.no_grad():
-                nv1, nv2 = target(s_next, g)
-                nv = torch.minimum(nv1, nv2)
-                q = reward + gamma * mask * nv
-                v1t, v2t = target(s, g)            # 当前态 V 走 target 网
-                v_t = 0.5 * (v1t + v2t)
-                adv = q - v_t
-                q1 = reward + gamma * mask * nv1   # per-critic 目标,不取 min
-                q2 = reward + gamma * mask * nv2
-            v1, v2 = model(s, g)
-            loss = (expectile_loss_weighted(adv, q1 - v1, expectile)
-                    + expectile_loss_weighted(adv, q2 - v2, expectile))
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-        with torch.no_grad():
-            for tp, mp in zip(target.parameters(), model.parameters()):
-                tp.mul_(1.0 - ema).add_(ema * mp)
+        value_update_step(model, target, opt, s, s_next, g, success, done_all[b],
+                          gamma=gamma, expectile=expectile, ema=ema,
+                          value_loss_mode=value_loss_mode, value_mask_mode=value_mask_mode)
     with torch.no_grad():
         gl = np.array([data["last_idx_of"][int(d)] for d in traj_id], dtype=np.int64)
         vv1, vv2 = model(states[s_idx], states[gl])
