@@ -47,6 +47,33 @@ from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 from resfit.rl_finetuning.chunk_residual.wandb_logging import (
     init_wandb, build_train_log_dict, build_eval_log_dict,
 )
+from resfit.rl_finetuning.chunk_residual.online_hiql_finetune import OnlineHiqlFinetuner
+
+
+def maybe_build_finetuner(args, subgoal, finetune_seqs, *, gc_info):
+    """开关任一在线微调 flag 时构造 OnlineHiqlFinetuner;否则 None(零回归)。
+
+    value_loss_mode / value_mask_mode 从 gc_value ckpt 的 info 读(同源,不新引口径)。
+    finetune_seqs:与 gc_value 同维的离线 demo 标准化 state 序列(eef=30/act_feat=530/pi0=2056)。
+    """
+    if not (args.online_finetune_value or args.online_finetune_high_actor):
+        return None
+    assert subgoal is not None, "在线微调需 --subgoal_conditioned"
+    return OnlineHiqlFinetuner(
+        subgoal, offline_seqs=finetune_seqs, device=args.device,
+        value_lr=args.online_value_lr, high_actor_lr=args.online_high_actor_lr,
+        way_steps=args.subgoal_way_steps,
+        offline_fraction=args.online_finetune_offline_fraction,
+        batch_size=args.batch_size, every=args.online_finetune_every,
+        gamma=args.gamma, expectile=args.online_finetune_expectile,
+        ema=args.online_finetune_ema, future_mode=args.online_finetune_future_mode,
+        value_loss_mode=gc_info["value_loss_mode"],
+        value_mask_mode=gc_info["value_mask_mode"],
+        adv_agg="min",
+        finetune_value=args.online_finetune_value,
+        finetune_high_actor=args.online_finetune_high_actor,
+        max_online_transitions=args.online_finetune_max_trans,
+        min_online_transitions=args.online_finetune_min_trans, seed=args.seed)
 
 
 def to_uint8(obs: dict, image_keys):
@@ -745,6 +772,7 @@ def main():
     subgoal = None
     _offline_act_feat_seqs = None   # act_feat:离线 buffer subgoal 复用的 530 缓存序列
     _pi0_seqs = None                # pi0_feat:离线 buffer subgoal 复用的 2056 缓存序列
+    _finetune_seqs = None           # 在线微调离线序列(三 state_mode 统一接口)
     if args.subgoal_conditioned:
         assert args.actor == "raw", "subgoal-conditioning 第一版只支持 --actor raw"
         assert args.gc_value_ckpt and args.high_actor_ckpt, "需 --gc_value_ckpt 与 --high_actor_ckpt"
@@ -756,6 +784,7 @@ def main():
             from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
             _seqs, _stats, _cache_sig, _cache_sha = load_act_feat_cache(args.act_feat_cache)
             _offline_act_feat_seqs = _seqs   # 离线 buffer subgoal 复用同一份 530 序列
+            _finetune_seqs = _seqs           # 在线微调同源离线序列(act_feat=530 维)
             assert _gc_info.get("act_feat_signature"), \
                 "gc_value 缺 act_feat_signature(须用 --state_mode act_feat 重训该 gc_value)"
             _gv_sig = _gc_info["act_feat_signature"]
@@ -788,6 +817,7 @@ def main():
                         f"pi0_feat cache 与 gc_value 签名不符 [{k}]: {_pi0_cache_sig.get(k)} vs {_pi0_gv_sig.get(k)}"
             goal = representative_goal(_pi0_seqs)
             assert goal.shape[0] == _gc_info["mean"].shape[0], "goal 维度须 == gc_value state_dim"
+            _finetune_seqs = _pi0_seqs       # 在线微调同源离线序列(pi0_feat=2056 维)
             # pi0_feat 在线子目标:base_policy.last_prefix_feat() 在线提特征(无需离线 extractor)
             subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
                                              goal=goal, device=args.device,
@@ -800,10 +830,18 @@ def main():
                                             args.offline_num_demos, args.subgoal_state30_cache)
             goal30 = representative_goal(_seqs30)
             assert goal30.shape[0] == 30, f"goal30 须 30 维,got {goal30.shape[0]}"
+            _finetune_seqs = _seqs30         # 在线微调同源离线序列(eef_piece=30 维)
             subgoal = HiqlSubgoal.from_ckpts(args.gc_value_ckpt, args.high_actor_ckpt,
                                              goal=goal30, device=args.device,
                                              renorm_subgoal=args.renorm_subgoal)
         print(f"[hiql-subgoal] on; mode={_sm} rep_dim={subgoal.rep_dim} renorm={args.renorm_subgoal}")
+    finetuner = maybe_build_finetuner(args, subgoal, _finetune_seqs, gc_info=_subgoal_gc_info) \
+        if args.subgoal_conditioned else None
+    if finetuner is not None:
+        print(f"[online-finetune] on; value={args.online_finetune_value} "
+              f"high_actor={args.online_finetune_high_actor} "
+              f"offline_frac={args.online_finetune_offline_fraction} "
+              f"every={args.online_finetune_every} future={args.online_finetune_future_mode}")
 
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
@@ -931,12 +969,16 @@ def main():
     next_log = args.learning_starts
     best_sr = 0.0
     last_diag = None
+    last_ft_metrics = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
     while env_steps <= total:
         next_rel = None   # FIX D: silence unbound-var lint; overwritten below when subgoal_conditioned
         if args.subgoal_conditioned:
             obs["observation.subgoal"] = compute_online_subgoal(subgoal, obs, base_policy, cur_rel).to(
                 obs["observation.state"].device)
+            if finetuner is not None:
+                _pf = base_policy.last_prefix_feat() if subgoal.state_mode == "pi0_feat" else None
+                finetuner.on_step(subgoal.encode_state(obs, rel_raw=cur_rel, prefix_feat=_pf))
         with torch.no_grad(), utils.eval_mode(agent):
             action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,480] 残差
         next_obs, reward, terminated, truncated, info = env.step(action)
@@ -957,6 +999,8 @@ def main():
                     # (2D),与从 memmap extend 进来的 offline_rb 同构。relabel_rb 无 MultiStepTransform
                     # 收维(online_rb 有),若用 add 会留下前导 [1] 维 → 与 offline 混采 concat 报 3-vs-2。
                     relabel_rb.extend(e)
+        if finetuner is not None and bool(done.any()):
+            finetuner.on_episode_end()
         obs = next_obs
         if args.subgoal_conditioned:
             cur_rel = next_rel
@@ -988,6 +1032,10 @@ def main():
                 m_upd = agent.update(batch, args.stddev, update_actor,
                                      bc_batch=bc_batch,
                                      ref_agent=(agent if bc_batch is not None else None))
+                if finetuner is not None:
+                    ft_metrics = finetuner.maybe_update(env_steps)
+                    if ft_metrics is not None:
+                        last_ft_metrics = ft_metrics
                 # stage-aware 诊断:按 stage 看残差幅度/价值(用 update 已暴露的 _actions/_target_q)
                 if update_actor and "_actions" in m_upd:
                     st = batch["obs"]["observation.stage_id"].flatten().cpu()
@@ -1005,6 +1053,8 @@ def main():
                              "relabel": len(relabel_rb) if relabel_rb else 0}
                 log_dict = build_train_log_dict(m_upd, lrs, buf_sizes)
                 log_dict["rft/bc_coef_cur"] = agent.cfg.bc_loss_coef
+                if last_ft_metrics is not None:
+                    log_dict.update(last_ft_metrics)
                 wandb.log(log_dict, step=env_steps)
                 next_log += args.log_freq
 
