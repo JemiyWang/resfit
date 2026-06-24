@@ -100,13 +100,12 @@ class HiqlSubgoal:
         return torch.cat([x, rel_n], dim=-1)
 
     @torch.no_grad()
-    def subgoal_online(self, obs, rel_raw=None, prefix_feat=None):
-        """eef_piece: obs 传已 std 的 state([B,18]) 或含 observation.state 的 dict(+rel_raw);
-        act_feat: obs 传含 images+observation.state 的 dict;
-        pi0_feat: obs 含 observation.state(proprio),prefix_feat 传冻结 pi0 prefix 特征(2048 维)。"""
+    def encode_state(self, obs, rel_raw=None, prefix_feat=None):
+        """obs -> [B, vf.state_dim] 标准化 state(喂给 high_actor/vf 的 s)。
+        逻辑与原 subgoal_online 完全一致,抽出供在线采集 store 复用。"""
         if self.state_mode == "pi0_feat":
             assert prefix_feat is not None, "pi0_feat 在线需 prefix_feat(从 base policy last_prefix_feat 取)"
-            def _to_dev(x):   # 在线 obs.state 是 cuda tensor(env 在 device 上);np.asarray(cuda) 会崩,须先判 tensor
+            def _to_dev(x):
                 if isinstance(x, torch.Tensor):
                     return x.detach().to(dtype=torch.float32, device=self.device)
                 return torch.as_tensor(np.asarray(x), dtype=torch.float32, device=self.device)
@@ -116,7 +115,7 @@ class HiqlSubgoal:
                 pf = pf.unsqueeze(0)
             if proprio.ndim == 1:
                 proprio = proprio.unsqueeze(0)
-            feat = torch.cat([pf, proprio], dim=-1)  # [B, prefix_dim+proprio_dim] raw(prefix 在前;LIBERO=2048+8)
+            feat = torch.cat([pf, proprio], dim=-1)
             s = (feat - self.feat_mean) / self.feat_std
         elif self.state_mode == "eef_piece":
             state_std = obs["observation.state"] if isinstance(obs, dict) else obs
@@ -124,6 +123,14 @@ class HiqlSubgoal:
         else:  # act_feat
             feat = self.extractor.embed_batch(obs)
             s = (feat.to(self.device) - self.feat_mean) / self.feat_std
+        return s
+
+    @torch.no_grad()
+    def subgoal_online(self, obs, rel_raw=None, prefix_feat=None):
+        """eef_piece: obs 传已 std 的 state([B,18]) 或含 observation.state 的 dict(+rel_raw);
+        act_feat: obs 传含 images+observation.state 的 dict;
+        pi0_feat: obs 含 observation.state(proprio),prefix_feat 传冻结 pi0 prefix 特征(2048 维)。"""
+        s = self.encode_state(obs, rel_raw=rel_raw, prefix_feat=prefix_feat)
         g = self.goal.unsqueeze(0).expand(s.shape[0], -1)
         z = self.ha(s, g).mean
         if self.renorm_subgoal:
