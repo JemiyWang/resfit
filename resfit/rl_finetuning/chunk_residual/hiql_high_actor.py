@@ -58,6 +58,32 @@ def sample_high_goal_target(s_idx, traj_id, last_idx_of, rng, *, way_steps,
     return goal.astype(np.int64), target.astype(np.int64)
 
 
+def high_actor_update_step(ha, vf, opt, s, sw, g, *, beta, adv_agg="min"):
+    """high_actor 的 AWR 单步更新(buffer-agnostic;离线/在线共享)。
+
+    s/sw/g: [B,D],sw=k 步航点态。vf:冻结 GoalConditionedVF。
+    adv 由 adv_agg 决定('min'|'mean');回归目标 z=vf.phi(s,sw)。返回标量 loss。
+    """
+    if adv_agg not in ("min", "mean"):
+        raise ValueError(f"unknown adv_agg: {adv_agg!r}")
+    with torch.no_grad():
+        vs1, vs2 = vf(s, g)
+        vw1, vw2 = vf(sw, g)
+        if adv_agg == "min":
+            adv = torch.minimum(vw1, vw2) - torch.minimum(vs1, vs2)
+        else:  # "mean"
+            adv = 0.5 * (vw1 + vw2) - 0.5 * (vs1 + vs2)
+        w = awr_weight(adv, beta)
+        z_tgt = vf.phi(s, sw)
+    dist = ha(s, g)
+    logp = dist.log_prob(z_tgt).sum(-1)
+    loss = -(w * logp).mean()
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+    return float(loss)
+
+
 def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                      batch_size=256, steps=50_000, hidden=256, seed=0,
                      target_mode="fixed_waypoint", high_p_randomgoal=0.0,
@@ -106,21 +132,7 @@ def train_high_actor(data, vf, *, way_steps=25, beta=1.0, lr=3e-4,
                                              way_steps=way_steps, n_total=len(states),
                                              high_p_randomgoal=high_p_randomgoal)
         s, sw, g = states[si], states[wi], states[gi]
-        with torch.no_grad():
-            vs1, vs2 = vf(s, g)
-            vw1, vw2 = vf(sw, g)
-            if adv_agg == "min":
-                adv = torch.minimum(vw1, vw2) - torch.minimum(vs1, vs2)
-            else:  # "mean"
-                adv = 0.5 * (vw1 + vw2) - 0.5 * (vs1 + vs2)
-            w = awr_weight(adv, beta)
-            z_tgt = vf.phi(s, sw)
-        dist = ha(s, g)
-        logp = dist.log_prob(z_tgt).sum(-1)
-        loss = -(w * logp).mean()
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
+        high_actor_update_step(ha, vf, opt, s, sw, g, beta=beta, adv_agg=adv_agg)
     return ha
 
 
