@@ -67,5 +67,5 @@ def test_maybe_build_finetuner_on_reads_gc_info_modes():
         for t in range(6):
             ft.on_step(torch.randn(1, 30))
         ft.on_episode_end()
-    m = ft.maybe_update(1)
+    m = ft.maybe_update()
     assert m is not None and "finetune/value_loss" in m and "finetune/high_actor_loss" in m

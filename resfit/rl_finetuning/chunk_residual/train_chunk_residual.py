@@ -254,6 +254,8 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
         sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
         sig["high_actor_ckpt"] = os.path.abspath(args.high_actor_ckpt)
         sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
+    # 注:--online_finetune_* flag 不纳入本签名 —— 它们只管 V/high_actor 的在线优化,
+    # 不改变 offline_rb 的内容(残差 demo 锚),故 offline buffer 缓存无需因之失效。
     if args.offline_base_mode != "gt":
         sig["offline_base_mode"] = args.offline_base_mode
         sig["base_policy_type"] = args.base_policy_type
@@ -1032,10 +1034,6 @@ def main():
                 m_upd = agent.update(batch, args.stddev, update_actor,
                                      bc_batch=bc_batch,
                                      ref_agent=(agent if bc_batch is not None else None))
-                if finetuner is not None:
-                    ft_metrics = finetuner.maybe_update(env_steps)
-                    if ft_metrics is not None:
-                        last_ft_metrics = ft_metrics
                 # stage-aware 诊断:按 stage 看残差幅度/价值(用 update 已暴露的 _actions/_target_q)
                 if update_actor and "_actions" in m_upd:
                     st = batch["obs"]["observation.stage_id"].flatten().cpu()
@@ -1043,6 +1041,11 @@ def main():
                     if "_target_q" in m_upd:
                         vals["target_q"] = m_upd["_target_q"]
                     last_diag = flatten_stage_diagnostics(stage_diagnostics(st, vals))
+
+            if finetuner is not None:
+                ft_metrics = finetuner.maybe_update()
+                if ft_metrics is not None:
+                    last_ft_metrics = ft_metrics
 
             if env_steps >= next_log:
                 lrs = {"actor": agent.actor_opt.param_groups[0]["lr"],

@@ -50,11 +50,11 @@ def test_finetuner_maybe_update_noop_until_ready():
                              value_lr=1e-3, high_actor_lr=1e-3, batch_size=16,
                              offline_fraction=0.5, way_steps=3, every=1,
                              min_online_transitions=20, seed=0)
-    assert ft.maybe_update(1) is None              # online store 空
+    assert ft.maybe_update() is None               # online store 空
     for _ in range(3):
         ft.on_step(torch.randn(1, 6))
     ft.on_episode_end()                            # 才 2 transitions < 20
-    assert ft.maybe_update(2) is None
+    assert ft.maybe_update() is None
 
 
 def test_finetuner_updates_value_heads_and_high_actor_but_not_phi():
@@ -71,7 +71,7 @@ def test_finetuner_updates_value_heads_and_high_actor_but_not_phi():
         for t in range(8):
             ft.on_step(torch.randn(1, 6))
         ft.on_episode_end()
-    m = ft.maybe_update(1)
+    m = ft.maybe_update()
     assert m is not None
     assert np.isfinite(m["finetune/value_loss"])
     assert np.isfinite(m["finetune/high_actor_loss"])
@@ -87,14 +87,15 @@ def test_finetuner_every_gates_update():
     sg = _make_subgoal()
     ft = OnlineHiqlFinetuner(sg, offline_seqs=_offline_seqs(), device="cpu",
                              value_lr=1e-3, high_actor_lr=1e-3, batch_size=16,
-                             offline_fraction=0.5, way_steps=3, every=10,
+                             offline_fraction=0.5, way_steps=3, every=3,
                              min_online_transitions=5, seed=0)
     for ep in range(2):
         for t in range(8):
             ft.on_step(torch.randn(1, 6))
         ft.on_episode_end()
-    assert ft.maybe_update(3) is None     # 3 % 10 != 0
-    assert ft.maybe_update(10) is not None  # 10 % 10 == 0
+    assert ft.maybe_update() is None        # tick 1
+    assert ft.maybe_update() is None        # tick 2
+    assert ft.maybe_update() is not None    # tick 3
 
 
 def test_finetuner_value_only_skips_high_actor():
@@ -107,7 +108,7 @@ def test_finetuner_value_only_skips_high_actor():
     for t in range(8):
         ft.on_step(torch.randn(1, 6))
     ft.on_episode_end()
-    m = ft.maybe_update(1)
+    m = ft.maybe_update()
     assert "finetune/high_actor_loss" not in m
     for k in ha_before:
         assert torch.equal(ha_before[k], sg.ha.state_dict()[k]), "high_actor 不该被更新"

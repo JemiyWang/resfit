@@ -105,7 +105,7 @@ class HiqlSubgoal:
         逻辑与原 subgoal_online 完全一致,抽出供在线采集 store 复用。"""
         if self.state_mode == "pi0_feat":
             assert prefix_feat is not None, "pi0_feat 在线需 prefix_feat(从 base policy last_prefix_feat 取)"
-            def _to_dev(x):
+            def _to_dev(x):   # 在线 obs.state 是 cuda tensor(env 在 device 上);np.asarray(cuda) 会崩,须先判 tensor
                 if isinstance(x, torch.Tensor):
                     return x.detach().to(dtype=torch.float32, device=self.device)
                 return torch.as_tensor(np.asarray(x), dtype=torch.float32, device=self.device)

@@ -41,6 +41,7 @@ class OnlineHiqlFinetuner:
         self.finetune_high_actor = bool(finetune_high_actor)
         self.min_online = int(min_online_transitions)
         self.rng = np.random.default_rng(seed)
+        self._tick = 0
 
         # 混采配比:offline_fraction 决定 V/ha 更新 batch 里 offline 占比
         self.offline_bs = int(round(self.batch_size * offline_fraction))
@@ -108,10 +109,12 @@ class OnlineHiqlFinetuner:
         return [p.to(self.device) for p in parts]
 
     # ---- 主更新 ----
-    def maybe_update(self, env_steps):
-        if env_steps % self.every != 0:
-            return None
+    def maybe_update(self):
+        """每调用一次算一次更新机会;每 self.every 次机会执行一轮(utd 次)value/high_actor 更新。env_steps 无关,避免 chunk_length 缩放导致 every 门控失效。"""
         if not self.online.ready(self.min_online):
+            return None
+        self._tick += 1
+        if self._tick % self.every != 0:
             return None
         v_loss = h_loss = None
         for _ in range(self.utd):
