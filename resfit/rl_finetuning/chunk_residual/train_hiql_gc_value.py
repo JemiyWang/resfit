@@ -89,6 +89,8 @@ def build_parser():
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--rep_dim", type=int, default=10)
     p.add_argument("--value_hidden", type=int, default=256)
+    p.add_argument("--value_layers", type=int, default=2,
+                   help="value/rep MLP hidden 层数;默认 2 保持旧 checkpoint/旧实验结构")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu", help="训练设备(cpu/cuda);默认 cpu 保持零回归,GPU 训练传 cuda")
     p.add_argument("--goal_future_mode", choices=["stage_entry", "geometric"], default="geometric",
@@ -163,13 +165,15 @@ def main():
     data = build_gc_data(seqs, stage_entries)
     print(f"[hiql_gc] state_mode={args.state_mode} demos={len(seqs)} transitions={len(data['s_idx'])} "
           f"state_dim={data['states'].shape[1]} rep_dim={args.rep_dim} "
+          f"value_hidden={args.value_hidden} value_layers={args.value_layers} "
           f"goal_future_mode={args.goal_future_mode} use_layer_norm={bool(args.use_layer_norm)} "
           f"value_loss_mode={args.value_loss_mode} value_mask_mode={args.value_mask_mode} "
           f"value_rep_mode={args.value_rep_mode}")
     model, v_stats = train_gc_value(
         data, gamma=args.gamma, expectile=args.expectile, ema=args.ema, lr=args.lr,
         batch_size=args.batch_size, steps=args.steps, rep_dim=args.rep_dim,
-        hidden=args.value_hidden, seed=args.seed, future_mode=args.goal_future_mode,
+        hidden=args.value_hidden, value_layers=args.value_layers, seed=args.seed,
+        future_mode=args.goal_future_mode,
         use_layer_norm=bool(args.use_layer_norm), value_loss_mode=args.value_loss_mode,
         value_mask_mode=args.value_mask_mode, value_rep_mode=args.value_rep_mode,
         device=args.device)

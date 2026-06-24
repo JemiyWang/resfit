@@ -40,15 +40,18 @@ def _mlp(in_dim, hidden, out_dim, n_hidden=2, use_layer_norm=False):
 class RelativeGoalEncoder(nn.Module):
     """φ:rep_mode='concat' 吃 concat([g,s]);'goal_only' 只吃 g。归一化到半径 sqrt(rep_dim)。"""
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False, rep_mode="concat"):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False,
+                 rep_mode="concat", value_layers=2):
         super().__init__()
         if rep_mode not in ("concat", "goal_only"):
             raise ValueError(f"unknown rep_mode: {rep_mode!r}")
         self.state_dim = state_dim
         self.rep_dim = rep_dim
         self.rep_mode = rep_mode
+        self.value_layers = value_layers
         in_dim = state_dim if rep_mode == "goal_only" else 2 * state_dim
-        self.net = _mlp(in_dim, hidden, rep_dim, use_layer_norm=use_layer_norm)
+        self.net = _mlp(in_dim, hidden, rep_dim, n_hidden=value_layers,
+                        use_layer_norm=use_layer_norm)
 
     def forward(self, targets, bases):
         inp = targets if self.rep_mode == "goal_only" else torch.cat([targets, bases], dim=-1)
@@ -64,7 +67,8 @@ class GoalConditionedVF(nn.Module):
     "目标/子目标状态"。forward(s, g) -> (v1, v2)。
     """
 
-    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False, rep_mode="concat"):
+    def __init__(self, state_dim, rep_dim=10, hidden=256, use_layer_norm=False,
+                 rep_mode="concat", value_layers=2):
         super().__init__()
         if rep_mode not in ("concat", "goal_only"):
             raise ValueError(f"unknown rep_mode: {rep_mode!r}")
@@ -73,10 +77,14 @@ class GoalConditionedVF(nn.Module):
         self.hidden = hidden
         self.use_layer_norm = use_layer_norm
         self.rep_mode = rep_mode
+        self.value_layers = value_layers
         self.goal_encoder = RelativeGoalEncoder(state_dim, rep_dim, hidden,
-                                                use_layer_norm=use_layer_norm, rep_mode=rep_mode)
-        self.v1 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
-        self.v2 = _mlp(state_dim + rep_dim, hidden, 1, use_layer_norm=use_layer_norm)
+                                                use_layer_norm=use_layer_norm, rep_mode=rep_mode,
+                                                value_layers=value_layers)
+        self.v1 = _mlp(state_dim + rep_dim, hidden, 1, n_hidden=value_layers,
+                       use_layer_norm=use_layer_norm)
+        self.v2 = _mlp(state_dim + rep_dim, hidden, 1, n_hidden=value_layers,
+                       use_layer_norm=use_layer_norm)
 
     def phi(self, s, g):
         return self.goal_encoder(g, s)
@@ -175,7 +183,8 @@ def sample_gc_goals(idx, traj_id, last_idx_of, stage_entries_of, rng,
 
 
 def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
-                   batch_size=256, steps=50_000, rep_dim=10, hidden=256, seed=0,
+                   batch_size=256, steps=50_000, rep_dim=10, hidden=256,
+                   value_layers=2, seed=0,
                    future_mode="stage_entry", use_layer_norm=False,
                    value_loss_mode="shared_min", value_mask_mode="done_aware",
                    value_rep_mode="concat", device="cpu"):
@@ -193,6 +202,8 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     value_rep_mode:
       - 'concat'(默认,底层旧行为):goal 编码器 φ 吃 concat([g,s]),输入维 2*state_dim。
       - 'goal_only'(对齐参考):φ 只吃 g,输入维 state_dim(HIQL rep_type='state',状态侧恒等)。
+    value_layers:
+      - value/rep MLP hidden 层数;默认 2 保持旧 checkpoint/旧实验结构。
     device:
       - 'cpu'(默认,零回归):与原行为逐位等价。
       - 'cuda'/'cuda:N':把 model/target/states/done_all 及训练中间 tensor 都搬 GPU,大 state_dim 时显著提速。
@@ -208,7 +219,7 @@ def train_gc_value(data, *, gamma=0.99, expectile=0.7, ema=0.005, lr=3e-4,
     states = data["states"].to(device)
     D = states.shape[1]
     model = GoalConditionedVF(D, rep_dim, hidden, use_layer_norm=use_layer_norm,
-                              rep_mode=value_rep_mode).to(device)
+                              rep_mode=value_rep_mode, value_layers=value_layers).to(device)
     target = copy.deepcopy(model)
     for p in target.parameters():
         p.requires_grad_(False)
@@ -271,8 +282,8 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
                   value_loss_mode="shared_min", value_mask_mode="done_aware",
                   act_feat_signature=None, pi0_feat_signature=None, act_weight_sha=None):
     """存 gc_value.pt:权重 + 维度 + v_stats + state mean/std + dataset_id + state_mode
-    + value_loss_mode/value_mask_mode/value_rep_mode(provenance,旧档无此键时 load_gc_value
-    分别回退 'shared_min'/'done_aware'/'concat';value_rep_mode 还决定 load 时 goal 编码器重建维度)
+    + value_loss_mode/value_mask_mode/value_rep_mode/value_layers(provenance,旧档无此键时 load_gc_value
+    分别回退 'shared_min'/'done_aware'/'concat'/2;value_rep_mode/value_layers 决定网络重建维度/深度)
     (+ eef_piece 的 rel_piece mean/std,供 Phase 3 online 同源标准化)
     (+ act_feat_signature:act_feat 模式下的 extractor 签名 dict,供 load 时重建同源 extractor)
     (+ pi0_feat_signature:pi0_feat 模式下的缓存签名 dict,供 load 时同源校验)。"""
@@ -283,6 +294,7 @@ def save_gc_value(path, model, *, v_stats, mean, std, dataset_id,
         "hidden": model.hidden,
         "use_layer_norm": model.use_layer_norm,
         "value_rep_mode": model.rep_mode,
+        "value_layers": model.value_layers,
         "v_stats": v_stats,
         "mean": mean,
         "std": std,
@@ -306,9 +318,10 @@ def load_gc_value(path, map_location="cpu"):
     """读 gc_value.pt,重建 GoalConditionedVF(eval),返回 (model, info)。"""
     ckpt = torch.load(path, map_location=map_location, weights_only=False)
     value_rep_mode = ckpt.get("value_rep_mode", "concat")
+    value_layers = ckpt.get("value_layers", 2)
     model = GoalConditionedVF(ckpt["state_dim"], ckpt["rep_dim"], ckpt["hidden"],
                               use_layer_norm=ckpt.get("use_layer_norm", False),
-                              rep_mode=value_rep_mode)
+                              rep_mode=value_rep_mode, value_layers=value_layers)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
@@ -316,6 +329,7 @@ def load_gc_value(path, map_location="cpu"):
     info["value_loss_mode"] = ckpt.get("value_loss_mode", "shared_min")
     info["value_mask_mode"] = ckpt.get("value_mask_mode", "done_aware")
     info["value_rep_mode"] = value_rep_mode
+    info["value_layers"] = value_layers
     info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     info["act_feat_signature"] = ckpt.get("act_feat_signature")

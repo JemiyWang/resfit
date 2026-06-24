@@ -207,6 +207,49 @@ def test_gc_value_layer_norm_save_load_roundtrip(tmp_path):
     assert torch.allclose(v1a, v1b, atol=1e-6)
 
 
+def test_gc_value_value_layers_three_changes_all_mlps():
+    """value_layers=3 时 goal encoder 和双 value head 都有 3 个 hidden Linear。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    vf = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, value_layers=3)
+    assert vf.value_layers == 3
+
+    def linear_count(module):
+        return sum(isinstance(m, torch.nn.Linear) for m in module.modules())
+
+    assert linear_count(vf.goal_encoder.net) == 4  # 3 hidden + output
+    assert linear_count(vf.v1) == 4
+    assert linear_count(vf.v2) == 4
+    s, g = torch.randn(5, 30), torch.randn(5, 30)
+    v1, v2 = vf(s, g)
+    assert v1.shape == (5,) and v2.shape == (5,)
+
+
+def test_gc_value_value_layers_save_load_roundtrip_and_legacy_default(tmp_path):
+    """新档记录 value_layers;旧档缺字段时回退 2,以兼容旧 checkpoint。"""
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import (
+        GoalConditionedVF, save_gc_value, load_gc_value)
+    model = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, value_layers=3)
+    p = tmp_path / "gc_layers.pt"
+    save_gc_value(str(p), model, v_stats={"min": -1.0, "max": 0.0, "mean": -0.5},
+                  mean=torch.zeros(30), std=torch.ones(30), dataset_id="ds")
+    m2, info = load_gc_value(str(p))
+    assert m2.value_layers == 3
+    assert info["value_layers"] == 3
+    s, g = torch.randn(4, 30), torch.randn(4, 30)
+    v1a, _ = model(s, g)
+    v1b, _ = m2(s, g)
+    assert torch.allclose(v1a, v1b, atol=1e-6)
+
+    ckpt = torch.load(str(p), weights_only=False)
+    del ckpt["value_layers"]
+    legacy = GoalConditionedVF(state_dim=30, rep_dim=10, hidden=64, value_layers=2)
+    ckpt["state_dict"] = legacy.state_dict()
+    torch.save(ckpt, str(p))
+    m3, info3 = load_gc_value(str(p))
+    assert m3.value_layers == 2
+    assert info3["value_layers"] == 2
+
+
 def test_expectile_loss_weighted_gates_on_adv():
     from resfit.rl_finetuning.chunk_residual.hiql_gc_value import expectile_loss_weighted
     from resfit.rl_finetuning.chunk_residual.hiql_value import expectile_loss
@@ -271,6 +314,16 @@ def test_train_gc_value_rejects_bad_loss_mode():
     with pytest.raises(ValueError):
         train_gc_value(data, steps=1, batch_size=4, rep_dim=4, hidden=16,
                        value_loss_mode="bogus", seed=0)
+
+
+def test_train_gc_value_accepts_value_layers_three():
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import build_gc_data, train_gc_value
+    seq = np.arange(10).reshape(10, 1).astype(np.float32)
+    data = build_gc_data([seq], [np.array([], dtype=np.int64)])
+    model, _ = train_gc_value(data, steps=1, batch_size=4, rep_dim=4, hidden=16,
+                              value_layers=3, seed=0)
+    assert model.value_layers == 3
+    assert sum(isinstance(m, torch.nn.Linear) for m in model.v1.modules()) == 4
 
 
 def test_gc_value_save_load_value_loss_mode(tmp_path):
@@ -344,17 +397,20 @@ def test_gc_value_parser_defaults_aligned_to_hiql():
     assert a.value_loss_mode == "hiql"
     assert a.value_mask_mode == "hiql"
     assert a.value_rep_mode == "goal_only"
+    assert a.value_layers == 2
     # 旧口径仍可显式回退
     b = build_parser().parse_args(req + ["--goal_future_mode", "stage_entry",
                                          "--use_layer_norm", "0",
                                          "--value_loss_mode", "shared_min",
                                          "--value_mask_mode", "done_aware",
-                                         "--value_rep_mode", "concat"])
+                                         "--value_rep_mode", "concat",
+                                         "--value_layers", "3"])
     assert b.goal_future_mode == "stage_entry"
     assert b.use_layer_norm == 0
     assert b.value_loss_mode == "shared_min"
     assert b.value_mask_mode == "done_aware"
     assert b.value_rep_mode == "concat"
+    assert b.value_layers == 3
 
 
 def test_rep_mode_default_concat_and_dims():
