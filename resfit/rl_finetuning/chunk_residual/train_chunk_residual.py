@@ -537,6 +537,30 @@ def build_parser():
                    default="online", help="wandb 模式;--smoke 时自动 disabled")
     p.add_argument("--log_freq", type=int, default=100,
                    help="训练指标上报间隔(env_steps)")
+    # --- HIQL 在线联合微调(spec 2026-06-24;默认全关 = 逐位等价)---
+    p.add_argument("--online_finetune_value", action="store_true",
+                   help="Phase3 在线微调 V(s,g)(冻 φ,只更新 critic head + EMA target);默认关")
+    p.add_argument("--online_finetune_high_actor", action="store_true",
+                   help="Phase3 在线微调 high_actor(AWR,用当前 V);默认关")
+    p.add_argument("--online_value_lr", type=float, default=1e-5,
+                   help="在线 V 微调 LR(小;默认 1e-5)")
+    p.add_argument("--online_high_actor_lr", type=float, default=1e-5,
+                   help="在线 high_actor 微调 LR(小;默认 1e-5)")
+    p.add_argument("--online_finetune_offline_fraction", type=float, default=0.5,
+                   help="V/high_actor 在线更新 batch 里 offline demo 占比(RLPD 锚;默认 0.5)")
+    p.add_argument("--online_finetune_every", type=int, default=1,
+                   help="每多少个 update tick 跑一次在线微调(默认 1)")
+    p.add_argument("--online_finetune_expectile", type=float, default=0.7,
+                   help="在线 V 微调 expectile τ(默认 0.7)")
+    p.add_argument("--online_finetune_ema", type=float, default=0.005,
+                   help="在线 V target 的 EMA 系数(默认 0.005)")
+    p.add_argument("--online_finetune_future_mode", choices=["stage_entry", "geometric"],
+                   default="geometric",
+                   help="在线 goal 采样 future_mode(默认 geometric,只需 last_idx 无需 stage 检测)")
+    p.add_argument("--online_finetune_max_trans", type=int, default=50_000,
+                   help="在线 store 容量(transition 数,FIFO)")
+    p.add_argument("--online_finetune_min_trans", type=int, default=2_000,
+                   help="在线 store 达到此 transition 数才开始微调")
     return p
 
 
