@@ -281,6 +281,48 @@ def test_transition_fields_threads_rel_piece_seq():
     assert abs(fld["reward"][0] - exp0) < 1e-5
 
 
+class _ActFeatStubPot:
+    state_mode = "act_feat"
+
+    def phi(self, state_seq, rel_piece_seq=None):
+        assert rel_piece_seq is None
+        return torch.as_tensor(state_seq, dtype=torch.float32)[:, 1]
+
+
+def test_transition_rewards_actfeat_potential_uses_act_feat_seq():
+    instant = np.array([0, 0, 0])
+    low_state = torch.tensor([[100.0, 100.0], [100.0, 100.0], [100.0, 100.0]])
+    act_feat = torch.tensor([[1.0, 10.0], [1.0, 20.0], [1.0, 30.0]])
+    r = transition_rewards(
+        instant,
+        bonus=1.0,
+        mode="potential",
+        gamma=0.99,
+        success=True,
+        potential=_ActFeatStubPot(),
+        state_seq=low_state,
+        act_feat_seq=act_feat,
+    )
+    exp0 = potential_shaping(10.0, 20.0, bonus=1.0, gamma=0.99, done=False)
+    exp1 = 1.0 + potential_shaping(20.0, 30.0, bonus=1.0, gamma=0.99, done=True)
+    assert abs(r[0] - exp0) < 1e-5
+    assert abs(r[1] - exp1) < 1e-5
+
+
+def test_transition_rewards_actfeat_requires_act_feat_seq():
+    instant = np.array([0, 0, 0])
+    with pytest.raises(AssertionError, match="act_feat potential"):
+        transition_rewards(
+            instant,
+            bonus=1.0,
+            mode="potential",
+            gamma=0.99,
+            success=True,
+            potential=_ActFeatStubPot(),
+            state_seq=torch.zeros(3, 2),
+        )
+
+
 from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
 
 

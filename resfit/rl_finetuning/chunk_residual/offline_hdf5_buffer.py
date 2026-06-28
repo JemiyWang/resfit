@@ -147,7 +147,8 @@ def latch_from_instant(instant) -> np.ndarray:
 
 def transition_fields(instant_stages, *, bonus: float, mode: str,
                       gamma: float, success: bool = True,
-                      potential=None, state_seq=None, rel_piece_seq=None) -> dict:
+                      potential=None, state_seq=None, rel_piece_seq=None,
+                      act_feat_seq=None) -> dict:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的全部 stage/reward/done 字段。
 
     汇总索引约定(与线上 cl=1 同构),供灌装层 zip obs/action/图:
@@ -167,7 +168,8 @@ def transition_fields(instant_stages, *, bonus: float, mode: str,
         "reward": transition_rewards(instant, bonus=bonus, mode=mode,
                                      gamma=gamma, success=success,
                                      potential=potential, state_seq=state_seq,
-                                     rel_piece_seq=rel_piece_seq),
+                                     rel_piece_seq=rel_piece_seq,
+                                     act_feat_seq=act_feat_seq),
         "done": done,
         "stage_id": transition_stage_ids(instant),
         "next_stage_id": instant[1:],
@@ -186,7 +188,8 @@ def transition_stage_ids(instant_stages) -> np.ndarray:
 
 def transition_rewards(instant_stages, *, bonus: float, mode: str,
                        gamma: float, success: bool = True,
-                       potential=None, state_seq=None, rel_piece_seq=None) -> np.ndarray:
+                       potential=None, state_seq=None, rel_piece_seq=None,
+                       act_feat_seq=None) -> np.ndarray:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的总 reward。
 
     与线上 cl=1 一致:每步 reward = base 稀疏 + shaping。
@@ -199,11 +202,16 @@ def transition_rewards(instant_stages, *, bonus: float, mode: str,
     rewards = np.empty(T - 1, dtype=np.float32)
     phi = None
     if potential is not None:
-        assert state_seq is not None and len(state_seq) == T, \
-            "potential 模式需 state_seq 且长度=T"
-        assert rel_piece_seq is None or len(rel_piece_seq) == T, \
-            "rel_piece_seq 长度须 = T"
-        phi = potential.phi(state_seq, rel_piece_seq)            # [T]
+        if getattr(potential, "state_mode", "eef") == "act_feat":
+            assert act_feat_seq is not None and len(act_feat_seq) == T, \
+                "act_feat potential 模式需 act_feat_seq 且长度=T"
+            phi = potential.phi(act_feat_seq, None)
+        else:
+            assert state_seq is not None and len(state_seq) == T, \
+                "potential 模式需 state_seq 且长度=T"
+            assert rel_piece_seq is None or len(rel_piece_seq) == T, \
+                "rel_piece_seq 长度须 = T"
+            phi = potential.phi(state_seq, rel_piece_seq)            # [T]
     for t in range(T - 1):
         done = success and (t == T - 2)
         base = float(done)

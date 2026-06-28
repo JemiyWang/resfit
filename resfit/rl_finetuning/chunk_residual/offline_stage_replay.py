@@ -223,6 +223,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     # 喂 Φ 重算 reward(observation.state 仍存 18 维)。stage cache 命中也得起 env 算 rel。
     _eef_subgoal = subgoal is not None and getattr(subgoal, "state_mode", "eef_piece") == "eef_piece"
     _act_feat_subgoal = subgoal is not None and getattr(subgoal, "state_mode", "eef_piece") == "act_feat"
+    _act_feat_potential = potential is not None and getattr(potential, "state_mode", "eef") == "act_feat"
     need_rel = (potential is not None and getattr(potential, "state_mode", "eef") == "eef_piece") or _eef_subgoal
     _sg_rel_mean = subgoal.rel_mean.cpu() if _eef_subgoal else None
     _sg_rel_std = subgoal.rel_std.cpu() if _eef_subgoal else None
@@ -231,15 +232,15 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
             rb, action_scaler=action_scaler, state_standardizer=state_standardizer,
             image_keys=image_keys, bonus=bonus, mode=mode, gamma=gamma, num_demos=num_demos,
             subgoal=subgoal, way_steps=way_steps, act_feat_seqs=act_feat_seqs,
-            repo_id=lerobot_repo_id, root=lerobot_root, ds=_lerobot_ds,
+            potential=potential, repo_id=lerobot_repo_id, root=lerobot_root, ds=_lerobot_ds,
             base_policy=base_policy, base_mode=base_mode, base_device=base_device)
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
             _af_by_ep = None
-            if _act_feat_subgoal:        # act_feat:离线 subgoal 复用已建好的 530 缓存(按 demo 全序映射)
+            if _act_feat_subgoal or _act_feat_potential:
                 assert act_feat_seqs is not None, \
-                    "act_feat subgoal 的 offline buffer 需 act_feat_seqs(530 缓存序列)"
+                    "act_feat subgoal/potential 的 offline buffer 需 act_feat_seqs(缓存序列)"
                 assert len(act_feat_seqs) == len(demos), \
                     f"act_feat_seqs 数({len(act_feat_seqs)}) != demo 数({len(demos)})"
                 _af_by_ep = dict(zip(demos, act_feat_seqs))
@@ -288,10 +289,18 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                     rel_seq = replay_eef_rel_piece(
                         env, states, model_file=grp.attrs["model_file"],
                         ep_meta=grp.attrs.get("ep_meta"))
+                act_feat_seq = None
+                if _act_feat_potential:
+                    act_feat_seq = torch.as_tensor(_af_by_ep[ep], dtype=torch.float32)
+                    assert act_feat_seq.shape[0] == T, \
+                        f"act_feat potential 缓存帧数 {act_feat_seq.shape[0]} != demo {T} ({ep})"
+                    assert act_feat_seq.shape[1] == potential.model.state_dim, \
+                        f"act_feat potential 维度 {act_feat_seq.shape[1]} != value state_dim {potential.model.state_dim}"
                 fld = transition_fields(instant, bonus=bonus, mode=mode,
                                         gamma=gamma, success=True,
                                         potential=potential, state_seq=state_n,
-                                        rel_piece_seq=rel_seq)
+                                        rel_piece_seq=rel_seq,
+                                        act_feat_seq=act_feat_seq)
                 act_n = action_scaler.scale(
                     torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
                 if base_mode == "base_policy":
@@ -356,7 +365,7 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
 
 
 def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys, bonus, mode,
-                           gamma, num_demos, subgoal, way_steps, act_feat_seqs, repo_id, root, ds,
+                           gamma, num_demos, subgoal, way_steps, act_feat_seqs, potential, repo_id, root, ds,
                            base_policy, base_mode, base_device) -> int:
     """LeRobot 数据源 / no-stage 路:逐集读帧灌装 offline transition,stage_id≡0、无 rel_piece。
 
@@ -370,14 +379,15 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
         open_lerobot, lerobot_episode_count, lerobot_episode_frames)
     assert subgoal is None or getattr(subgoal, "state_mode", "") == "act_feat", \
         "lerobot 数据源仅支持 act_feat subgoal(无 eef_piece rel)"
+    _act_feat_potential = potential is not None and getattr(potential, "state_mode", "eef") == "act_feat"
     if ds is None:
         ds = open_lerobot(repo_id, root)
     n = lerobot_episode_count(ds)
     if num_demos is not None:
         n = min(n, num_demos)
-    if subgoal is not None:
+    if subgoal is not None or _act_feat_potential:
         assert act_feat_seqs is not None, \
-            "act_feat subgoal 的 lerobot offline buffer 需 act_feat_seqs(530 缓存序列)"
+            "act_feat subgoal/potential 的 lerobot offline buffer 需 act_feat_seqs(缓存序列)"
         assert len(act_feat_seqs) >= n, \
             f"act_feat_seqs 数({len(act_feat_seqs)}) < demo 数({n})"
     added = 0
@@ -388,8 +398,24 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
             continue
         state_n = state_standardizer.standardize(fr["state"].float()).cpu()         # (T,Dp) std
         instant = np.zeros(T, dtype=np.int8)                                        # no-stage
-        fld = transition_fields(instant, bonus=bonus, mode=mode, gamma=gamma, success=True,
-                                potential=None, state_seq=state_n, rel_piece_seq=None)
+        act_feat_seq = None
+        if _act_feat_potential:
+            act_feat_seq = torch.as_tensor(act_feat_seqs[ep], dtype=torch.float32)
+            assert act_feat_seq.shape[0] == T, \
+                f"act_feat potential 缓存帧数 {act_feat_seq.shape[0]} != demo {T} (ep{ep})"
+            assert act_feat_seq.shape[1] == potential.model.state_dim, \
+                f"act_feat potential 维度 {act_feat_seq.shape[1]} != value state_dim {potential.model.state_dim}"
+        fld = transition_fields(
+            instant,
+            bonus=bonus,
+            mode=mode,
+            gamma=gamma,
+            success=True,
+            potential=potential,
+            state_seq=state_n,
+            rel_piece_seq=None,
+            act_feat_seq=act_feat_seq,
+        )
         act_n = action_scaler.scale(fr["actions"].float()).cpu()
         if base_mode == "base_policy":
             base_n = _demo_base_actions_lerobot(
