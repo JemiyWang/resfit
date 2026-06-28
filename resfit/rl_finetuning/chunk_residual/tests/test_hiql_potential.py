@@ -41,6 +41,14 @@ def test_hiqlpotential_auto_scale(tmp_path):
     assert abs(pot.scale - 2.0) < 1e-6
 
 
+def test_hiqlpotential_non_stage_task_scale_is_nonzero(tmp_path):
+    p, _ = _make_fake_ckpt(tmp_path, vmin=0.0, vmax=2.0)
+    # Tasks without stage detectors pass num_stages=1. HIQL potential should still
+    # produce a usable Phi scale instead of silently zeroing all shaping rewards.
+    pot = HiqlPotential.from_ckpt(p, num_stages=1, phi_scale=1.0, device="cpu")
+    assert abs(pot.scale - 0.5) < 1e-6
+
+
 def test_hiqlpotential_phi_equals_v_times_scale(tmp_path):
     p, model = _make_fake_ckpt(tmp_path, vmin=0.0, vmax=2.0)
     pot = HiqlPotential.from_ckpt(p, num_stages=5, phi_scale=1.0, device="cpu")

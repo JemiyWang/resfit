@@ -168,3 +168,34 @@ def test_build_raw_obs_seqs_env_hint_none_backcompat(tmp_path):
     seqs = _build_raw_obs_seqs(p, ["observation.images.agentview"], "observation.state",
                                num_demos=None)
     assert seqs[0]["observation.state"].shape == (T, 18)
+
+
+def test_read_per_demo_states_eef_uses_env_aware_lifttray_state(tmp_path, monkeypatch):
+    """lifttray observation.state is 38-D; value training must read the same full proprio as RL."""
+    import h5py
+    import numpy as np
+    import resfit.rl_finetuning.chunk_residual.train_hiql_value as thv
+
+    T = 3
+    p = str(tmp_path / "lifttray.hdf5")
+    fields = {
+        "robot0_eef_pos": 3, "robot0_eef_quat": 4, "robot0_gripper_qpos": 12,
+        "robot1_eef_pos": 3, "robot1_eef_quat": 4, "robot1_gripper_qpos": 12,
+    }
+    with h5py.File(p, "w") as f:
+        g = f.create_group("data/demo_0")
+        for k, d in fields.items():
+            g.create_dataset(f"obs/{k}", data=np.ones((T, d), np.float32))
+
+    class _Meta:
+        stats = {"observation.state": {
+            "mean": np.zeros(38, np.float32),
+            "std": np.ones(38, np.float32),
+        }}
+
+    monkeypatch.setattr(thv, "LeRobotDatasetMetadata", lambda dataset_id: _Meta())
+    seqs, standardizer, aux = thv.read_per_demo_states(
+        p, "ankile/dexmg-two-arm-lift-tray", state_mode="eef", num_demos=None)
+    assert aux is None
+    assert standardizer._mean.shape[0] == 38
+    assert seqs[0].shape == (T, 38)

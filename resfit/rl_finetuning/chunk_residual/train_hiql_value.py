@@ -127,8 +127,9 @@ def read_per_demo_states(hdf5_path, dataset_id, state_mode="eef", num_demos=None
             eps = eps[:num_demos]
         for ep in eps:
             grp = f[f"data/{ep}"]
-            obs_arrays = {k: grp[f"obs/{k}"][()] for k, _ in STATE18_KEYS}
-            state_raw = assemble_state18(obs_arrays)  # (T,18) np
+            keys = expected_low_dim_keys(dataset_id)
+            obs_arrays = {k: grp[f"obs/{k}"][()] for k in keys}
+            state_raw = assemble_state_by_env(obs_arrays, dataset_id)
             state_n = standardizer.standardize(
                 torch.as_tensor(state_raw, dtype=torch.float32)).cpu().numpy()
             seqs.append(state_n)

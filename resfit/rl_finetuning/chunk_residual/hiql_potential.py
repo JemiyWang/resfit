@@ -51,7 +51,8 @@ class HiqlPotential:
     def from_ckpt(cls, path, *, num_stages, phi_scale=1.0, device="cpu"):
         model, info = load_value(path, map_location=device)
         vmin, vmax = info["v_stats"]["min"], info["v_stats"]["max"]
-        auto_scale = (num_stages - 1) / max(vmax - vmin, 1e-6)
+        phi_range = max(int(num_stages) - 1, 1)
+        auto_scale = phi_range / max(vmax - vmin, 1e-6)
         return cls(model, scale=auto_scale * phi_scale, device=device,
                    state_mode=info["state_mode"],
                    rel_piece_mean=info["rel_piece_mean"],
