@@ -178,6 +178,44 @@ def test_hiqlpotential_loads_actfeat_metadata_and_standardizes(tmp_path):
     )
 
 
+class _FakeStateStandardizer:
+    def standardize(self, state):
+        return torch.as_tensor(state, dtype=torch.float32) + 10.0
+
+
+class _FakeExtractor:
+    def __init__(self):
+        self.seen_state = None
+
+    def embed_batch(self, raw_obs):
+        self.seen_state = raw_obs["observation.state"].clone()
+        image_scalar = raw_obs["observation.images.cam"].float().mean(dim=(1, 2, 3), keepdim=False).unsqueeze(-1)
+        return torch.cat([image_scalar, raw_obs["observation.state"].float()], dim=-1)
+
+
+def test_potential_act_feature_encoder_standardizes_proprio_then_feature(tmp_path):
+    from resfit.rl_finetuning.chunk_residual.act_feature import PotentialActFeatureEncoder
+
+    p, _, mean, std, _ = _make_actfeat_ckpt(tmp_path)
+    pot = HiqlPotential.from_ckpt(p, num_stages=5, device="cpu")
+    extractor = _FakeExtractor()
+    encoder = PotentialActFeatureEncoder(
+        extractor,
+        _FakeStateStandardizer(),
+        pot,
+        proprio_key="observation.state",
+    )
+    raw_obs = {
+        "observation.state": torch.tensor([[1.0, 2.0, 3.0]]),
+        "observation.images.cam": torch.ones(1, 3, 2, 2),
+    }
+
+    out = encoder.encode(raw_obs)
+    raw_feat = torch.tensor([[1.0, 11.0, 12.0, 13.0]])
+    assert torch.allclose(extractor.seen_state, torch.tensor([[11.0, 12.0, 13.0]]))
+    assert torch.allclose(out, (raw_feat - mean) / std)
+
+
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import transition_rewards
 
 

@@ -32,6 +32,31 @@ def act_feat_signature(act_ckpt_id, image_keys, proprio_key, pooling) -> dict:
     }
 
 
+class PotentialActFeatureEncoder:
+    """Online adapter for act_feat HIQL potential Phi inputs."""
+
+    def __init__(self, extractor, state_standardizer, potential,
+                 proprio_key="observation.state"):
+        if getattr(potential, "state_mode", None) != "act_feat":
+            raise ValueError("PotentialActFeatureEncoder requires state_mode='act_feat'")
+        self.extractor = extractor
+        self.state_standardizer = state_standardizer
+        self.potential = potential
+        self.proprio_key = proprio_key
+
+    @torch.no_grad()
+    def encode(self, raw_obs: dict) -> torch.Tensor:
+        obs = dict(raw_obs)
+        obs[self.proprio_key] = self.state_standardizer.standardize(raw_obs[self.proprio_key])
+        raw_feat = self.extractor.embed_batch(obs)
+        feat = self.potential.standardize_features(raw_feat)
+        if feat.shape[-1] != self.potential.model.state_dim:
+            raise ValueError(
+                f"online act_feat dim {feat.shape[-1]} != value state_dim {self.potential.model.state_dim}"
+            )
+        return feat
+
+
 class ActFeatureExtractor:
     """冻结 ACT,用 model.encoder 的 forward hook 抓 encoder_out → 池化 ⊕ 原始 proprio。
 
