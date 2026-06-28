@@ -70,7 +70,8 @@ def build_transitions(state_seqs):
 
 
 def save_value(path, model, *, v_stats, mean, std, dataset_id,
-               state_mode="eef", rel_piece_stats=None):
+               state_mode="eef", rel_piece_stats=None,
+               act_feat_signature=None, act_weight_sha=None):
     """存 value.pt:权重 + 维度 + V 统计 + state mean/std + dataset_id + state_mode(+ rel_piece stats)。
 
     state_mode=eef(18)|eef_piece(30);eef_piece 时 rel_piece_stats=(mean(12,),std(12,)),
@@ -88,6 +89,10 @@ def save_value(path, model, *, v_stats, mean, std, dataset_id,
     }
     if rel_piece_stats is not None:
         payload["rel_piece_mean"], payload["rel_piece_std"] = rel_piece_stats
+    if act_feat_signature is not None:
+        payload["act_feat_signature"] = dict(act_feat_signature)
+    if act_weight_sha is not None:
+        payload["act_weight_sha"] = str(act_weight_sha)
     torch.save(payload, path)
 
 
@@ -101,9 +106,12 @@ def load_value(path, map_location="cpu"):
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     info = {k: ckpt[k] for k in ("v_stats", "mean", "std", "dataset_id")}
-    info["state_mode"] = ckpt.get("state_mode", "eef")        # 旧 ckpt 无此键 → eef
-    info["rel_piece_mean"] = ckpt.get("rel_piece_mean")        # eef_piece 才有
+    info["state_dim"] = ckpt["state_dim"]
+    info["state_mode"] = ckpt.get("state_mode", "eef")
+    info["rel_piece_mean"] = ckpt.get("rel_piece_mean")
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
+    info["act_feat_signature"] = ckpt.get("act_feat_signature")
+    info["act_weight_sha"] = ckpt.get("act_weight_sha")
     return model, info
 
 

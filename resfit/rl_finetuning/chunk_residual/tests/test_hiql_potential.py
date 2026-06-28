@@ -135,6 +135,49 @@ def test_hiqlpotential_phi_eef_mode_ignores_rel(tmp_path):
     assert torch.allclose(pot.phi(x), pot.phi(x, rel_piece_raw=np.zeros(12)), atol=1e-6)
 
 
+def _make_actfeat_ckpt(tmp_path, vmin=0.0, vmax=4.0):
+    m = ValueMLP(state_dim=4, hidden=8)
+    p = str(tmp_path / "value_actfeat.pt")
+    mean = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    std = torch.tensor([2.0, 2.0, 4.0, 4.0])
+    sig = {
+        "act_ckpt_id": "base-act",
+        "image_keys": ["observation.images.cam"],
+        "proprio_key": "observation.state",
+        "pooling": "mean",
+    }
+    save_value(
+        p,
+        m,
+        v_stats={"min": vmin, "max": vmax, "mean": 0.5 * (vmin + vmax)},
+        mean=mean,
+        std=std,
+        dataset_id="dummy",
+        state_mode="act_feat",
+        act_feat_signature=sig,
+        act_weight_sha="sha-act",
+    )
+    return p, m, mean, std, sig
+
+
+def test_hiqlpotential_loads_actfeat_metadata_and_standardizes(tmp_path):
+    p, model, mean, std, sig = _make_actfeat_ckpt(tmp_path)
+    pot = HiqlPotential.from_ckpt(p, num_stages=5, phi_scale=1.0, device="cpu")
+
+    assert pot.state_mode == "act_feat"
+    assert pot.model.state_dim == 4
+    assert pot.act_feat_signature == sig
+    assert pot.act_weight_sha == "sha-act"
+    raw = torch.tensor([[3.0, 6.0, 11.0, 20.0]])
+    expected_std = (raw - mean) / std
+    assert torch.allclose(pot.standardize_features(raw), expected_std)
+    assert torch.allclose(
+        pot.phi(expected_std),
+        model(expected_std).squeeze(-1) * pot.scale,
+        atol=1e-5,
+    )
+
+
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import transition_rewards
 
 

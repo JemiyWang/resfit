@@ -27,7 +27,9 @@ class HiqlPotential:
     """
 
     def __init__(self, model, scale, device="cpu",
-                 state_mode="eef", rel_piece_mean=None, rel_piece_std=None):
+                 state_mode="eef", rel_piece_mean=None, rel_piece_std=None,
+                 feature_mean=None, feature_std=None,
+                 act_feat_signature=None, act_weight_sha=None):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
@@ -37,6 +39,23 @@ class HiqlPotential:
         # phi 入参仍是 18 维 std state + raw rel_piece,在此用训练同款 stats 标准化 rel 再拼,
         # 保证 online/offline 喂 V 的 30 维表示与 train_hiql_value 逐位同源。
         self.state_mode = state_mode
+        self.feature_mean = None
+        self.feature_std = None
+        self.act_feat_signature = act_feat_signature
+        self.act_weight_sha = act_weight_sha
+        if state_mode == "act_feat":
+            if feature_mean is None or feature_std is None:
+                raise ValueError("state_mode='act_feat' requires feature mean/std in value checkpoint")
+            self.feature_mean = torch.as_tensor(np.asarray(feature_mean), dtype=torch.float32, device=device)
+            self.feature_std = torch.as_tensor(np.asarray(feature_std), dtype=torch.float32, device=device)
+            if int(self.feature_mean.numel()) != int(self.model.state_dim):
+                raise ValueError(
+                    f"act_feat mean dim {self.feature_mean.numel()} != value state_dim {self.model.state_dim}"
+                )
+            if int(self.feature_std.numel()) != int(self.model.state_dim):
+                raise ValueError(
+                    f"act_feat std dim {self.feature_std.numel()} != value state_dim {self.model.state_dim}"
+                )
         self.rel_mean = None
         self.rel_std = None
         if state_mode == "eef_piece":
@@ -56,7 +75,11 @@ class HiqlPotential:
         return cls(model, scale=auto_scale * phi_scale, device=device,
                    state_mode=info["state_mode"],
                    rel_piece_mean=info["rel_piece_mean"],
-                   rel_piece_std=info["rel_piece_std"])
+                   rel_piece_std=info["rel_piece_std"],
+                   feature_mean=info["mean"],
+                   feature_std=info["std"],
+                   act_feat_signature=info.get("act_feat_signature"),
+                   act_weight_sha=info.get("act_weight_sha"))
 
     def _value_input(self, state_std, rel_piece_raw):
         """构造喂 V 的输入:eef 模式直接 18 维;eef_piece 模式拼 30 维(标准化 rel)。"""
@@ -72,6 +95,12 @@ class HiqlPotential:
         if rel_n.ndim == 1:
             rel_n = rel_n.unsqueeze(0)
         return torch.cat([x, rel_n], dim=-1)
+
+    def standardize_features(self, raw_feat):
+        if self.state_mode != "act_feat":
+            raise ValueError("standardize_features is only valid for state_mode='act_feat'")
+        x = torch.as_tensor(raw_feat, dtype=torch.float32, device=self.device)
+        return (x - self.feature_mean) / self.feature_std
 
     @torch.no_grad()
     def phi(self, state_std, rel_piece_raw=None):

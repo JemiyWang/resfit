@@ -332,7 +332,7 @@ def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
     validate_data_source_cfg(args)
-    extractor, act_ckpt_id, image_keys, _, _ = setup_act_feat(args)
+    extractor, act_ckpt_id, image_keys, act_sig, act_sha = setup_act_feat(args)
     seqs, standardizer, aux = read_per_demo_states(
         args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
         cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
@@ -347,8 +347,18 @@ def main():
         s, s_next, done, gamma=args.gamma, expectile=args.expectile, ema=args.ema,
         lr=args.lr, batch_size=args.batch_size, steps=args.steps,
         hidden=args.value_hidden, seed=args.seed)
-    save_value(args.output, model, v_stats=v_stats, mean=mean, std=std,
-               dataset_id=args.dataset, state_mode=args.state_mode, rel_piece_stats=rel_stats)
+    save_value(
+        args.output,
+        model,
+        v_stats=v_stats,
+        mean=mean,
+        std=std,
+        dataset_id=args.dataset,
+        state_mode=args.state_mode,
+        rel_piece_stats=rel_stats,
+        act_feat_signature=(act_sig if args.state_mode == "act_feat" else None),
+        act_weight_sha=(act_sha if args.state_mode == "act_feat" else None),
+    )
     print(f"[hiql_value] saved {args.output}; state_mode={args.state_mode} v_stats={v_stats}")
 
 
