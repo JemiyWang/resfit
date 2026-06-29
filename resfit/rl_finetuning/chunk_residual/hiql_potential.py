@@ -110,3 +110,40 @@ class HiqlPotential:
         eef_piece 模式:用存储的 rel mean/std 标准化 rel,拼成 30 维喂 V(与训练同源)。
         """
         return self.model(self._value_input(state_std, rel_piece_raw)).squeeze(-1) * self.scale
+
+
+class GcSubgoalPotential:
+    """A2:把冻结 goal-conditioned value 当 PBS 势函数 Φ(s,z)=mean(V(s,z))·scale。
+
+    与 HiqlPotential(单状态 V(s))正交:这里 phi 第二参是子目标 rep z(不是 rel_piece),
+    用 value_from_rep 直接吃 z(z 须在半径 sqrt(rep_dim) 球面,renorm_subgoal=True 保证)。
+    """
+
+    def __init__(self, gc_value, scale, device="cpu"):
+        self.model = gc_value.to(device).eval()
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+        self.scale = float(scale)
+        self.device = device
+        self.is_subgoal = True
+
+    @classmethod
+    def from_ckpt(cls, gc_value_ckpt, *, num_stages, phi_scale=1.0, device="cpu"):
+        from resfit.rl_finetuning.chunk_residual.hiql_gc_value import load_gc_value
+        model, info = load_gc_value(gc_value_ckpt, map_location=device)
+        vmin, vmax = info["v_stats"]["min"], info["v_stats"]["max"]
+        phi_range = max(int(num_stages) - 1, 1)
+        auto_scale = phi_range / max(vmax - vmin, 1e-6)
+        return cls(model, scale=auto_scale * phi_scale, device=device)
+
+    @torch.no_grad()
+    def phi(self, s, z):
+        """s:[B,state_dim] 已标准化 state;z:[B,rep_dim] 子目标 rep -> [B] 势函数值。"""
+        s = torch.as_tensor(s, dtype=torch.float32, device=self.device)
+        z = torch.as_tensor(z, dtype=torch.float32, device=self.device)
+        if s.ndim == 1:
+            s = s.unsqueeze(0)
+        if z.ndim == 1:
+            z = z.unsqueeze(0)
+        v1, v2 = self.model.value_from_rep(s, z)
+        return 0.5 * (v1 + v2) * self.scale

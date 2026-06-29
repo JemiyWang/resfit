@@ -457,6 +457,37 @@ def test_validate_actfeat_potential_cache_rejects_signature_mismatch():
         )
 
 
+def test_gc_subgoal_potential_phi_is_mean_v_times_scale():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import GcSubgoalPotential
+    torch.manual_seed(0)
+    m = GoalConditionedVF(state_dim=6, rep_dim=4, hidden=16).eval()
+    pot = GcSubgoalPotential(m, scale=2.0)
+    assert pot.is_subgoal is True
+    s = torch.randn(1, 6)
+    z = torch.randn(1, 4)
+    with torch.no_grad():
+        v1, v2 = m.value_from_rep(s, z)
+        expect = 0.5 * (v1 + v2) * 2.0
+    assert torch.allclose(pot.phi(s, z), expect, atol=1e-6)
+
+
+def test_gc_subgoal_potential_auto_scale_from_vstats(tmp_path):
+    """from_ckpt 用 v_stats 算 auto_scale=(num_stages-1)/(vmax-vmin)。"""
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF, save_gc_value
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import GcSubgoalPotential
+    m = GoalConditionedVF(state_dim=6, rep_dim=4, hidden=16).eval()
+    ckpt = tmp_path / "gc.pt"
+    save_gc_value(str(ckpt), m, v_stats={"min": -4.0, "max": 0.0, "mean": -2.0},
+                  mean=[0.0] * 6, std=[1.0] * 6, dataset_id="dummy",
+                  state_mode="eef_piece")
+    pot = GcSubgoalPotential.from_ckpt(str(ckpt), num_stages=5, phi_scale=1.0)
+    # auto_scale = (5-1)/(0-(-4)) = 4/4 = 1.0
+    assert abs(pot.scale - 1.0) < 1e-6
+
+
 def test_validate_actfeat_potential_cache_rejects_stats_mismatch():
     pot = SimpleNamespace(
         model=SimpleNamespace(state_dim=4),
