@@ -55,7 +55,8 @@ class ChunkResidualEnvWrapper:
     def __init__(self, vec_env, base_policy, action_scaler, state_standardizer,
                  chunk_length: int, stage_reward_bonus: float = 0.0,
                  reward_shaping_mode: str = "none", gamma: float = 0.99,
-                 base_action_mode: str = "replan", potential=None):
+                 base_action_mode: str = "replan", potential=None,
+                 potential_feature_encoder=None):
         self.vec_env = vec_env
         self.base_policy = base_policy
         self.action_scaler = action_scaler
@@ -66,7 +67,12 @@ class ChunkResidualEnvWrapper:
         self.gamma = gamma
         self.base_action_mode = base_action_mode
         self.potential = potential          # None=Φ用stage(现状);HiqlPotential=Φ用V(state)
+        self.potential_feature_encoder = potential_feature_encoder
+        if potential is not None and getattr(potential, "state_mode", "eef") == "act_feat" \
+                and potential_feature_encoder is None:
+            raise ValueError("act_feat potential requires potential_feature_encoder")
         self._start_state_std = None         # 本 chunk 起点的标准化 state(potential 模式用)
+        self._start_phi_state = None
         self._start_rel_piece = None         # 本 chunk 起点的 raw rel_piece(eef_piece object-aware Φ 用)
         assert chunk_length >= 1, "chunk_length must be >= 1"
         assert base_action_mode in ("replan", "queue"), \
@@ -126,6 +132,15 @@ class ChunkResidualEnvWrapper:
         rel = np.asarray(rel)
         return rel[0] if rel.ndim == 2 else rel
 
+    def _phi_input(self, raw_obs, *, aug_obs=None, info=None):
+        if self.potential is None:
+            return None, None
+        if getattr(self.potential, "state_mode", "eef") == "act_feat":
+            return self.potential_feature_encoder.encode(raw_obs), None
+        state_std = aug_obs["observation.state"] if aug_obs is not None \
+            else self.state_standardizer.standardize(raw_obs["observation.state"])
+        return state_std, self._extract_rel(info)
+
     def reset(self, **kwargs):
         raw_obs, info = self.vec_env.reset(**kwargs)
         self.base_policy.reset()
@@ -135,7 +150,8 @@ class ChunkResidualEnvWrapper:
         self._last_base_flat = base_flat
         aug = self._augment(raw_obs, base_flat)
         self._start_state_std = aug["observation.state"]
-        self._start_rel_piece = self._extract_rel(info)   # 起点 rel(与 start state 同步,喂 object-aware Φ)
+        self._start_phi_state, self._start_rel_piece = self._phi_input(
+            raw_obs, aug_obs=aug, info=info)
         return aug, info
 
     def step(self, residual_flat: torch.Tensor):
@@ -189,10 +205,9 @@ class ChunkResidualEnvWrapper:
                 bonus=self.stage_reward_bonus, gamma=self.gamma, done=chunk_done)
         else:
             # object-aware(eef_piece):从 info 取 raw rel_piece 一并喂 Φ;eef 模式 rel=None、phi 忽略。
-            end_state_std = self.state_standardizer.standardize(raw_obs["observation.state"])
-            rel_next = self._extract_rel(last_info)
-            phi_start = self.potential.phi(self._start_state_std, self._start_rel_piece)
-            phi_next = self.potential.phi(end_state_std, rel_next)
+            end_phi_state, rel_next = self._phi_input(raw_obs, info=last_info)
+            phi_start = self.potential.phi(self._start_phi_state, self._start_rel_piece)
+            phi_next = self.potential.phi(end_phi_state, rel_next)
             total_reward = total_reward + potential_shaping(
                 phi_start, phi_next, bonus=self.stage_reward_bonus,
                 gamma=self.gamma, done=chunk_done)
@@ -208,7 +223,8 @@ class ChunkResidualEnvWrapper:
         self._start_state_std = aug_obs["observation.state"]   # 本 chunk 末 = 下个 chunk 起点
         # rel_piece 同步携带:done 时 SAME_STEP autoreset 后 info 顶层是 reset_info,
         # rel_piece 与返回的(reset)obs 同步 → 下个 chunk 起点 Φ 一致。
-        self._start_rel_piece = self._extract_rel(last_info)
+        self._start_phi_state, self._start_rel_piece = self._phi_input(
+            raw_obs, aug_obs=aug_obs, info=last_info)
         info = dict(last_info)
         info["scaled_action"] = combined_flat
         info["max_stage_in_chunk"] = max_in_chunk        # 给 stage-balanced replay

@@ -393,3 +393,50 @@ def test_step_hiql_potential_eef_piece_threads_rel_from_info():
     assert abs(float(r1) - potential_shaping(0.0, 11.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
     _, r2, *_ = w.step(torch.zeros(1, D))      # start 推进到 _k=1(phi 11),end _k=2(phi 2+20=22)
     assert abs(float(r2) - potential_shaping(11.0, 22.0, bonus=1.0, gamma=0.99, done=False)) < 1e-5
+
+
+class _ActFeatPotential:
+    state_mode = "act_feat"
+
+    def __init__(self):
+        self.inputs = []
+
+    def phi(self, state_std, rel_piece_raw=None):
+        assert rel_piece_raw is None
+        x = torch.as_tensor(state_std, dtype=torch.float32)
+        self.inputs.append(x.clone())
+        return x[:, 0]
+
+
+class _SequentialFeatureEncoder:
+    def __init__(self):
+        self.calls = 0
+
+    def encode(self, raw_obs):
+        self.calls += 1
+        return torch.tensor([[float(self.calls), 99.0]])
+
+
+def test_actfeat_potential_uses_feature_encoder_not_lowdim_state():
+    env = _FakeVecEnvNoTerm()
+    pot = _ActFeatPotential()
+    enc = _SequentialFeatureEncoder()
+    w = ChunkResidualEnvWrapper(
+        env,
+        _FakeBase(),
+        _IdentityScaler(),
+        _IdentityStd(),
+        chunk_length=1,
+        stage_reward_bonus=1.0,
+        reward_shaping_mode="potential",
+        gamma=0.5,
+        potential=pot,
+        potential_feature_encoder=enc,
+    )
+    w.reset()
+    _, reward, _, _, _ = w.step(torch.zeros(1, D))
+
+    assert enc.calls == 3
+    assert torch.allclose(pot.inputs[0], torch.tensor([[1.0, 99.0]]))
+    assert torch.allclose(pot.inputs[1], torch.tensor([[2.0, 99.0]]))
+    assert reward.item() == 0.0
