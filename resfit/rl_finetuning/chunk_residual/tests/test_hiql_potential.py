@@ -611,3 +611,33 @@ def test_validate_hiql_subgoal_requires_subgoal_and_renorm():
         d = dict(base); d.update(bad)
         with pytest.raises(AssertionError):
             validate_hiql_subgoal_args(types.SimpleNamespace(**d))
+
+
+class TestTrainEnvShapingMode:
+    """A2 训练 env shaping 模式 helper:hiql_subgoal 强制 none(防 wrapper stage-PBS 与主循环
+    gc shaping 叠加),其余 source 原样透传(bit-equivalent)。回归 final-review 的 online
+    double-shaping Critical(wrapper potential=None + reward_shaping_mode=potential 会 fallback
+    成 stage 整形)。"""
+
+    def test_a2_hiql_subgoal_forces_none(self):
+        from resfit.rl_finetuning.chunk_residual.train_chunk_residual import train_env_shaping_mode
+        assert train_env_shaping_mode("hiql_subgoal", "potential") == "none"
+
+    def test_a2_hiql_subgoal_forces_none_regardless_of_shaping_mode(self):
+        from resfit.rl_finetuning.chunk_residual.train_chunk_residual import train_env_shaping_mode
+        assert train_env_shaping_mode("hiql_subgoal", "none") == "none"
+        assert train_env_shaping_mode("hiql_subgoal", "stage") == "none"
+
+    def test_stage_source_passthrough(self):
+        from resfit.rl_finetuning.chunk_residual.train_chunk_residual import train_env_shaping_mode
+        assert train_env_shaping_mode("stage", "none") == "none"
+        assert train_env_shaping_mode("stage", "potential") == "potential"
+
+    def test_hiql_source_passthrough(self):
+        from resfit.rl_finetuning.chunk_residual.train_chunk_residual import train_env_shaping_mode
+        assert train_env_shaping_mode("hiql", "potential") == "potential"
+        assert train_env_shaping_mode("hiql", "none") == "none"
+
+    def test_unknown_source_passthrough(self):
+        from resfit.rl_finetuning.chunk_residual.train_chunk_residual import train_env_shaping_mode
+        assert train_env_shaping_mode("unknown_future_source", "potential") == "potential"
