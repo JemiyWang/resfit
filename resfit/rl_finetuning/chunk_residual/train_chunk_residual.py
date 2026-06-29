@@ -215,6 +215,17 @@ def validate_hiql_subgoal_args(args):
         "--potential_source hiql_subgoal 需 --gc_value_ckpt"
 
 
+def train_env_shaping_mode(potential_source: str, shaping_mode: str) -> str:
+    """Return the reward_shaping_mode for the TRAINING ChunkResidualEnvWrapper.
+
+    For A2 (potential_source="hiql_subgoal") the main loop owns ALL gc shaping; the
+    wrapper must contribute zero stage-PBS shaping, so we force "none".
+    All other paths (stage / hiql / unknown) pass shaping_mode through unchanged —
+    bit-equivalent to previous behaviour.
+    """
+    return "none" if potential_source == "hiql_subgoal" else shaping_mode
+
+
 def compute_online_subgoal(subgoal, obs, base_policy, cur_rel=None):
     """按 state_mode 选特征来源出 z。
 
@@ -904,7 +915,9 @@ def main():
     env = ChunkResidualEnvWrapper(vec_env, base_policy, action_scaler, state_standardizer,
                                   chunk_length=args.chunk_length,
                                   stage_reward_bonus=args.stage_reward_bonus,
-                                  reward_shaping_mode=shaping_mode, gamma=args.gamma,
+                                  reward_shaping_mode=train_env_shaping_mode(
+                                      args.potential_source, shaping_mode),
+                                  gamma=args.gamma,
                                   base_action_mode=args.base_action_mode,
                                   potential=potential,
                                   potential_feature_encoder=potential_feature_encoder)
@@ -1021,7 +1034,9 @@ def main():
         gc_potential = GcSubgoalPotential.from_ckpt(
             args.gc_value_ckpt, num_stages=num_stages,
             phi_scale=args.gc_potential_scale, device=args.device)
-        potential = None        # A2 不走 wrapper 的 potential 路径(wrapper 逐位等价无 shaping)
+        potential = None        # A2 不走 wrapper 的 potential 路径;training env 已由
+        # train_env_shaping_mode() 强制 reward_shaping_mode="none",wrapper 贡献零 shaping,
+        # 主循环独占全部 gc shaping(online/offline 语义对齐)。
         print(f"[gc-potential] A2 on; ckpt={args.gc_value_ckpt} scale={gc_potential.scale:.4f}")
 
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
