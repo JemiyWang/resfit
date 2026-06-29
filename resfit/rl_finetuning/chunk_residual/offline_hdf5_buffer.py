@@ -148,7 +148,7 @@ def latch_from_instant(instant) -> np.ndarray:
 def transition_fields(instant_stages, *, bonus: float, mode: str,
                       gamma: float, success: bool = True,
                       potential=None, state_seq=None, rel_piece_seq=None,
-                      act_feat_seq=None) -> dict:
+                      act_feat_seq=None, gc_state_seq=None, subgoal_z_seq=None) -> dict:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的全部 stage/reward/done 字段。
 
     汇总索引约定(与线上 cl=1 同构),供灌装层 zip obs/action/图:
@@ -169,7 +169,9 @@ def transition_fields(instant_stages, *, bonus: float, mode: str,
                                      gamma=gamma, success=success,
                                      potential=potential, state_seq=state_seq,
                                      rel_piece_seq=rel_piece_seq,
-                                     act_feat_seq=act_feat_seq),
+                                     act_feat_seq=act_feat_seq,
+                                     gc_state_seq=gc_state_seq,
+                                     subgoal_z_seq=subgoal_z_seq),
         "done": done,
         "stage_id": transition_stage_ids(instant),
         "next_stage_id": instant[1:],
@@ -189,19 +191,19 @@ def transition_stage_ids(instant_stages) -> np.ndarray:
 def transition_rewards(instant_stages, *, bonus: float, mode: str,
                        gamma: float, success: bool = True,
                        potential=None, state_seq=None, rel_piece_seq=None,
-                       act_feat_seq=None) -> np.ndarray:
+                       act_feat_seq=None, gc_state_seq=None, subgoal_z_seq=None) -> np.ndarray:
     """一条 demo 的 T 帧瞬时 stage → T-1 个 transition 的总 reward。
 
     与线上 cl=1 一致:每步 reward = base 稀疏 + shaping。
-    potential=None:Φ=闩锁 stage(现状)。potential 非空(③b):Φ=potential.phi(state_seq)(V*scale),
-    用通用 potential_shaping;两端用同一个 potential 保证 Φ 一致。
-    ③a' object-aware:eef_piece value 时另传 rel_piece_seq(T,12) raw,phi 内部标准化拼 30 维。
+    potential=None:Φ=闩锁 stage(现状)。potential.is_subgoal(A2):Φ=V(s_t,z_t),逐帧同一 z_t
+    算双 V(gc_state_seq/subgoal_z_seq 长度=T)。否则(单状态/act_feat):Φ=potential.phi(state_seq)。
     """
     latch = latch_from_instant(instant_stages)
     T = len(latch)
     rewards = np.empty(T - 1, dtype=np.float32)
+    is_subgoal = getattr(potential, "is_subgoal", False)
     phi = None
-    if potential is not None:
+    if potential is not None and not is_subgoal:
         if getattr(potential, "state_mode", "eef") == "act_feat":
             assert act_feat_seq is not None and len(act_feat_seq) == T, \
                 "act_feat potential 模式需 act_feat_seq 且长度=T"
@@ -212,12 +214,23 @@ def transition_rewards(instant_stages, *, bonus: float, mode: str,
             assert rel_piece_seq is None or len(rel_piece_seq) == T, \
                 "rel_piece_seq 长度须 = T"
             phi = potential.phi(state_seq, rel_piece_seq)            # [T]
+    elif is_subgoal:
+        assert gc_state_seq is not None and len(gc_state_seq) == T, \
+            "gc subgoal potential 需 gc_state_seq 且长度=T"
+        assert subgoal_z_seq is not None and len(subgoal_z_seq) == T, \
+            "gc subgoal potential 需 subgoal_z_seq 且长度=T"
     for t in range(T - 1):
         done = success and (t == T - 2)
         base = float(done)
         if potential is None:
             shaped = shaping_reward(int(latch[t]), int(latch[t + 1]),
                                     mode=mode, bonus=bonus, gamma=gamma, done=done)
+        elif is_subgoal:
+            z_t = subgoal_z_seq[t]                                   # 同一个 z_t
+            phi_a = potential.phi(gc_state_seq[t], z_t)
+            phi_b = potential.phi(gc_state_seq[t + 1], z_t)
+            shaped = potential_shaping(phi_a, phi_b,
+                                       bonus=bonus, gamma=gamma, done=done)
         else:
             shaped = potential_shaping(phi[t], phi[t + 1],
                                        bonus=bonus, gamma=gamma, done=done)

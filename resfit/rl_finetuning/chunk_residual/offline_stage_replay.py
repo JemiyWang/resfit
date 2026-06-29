@@ -305,24 +305,8 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                         f"act_feat potential 缓存帧数 {act_feat_seq.shape[0]} != demo {T} ({ep})"
                     assert act_feat_seq.shape[1] == potential.model.state_dim, \
                         f"act_feat potential 维度 {act_feat_seq.shape[1]} != value state_dim {potential.model.state_dim}"
-                fld = transition_fields(instant, bonus=bonus, mode=mode,
-                                        gamma=gamma, success=True,
-                                        potential=potential, state_seq=state_n,
-                                        rel_piece_seq=rel_seq,
-                                        act_feat_seq=act_feat_seq)
-                act_n = action_scaler.scale(
-                    torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
-                if base_mode == "base_policy":
-                    base_n = _demo_base_actions(base_policy, grp, image_keys,
-                                                action_scaler, base_device, env_hint=env_hint)  # (T,D) base 现算
-                else:
-                    base_n = act_n                                            # gt:GT-as-base(逐位等价)
-                imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])
-                        .permute(0, 3, 1, 2).contiguous() for k in image_keys}  # (T,3,84,84)
-                sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
-                nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
-
                 subgoal_z = None
+                s_sub = None
                 if subgoal is not None:
                     if _eef_subgoal:
                         if rel_seq is None:
@@ -336,6 +320,26 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
                             f"act_feat 缓存帧数 {s_sub.shape[0]} != demo {T} ({ep})"
                     way = np.minimum(np.arange(T) + way_steps, T - 1)        # k 步航点(裁到末态)
                     subgoal_z = subgoal.subgoal_waypoint(s_sub, s_sub[way]).cpu()  # (T,10)
+                _gc_state_seq = s_sub if (subgoal is not None and getattr(potential, "is_subgoal", False)) else None
+                _subgoal_z_seq = subgoal_z if (subgoal is not None and getattr(potential, "is_subgoal", False)) else None
+                fld = transition_fields(instant, bonus=bonus, mode=mode,
+                                        gamma=gamma, success=True,
+                                        potential=potential, state_seq=state_n,
+                                        rel_piece_seq=rel_seq,
+                                        act_feat_seq=act_feat_seq,
+                                        gc_state_seq=_gc_state_seq,
+                                        subgoal_z_seq=_subgoal_z_seq)
+                act_n = action_scaler.scale(
+                    torch.as_tensor(grp["actions"][()], dtype=torch.float32)).cpu()
+                if base_mode == "base_policy":
+                    base_n = _demo_base_actions(base_policy, grp, image_keys,
+                                                action_scaler, base_device, env_hint=env_hint)  # (T,D) base 现算
+                else:
+                    base_n = act_n                                            # gt:GT-as-base(逐位等价)
+                imgs = {k: torch.as_tensor(grp[f"obs/{_hdf5_image_key(k)}"][()])
+                        .permute(0, 3, 1, 2).contiguous() for k in image_keys}  # (T,3,84,84)
+                sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
+                nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
 
                 for t in range(T - 1):
                     curr = {"observation.state": state_n[t],
@@ -414,6 +418,16 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
                 f"act_feat potential 缓存帧数 {act_feat_seq.shape[0]} != demo {T} (ep{ep})"
             assert act_feat_seq.shape[1] == potential.model.state_dim, \
                 f"act_feat potential 维度 {act_feat_seq.shape[1]} != value state_dim {potential.model.state_dim}"
+        subgoal_z = None
+        s530 = None
+        if subgoal is not None:
+            s530 = torch.as_tensor(act_feat_seqs[ep], dtype=torch.float32)          # (T,530) 已标准化
+            assert s530.shape[0] == T, \
+                f"act_feat 缓存帧数 {s530.shape[0]} != demo {T} (ep{ep})"
+            way = np.minimum(np.arange(T) + way_steps, T - 1)
+            subgoal_z = subgoal.subgoal_waypoint(s530, s530[way]).cpu()
+        _gc_state_seq = s530 if (subgoal is not None and getattr(potential, "is_subgoal", False)) else None
+        _subgoal_z_seq = subgoal_z if (subgoal is not None and getattr(potential, "is_subgoal", False)) else None
         fld = transition_fields(
             instant,
             bonus=bonus,
@@ -424,6 +438,8 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
             state_seq=state_n,
             rel_piece_seq=None,
             act_feat_seq=act_feat_seq,
+            gc_state_seq=_gc_state_seq,
+            subgoal_z_seq=_subgoal_z_seq,
         )
         act_n = action_scaler.scale(fr["actions"].float()).cpu()
         if base_mode == "base_policy":
@@ -435,13 +451,6 @@ def _build_offline_lerobot(rb, *, action_scaler, state_standardizer, image_keys,
                 for k in image_keys}                                               # (T,3,84,84) uint8(对齐 hdf5 路,offcache 省 4x;base_action 仍用 fr["images"] float)
         sid = torch.as_tensor(fld["stage_id"], dtype=torch.float32)
         nsid = torch.as_tensor(fld["next_stage_id"], dtype=torch.float32)
-        subgoal_z = None
-        if subgoal is not None:
-            s530 = torch.as_tensor(act_feat_seqs[ep], dtype=torch.float32)          # (T,530) 已标准化
-            assert s530.shape[0] == T, \
-                f"act_feat 缓存帧数 {s530.shape[0]} != demo {T} (ep{ep})"
-            way = np.minimum(np.arange(T) + way_steps, T - 1)
-            subgoal_z = subgoal.subgoal_waypoint(s530, s530[way]).cpu()
         for t in range(T - 1):
             curr = {"observation.state": state_n[t],
                     "observation.base_action": base_n[t],

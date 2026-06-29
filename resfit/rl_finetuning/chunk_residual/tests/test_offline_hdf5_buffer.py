@@ -155,3 +155,26 @@ def test_expected_low_dim_keys_consistent_with_dexmg():
     for env_name in ("TwoArmPouring", "TwoArmThreePieceAssembly", "TwoArmThreading", "TwoArmLiftTray"):
         ref = cls._get_expected_low_dim_keys(None, env_name)   # 仅用 env_name，self 未使用
         assert expected_low_dim_keys(env_name) == list(ref)
+
+
+def test_transition_rewards_gc_subgoal_same_z_per_transition():
+    import numpy as np, torch
+    from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import transition_rewards
+
+    class FakeGcPot:                       # phi(s,z) = s[0] + 100*z[0]
+        is_subgoal = True
+        def phi(self, s, z):
+            s = torch.as_tensor(s).reshape(-1); z = torch.as_tensor(z).reshape(-1)
+            return torch.tensor([float(s[0]) + 100.0 * float(z[0])])
+
+    # T=3 帧,非末步 done=False;末 transition done=True
+    instant = np.array([0, 0, 1])
+    gc_state = torch.tensor([[1.0], [2.0], [3.0]])      # s_t[0] = 1,2,3
+    subgoal_z = torch.tensor([[0.1], [0.2], [0.3]])     # z_t[0] = 0.1,0.2,0.3
+    r = transition_rewards(instant, bonus=1.0, mode="potential", gamma=0.9,
+                           success=True, potential=FakeGcPot(),
+                           gc_state_seq=gc_state, subgoal_z_seq=subgoal_z)
+    # t=0(done=F): phi_a=1+10=11, phi_b=2+10=12, F=0.9*12-11=-0.2, base=0 -> -0.2
+    # t=1(done=T): phi_a=2+20=22, phi_b=0, F=0-22=-22, base=1 -> -21.0
+    assert abs(float(r[0]) - (-0.2)) < 1e-5
+    assert abs(float(r[1]) - (-21.0)) < 1e-5
