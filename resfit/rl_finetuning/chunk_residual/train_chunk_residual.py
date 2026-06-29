@@ -309,6 +309,13 @@ def _env_state_mode_for_training(potential_state_mode, subgoal_state_mode):
     return "eef"
 
 
+def _reject_libero_actfeat_potential_offline(potential):
+    if potential is not None and getattr(potential, "state_mode", "eef") == "act_feat":
+        raise NotImplementedError(
+            "LIBERO offline buffer 尚不支持 act_feat HIQL potential reward shaping; "
+            "请先设 --offline_fraction 0,或为 libero_offline.py 接入 potential + act_feat cache")
+
+
 def _libero_offline_signature(args, image_keys, offline_cap, image_size):
     """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸/subgoal即失效重建)。"""
     sig = {
@@ -999,6 +1006,7 @@ def main():
         from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import concat_mixed_batch
         is_libero = getattr(args, "env_family", "dexmg") == "libero"
         if is_libero:
+            _reject_libero_actfeat_potential_offline(potential)
             from resfit.rl_finetuning.chunk_residual.libero_offline import (
                 build_libero_offline_buffer, count_libero_offline_transitions)
             lerobot_root = os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), ".."))

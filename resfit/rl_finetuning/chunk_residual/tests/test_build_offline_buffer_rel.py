@@ -104,6 +104,40 @@ def test_build_offline_buffer_no_rel_replay_for_eef(tmp_path, monkeypatch):
     assert called["rel"] == 0
 
 
+def test_build_offline_buffer_actfeat_potential_allows_num_demo_subset_cache(tmp_path):
+    """num_demos=N 时允许只传前 N 条 demo 的 act_feat cache,不要求全 HDF5 demo 数。"""
+    hdf5 = str(tmp_path / "tiny_multi.hdf5")
+    T = 4
+    with h5py.File(hdf5, "w") as f:
+        for ep in range(2):
+            g = f.create_group(f"data/demo_{ep}")
+            g.create_dataset("states", data=np.zeros((T, 5), dtype=np.float32))
+            g.create_dataset("actions", data=np.zeros((T, 7), dtype=np.float32))
+            for k, d in STATE18_KEYS:
+                g.create_dataset(f"obs/{k}", data=np.zeros((T, d), dtype=np.float32))
+            g.create_dataset("obs/agentview_image", data=np.zeros((T, 4, 4, 3), dtype=np.uint8))
+            g.attrs["model_file"] = "dummy_model"
+    stage_cache = str(tmp_path / "stages.npz")
+    save_stage_cache(stage_cache, {"demo_0": np.zeros(T, dtype=np.int8)})
+
+    class _ActFeatPot:
+        state_mode = "act_feat"
+        model = type("_M", (), {"state_dim": 4})()
+        def phi(self, state_seq, rel_piece_seq=None):
+            assert rel_piece_seq is None
+            return torch.as_tensor(state_seq, dtype=torch.float32)[:, 0]
+
+    rb = _FakeRb()
+    added = osr.build_offline_buffer(
+        rb, hdf5, action_scaler=_IdScaler(), state_standardizer=_IdStd(),
+        image_keys=["observation.images.agentview"], bonus=1.0, mode="potential",
+        gamma=0.99, stage_cache=stage_cache, potential=_ActFeatPot(),
+        act_feat_seqs=[np.ones((T, 4), np.float32)], num_demos=1)
+
+    assert added == T - 1
+    assert len(rb.items) == T - 1
+
+
 # --- offline buffer 缓存签名:必须区分 Φ 身份(否则 30 维 object-aware 错误复用 18 维 V 的缓存)---
 
 from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
@@ -114,6 +148,8 @@ class _SigFakePot:
     def __init__(self, scale, state_mode):
         self.scale = scale
         self.state_mode = state_mode
+        dim = 30 if state_mode == "eef_piece" else 18
+        self.model = type("_M", (), {"state_dim": dim})()
 
 
 def _sig_args(extra):

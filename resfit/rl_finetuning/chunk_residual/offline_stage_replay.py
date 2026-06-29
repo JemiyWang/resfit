@@ -115,6 +115,19 @@ def _hdf5_image_key(lerobot_key: str) -> str:
     return lerobot_key.split("observation.images.")[-1] + "_image"
 
 
+def _act_feat_seqs_by_demo(demos, act_feat_seqs):
+    """把已选中的 demo 列表映射到同序 act_feat 序列。
+
+    `demos` 必须已经应用 num_demos 截断。这样既支持全量 cache,也支持只为前 N 条
+    offline demos 构建的子集 cache。
+    """
+    assert act_feat_seqs is not None, \
+        "act_feat subgoal/potential 的 offline buffer 需 act_feat_seqs(缓存序列)"
+    assert len(act_feat_seqs) >= len(demos), \
+        f"act_feat_seqs 数({len(act_feat_seqs)}) < demo 数({len(demos)})"
+    return dict(zip(demos, act_feat_seqs[:len(demos)]))
+
+
 def count_offline_transitions(dataset_path, num_demos=None) -> int:
     """预数 offline demo 会产生多少 transition(= Σ(每 demo 帧数 − 1)),用于给 offline_rb
     精确定容(否则 LazyTensorStorage 容量不足会挤掉早期 demo,锚不全)。
@@ -237,15 +250,11 @@ def build_offline_buffer(rb, dataset_path, *, action_scaler, state_standardizer,
     try:
         with h5py.File(dataset_path, "r") as f:
             demos = sorted_demo_keys(list(f["data"].keys()))
-            _af_by_ep = None
-            if _act_feat_subgoal or _act_feat_potential:
-                assert act_feat_seqs is not None, \
-                    "act_feat subgoal/potential 的 offline buffer 需 act_feat_seqs(缓存序列)"
-                assert len(act_feat_seqs) == len(demos), \
-                    f"act_feat_seqs 数({len(act_feat_seqs)}) != demo 数({len(demos)})"
-                _af_by_ep = dict(zip(demos, act_feat_seqs))
             if num_demos is not None:
                 demos = demos[:num_demos]
+            _af_by_ep = None
+            if _act_feat_subgoal or _act_feat_potential:
+                _af_by_ep = _act_feat_seqs_by_demo(demos, act_feat_seqs)
             _env_keys = expected_low_dim_keys(env_hint) if env_hint is not None else None
             _no_stage = bool(env_hint) and get_stage_detector(env_hint) is None
             for ep in demos:
