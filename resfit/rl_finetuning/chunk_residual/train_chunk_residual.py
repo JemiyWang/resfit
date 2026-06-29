@@ -316,6 +316,17 @@ def _reject_libero_actfeat_potential_offline(potential):
             "请先设 --offline_fraction 0,或为 libero_offline.py 接入 potential + act_feat cache")
 
 
+def _prepare_libero_offline(args, image_keys, image_size, potential):
+    """LIBERO offline buffer 入口的轻量准备逻辑,便于测试 fail-fast 行为。"""
+    _reject_libero_actfeat_potential_offline(potential)
+    lerobot_root = os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), ".."))
+    from resfit.rl_finetuning.chunk_residual.libero_offline import count_libero_offline_transitions
+    offline_cap = count_libero_offline_transitions(
+        lerobot_root, args.libero_suite, args.libero_task_id, num_demos=args.offline_num_demos)
+    sig = _libero_offline_signature(args, image_keys, offline_cap, image_size)
+    return lerobot_root, offline_cap, sig
+
+
 def _libero_offline_signature(args, image_keys, offline_cap, image_size):
     """libero offline buffer 缓存签名(换数据源/base/缩放/图尺寸/subgoal即失效重建)。"""
     sig = {
@@ -1006,13 +1017,9 @@ def main():
         from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import concat_mixed_batch
         is_libero = getattr(args, "env_family", "dexmg") == "libero"
         if is_libero:
-            _reject_libero_actfeat_potential_offline(potential)
-            from resfit.rl_finetuning.chunk_residual.libero_offline import (
-                build_libero_offline_buffer, count_libero_offline_transitions)
-            lerobot_root = os.path.abspath(os.path.join(os.path.dirname(args.libero_stats_json), ".."))
-            offline_cap = count_libero_offline_transitions(
-                lerobot_root, args.libero_suite, args.libero_task_id, num_demos=args.offline_num_demos)
-            sig = _libero_offline_signature(args, image_keys, offline_cap, img_h)
+            from resfit.rl_finetuning.chunk_residual.libero_offline import build_libero_offline_buffer
+            lerobot_root, offline_cap, sig = _prepare_libero_offline(
+                args, image_keys, img_h, potential)
         else:
             from resfit.rl_finetuning.chunk_residual.offline_stage_replay import (
                 build_offline_buffer, count_offline_transitions)

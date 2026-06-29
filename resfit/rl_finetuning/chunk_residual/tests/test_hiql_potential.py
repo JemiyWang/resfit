@@ -329,6 +329,7 @@ from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
     _offline_buffer_signature,
     _load_act_feat_cache_for_training,
     _needs_act_feat_cache,
+    _prepare_libero_offline,
     _reject_libero_actfeat_potential_offline,
     _validate_actfeat_potential_cache,
     build_parser,
@@ -366,11 +367,18 @@ def test_env_state_mode_actfeat_potential_keeps_env_eef():
     assert _env_state_mode_for_training("eef_piece", None) == "eef_piece"
 
 
-def test_reject_libero_actfeat_potential_offline():
+def test_prepare_libero_offline_rejects_actfeat_potential_before_build():
+    args = SimpleNamespace(
+        libero_stats_json="/tmp/libero/meta/stats.json",
+        libero_suite="libero_spatial",
+        libero_task_id=0,
+        offline_num_demos=1,
+    )
     _reject_libero_actfeat_potential_offline(None)
     _reject_libero_actfeat_potential_offline(SimpleNamespace(state_mode="eef"))
     with pytest.raises(NotImplementedError, match="LIBERO offline buffer.*act_feat HIQL potential"):
-        _reject_libero_actfeat_potential_offline(SimpleNamespace(state_mode="act_feat"))
+        _prepare_libero_offline(
+            args, ["observation.images.agentview"], 84, SimpleNamespace(state_mode="act_feat"))
 
 
 def test_load_act_feat_cache_for_training_loads_potential_only():
