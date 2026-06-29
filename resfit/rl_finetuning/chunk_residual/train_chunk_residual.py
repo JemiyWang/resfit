@@ -424,6 +424,60 @@ def build_libero_scalers(stats_json_path, device, action_scale=0.2, min_range_pe
     return action_scaler, state_standardizer
 
 
+def _needs_act_feat_cache(potential, subgoal_state_mode) -> bool:
+    return ((potential is not None and getattr(potential, "state_mode", "eef") == "act_feat")
+            or subgoal_state_mode == "act_feat")
+
+
+def _validate_actfeat_potential_cache(args, potential, cache_sig, cache_sha, act_feat_seqs,
+                                      cache_stats=None) -> None:
+    assert args.act_feat_cache, "act_feat potential 需 --act_feat_cache(离线 act_feat 缓存序列)"
+    assert act_feat_seqs is not None and len(act_feat_seqs) > 0, \
+        f"act_feat potential 缓存为空: {args.act_feat_cache}"
+    first = np.asarray(act_feat_seqs[0], dtype=np.float32)
+    assert first.ndim == 2 and first.shape[0] > 0, \
+        "act_feat potential 缓存首条序列须为 [T,D] 且 T>0"
+    assert first.shape[1] == potential.model.state_dim, \
+        f"act_feat potential 缓存维度 {first.shape[1]} != value state_dim {potential.model.state_dim}"
+    pot_sig = getattr(potential, "act_feat_signature", None) or {}
+    cache_sig = cache_sig or {}
+    if pot_sig:
+        for k in ("act_ckpt_id", "image_keys", "proprio_key", "pooling"):
+            assert cache_sig.get(k) == pot_sig.get(k), \
+                f"act_feat potential cache 与 value 签名不符 [{k}]: {cache_sig.get(k)} vs {pot_sig.get(k)}"
+    pot_sha = getattr(potential, "act_weight_sha", None)
+    if pot_sha and cache_sha:
+        assert cache_sha == pot_sha, \
+            f"act_feat potential cache 与 value 权重指纹不符: {cache_sha} vs {pot_sha}"
+    if cache_stats is not None and getattr(potential, "feature_mean", None) is not None \
+            and getattr(potential, "feature_std", None) is not None:
+        cache_mean = np.asarray(cache_stats[0], dtype=np.float32)
+        cache_std = np.asarray(cache_stats[1], dtype=np.float32)
+        pot_mean = torch.as_tensor(potential.feature_mean).detach().cpu().numpy().astype(np.float32)
+        pot_std = torch.as_tensor(potential.feature_std).detach().cpu().numpy().astype(np.float32)
+        assert cache_mean.shape == pot_mean.shape and np.allclose(cache_mean, pot_mean), \
+            f"act_feat potential cache mean 与 value 不符: {cache_mean.shape} vs {pot_mean.shape}"
+        assert cache_std.shape == pot_std.shape and np.allclose(cache_std, pot_std), \
+            f"act_feat potential cache std 与 value 不符: {cache_std.shape} vs {pot_std.shape}"
+
+
+def _load_act_feat_cache_for_training(args, potential, subgoal_state_mode, load_fn=None):
+    if not _needs_act_feat_cache(potential, subgoal_state_mode):
+        return None, None, None, None
+    if load_fn is None:
+        from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache as load_fn
+    pot_act_feat = potential is not None and getattr(potential, "state_mode", "eef") == "act_feat"
+    if pot_act_feat:
+        assert args.act_feat_cache, "act_feat potential 需 --act_feat_cache(离线 act_feat 缓存序列)"
+    else:
+        assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
+    seqs, stats, cache_sig, cache_sha = load_fn(args.act_feat_cache)
+    if pot_act_feat:
+        _validate_actfeat_potential_cache(
+            args, potential, cache_sig, cache_sha, seqs, cache_stats=stats)
+    return seqs, stats, cache_sig, cache_sha
+
+
 def build_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--actor", choices=["raw", "flow"], default="raw")
@@ -671,6 +725,8 @@ def main():
         assert args.gc_value_ckpt, "--subgoal_conditioned 需 --gc_value_ckpt"
         _subgoal_gc_info = _lgv(args.gc_value_ckpt, map_location="cpu")[1]
     _subgoal_sm = _subgoal_gc_info["state_mode"] if _subgoal_gc_info is not None else None
+    _offline_act_feat_seqs, _act_feat_cache_stats, _act_feat_cache_sig, _act_feat_cache_sha = \
+        _load_act_feat_cache_for_training(args, potential, _subgoal_sm)
 
     # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
     env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
@@ -772,7 +828,6 @@ def main():
         assert args.task in NUM_STAGES, f"--stage_budget 需要 {args.task} 有 stage 检测器"
 
     subgoal = None
-    _offline_act_feat_seqs = None   # act_feat:离线 buffer subgoal 复用的 530 缓存序列
     _pi0_seqs = None                # pi0_feat:离线 buffer subgoal 复用的 2056 缓存序列
     _finetune_seqs = None           # 在线微调离线序列(三 state_mode 统一接口)
     if args.subgoal_conditioned:
@@ -782,10 +837,11 @@ def main():
         _gc_info = _subgoal_gc_info
         _sm = _gc_info["state_mode"]
         if _sm == "act_feat":
-            assert args.act_feat_cache, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
-            from resfit.rl_finetuning.chunk_residual.act_feat_cache import load_act_feat_cache
-            _seqs, _stats, _cache_sig, _cache_sha = load_act_feat_cache(args.act_feat_cache)
-            _offline_act_feat_seqs = _seqs   # 离线 buffer subgoal 复用同一份 530 序列
+            _seqs = _offline_act_feat_seqs
+            _stats = _act_feat_cache_stats
+            _cache_sig = _act_feat_cache_sig or {}
+            _cache_sha = _act_feat_cache_sha
+            assert _seqs is not None, "act_feat 子目标需 --act_feat_cache(算 goal530 + 同源)"
             _finetune_seqs = _seqs           # 在线微调同源离线序列(act_feat=530 维)
             assert _gc_info.get("act_feat_signature"), \
                 "gc_value 缺 act_feat_signature(须用 --state_mode act_feat 重训该 gc_value)"

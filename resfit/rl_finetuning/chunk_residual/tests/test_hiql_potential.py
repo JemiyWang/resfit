@@ -323,7 +323,14 @@ def test_transition_rewards_actfeat_requires_act_feat_seq():
         )
 
 
-from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+from types import SimpleNamespace
+
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+    _load_act_feat_cache_for_training,
+    _needs_act_feat_cache,
+    _validate_actfeat_potential_cache,
+    build_parser,
+)
 
 
 def test_parser_potential_source_defaults():
@@ -340,3 +347,113 @@ def test_parser_potential_source_hiql():
     assert args.potential_source == "hiql"
     assert args.hiql_value_ckpt == "v.pt"
     assert args.phi_scale == 0.5
+
+
+def test_needs_act_feat_cache_for_potential_only():
+    pot = SimpleNamespace(state_mode="act_feat")
+    assert _needs_act_feat_cache(pot, None) is True
+    assert _needs_act_feat_cache(None, "act_feat") is True
+    assert _needs_act_feat_cache(SimpleNamespace(state_mode="eef"), None) is False
+
+
+def test_load_act_feat_cache_for_training_loads_potential_only():
+    pot = SimpleNamespace(
+        state_mode="act_feat",
+        model=SimpleNamespace(state_dim=4),
+        act_feat_signature={
+            "act_ckpt_id": "base-act",
+            "image_keys": ["observation.images.cam"],
+            "proprio_key": "observation.state",
+            "pooling": "mean",
+        },
+        act_weight_sha="sha-act",
+        feature_mean=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        feature_std=torch.tensor([2.0, 2.0, 4.0, 4.0]),
+    )
+    seqs = [np.ones((3, 4), np.float32)]
+    stats = (np.array([1.0, 2.0, 3.0, 4.0], np.float32),
+             np.array([2.0, 2.0, 4.0, 4.0], np.float32))
+    args = SimpleNamespace(act_feat_cache="cache.npz")
+
+    got = _load_act_feat_cache_for_training(
+        args,
+        pot,
+        None,
+        load_fn=lambda path: (seqs, stats, dict(pot.act_feat_signature), "sha-act"),
+    )
+
+    assert got == (seqs, stats, pot.act_feat_signature, "sha-act")
+
+
+def test_load_act_feat_cache_for_training_requires_cache_path_for_actfeat_potential():
+    pot = SimpleNamespace(
+        state_mode="act_feat",
+        model=SimpleNamespace(state_dim=4),
+        act_feat_signature=None,
+        act_weight_sha=None,
+        feature_mean=torch.zeros(4),
+        feature_std=torch.ones(4),
+    )
+    args = SimpleNamespace(act_feat_cache=None)
+
+    with pytest.raises(AssertionError, match="act_feat potential"):
+        _load_act_feat_cache_for_training(args, pot, None, load_fn=lambda path: None)
+
+
+def test_validate_actfeat_potential_cache_rejects_signature_mismatch():
+    pot = SimpleNamespace(
+        model=SimpleNamespace(state_dim=4),
+        act_feat_signature={
+            "act_ckpt_id": "base-act",
+            "image_keys": ["observation.images.cam"],
+            "proprio_key": "observation.state",
+            "pooling": "mean",
+        },
+        act_weight_sha="sha-act",
+        feature_mean=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        feature_std=torch.tensor([2.0, 2.0, 4.0, 4.0]),
+    )
+    args = SimpleNamespace(act_feat_cache="cache.npz")
+
+    with pytest.raises(AssertionError, match="签名不符"):
+        _validate_actfeat_potential_cache(
+            args,
+            pot,
+            {
+                "act_ckpt_id": "wrong-act",
+                "image_keys": ["observation.images.cam"],
+                "proprio_key": "observation.state",
+                "pooling": "mean",
+            },
+            "sha-act",
+            [np.ones((3, 4), np.float32)],
+            cache_stats=(np.array([1.0, 2.0, 3.0, 4.0], np.float32),
+                         np.array([2.0, 2.0, 4.0, 4.0], np.float32)),
+        )
+
+
+def test_validate_actfeat_potential_cache_rejects_stats_mismatch():
+    pot = SimpleNamespace(
+        model=SimpleNamespace(state_dim=4),
+        act_feat_signature={
+            "act_ckpt_id": "base-act",
+            "image_keys": ["observation.images.cam"],
+            "proprio_key": "observation.state",
+            "pooling": "mean",
+        },
+        act_weight_sha="sha-act",
+        feature_mean=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        feature_std=torch.tensor([2.0, 2.0, 4.0, 4.0]),
+    )
+    args = SimpleNamespace(act_feat_cache="cache.npz")
+
+    with pytest.raises(AssertionError, match="mean"):
+        _validate_actfeat_potential_cache(
+            args,
+            pot,
+            dict(pot.act_feat_signature),
+            "sha-act",
+            [np.ones((3, 4), np.float32)],
+            cache_stats=(np.array([0.0, 2.0, 3.0, 4.0], np.float32),
+                         np.array([2.0, 2.0, 4.0, 4.0], np.float32)),
+        )
