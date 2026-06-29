@@ -495,3 +495,20 @@ def test_train_gc_value_device_cuda_finite():
     assert np.isfinite(v_stats["mean"])
     # 确认 model 参数在 GPU 上
     assert next(model_cuda.parameters()).is_cuda
+
+
+def test_value_from_rep_matches_forward():
+    """value_from_rep(s, phi(s,g)) 必须逐位等于 forward(s,g)。"""
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_gc_value import GoalConditionedVF
+    torch.manual_seed(0)
+    m = GoalConditionedVF(state_dim=6, rep_dim=4, hidden=16).eval()
+    s = torch.randn(3, 6)
+    g = torch.randn(3, 6)
+    with torch.no_grad():
+        z = m.phi(s, g)                      # goal_encoder(g, s) -> rep(半径 sqrt(rep_dim))
+        v1a, v2a = m.value_from_rep(s, z)
+        v1b, v2b = m(s, g)
+    assert torch.allclose(v1a, v1b, atol=1e-6)
+    assert torch.allclose(v2a, v2b, atol=1e-6)
+    assert v1a.shape == (3,)

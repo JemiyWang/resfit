@@ -93,6 +93,15 @@ class GoalConditionedVF(nn.Module):
         x = torch.cat([s, self.phi(s, g)], dim=-1)
         return self.v1(x).squeeze(-1), self.v2(x).squeeze(-1)
 
+    def value_from_rep(self, s, z):
+        """跳过 goal_encoder,直接用 rep z(=phi 输出空间)算 value。
+
+        s:[B,state_dim] 已标准化 state;z:[B,rep_dim] 归一化 rep(须在半径 sqrt(rep_dim) 球面,
+        与 phi(s,g) 同空间)。返回 (v1, v2)。供 A2 子目标 potential 用(z=high_actor 子目标 rep)。
+        """
+        x = torch.cat([s, z], dim=-1)
+        return self.v1(x).squeeze(-1), self.v2(x).squeeze(-1)
+
 
 def stage_entries_from_instant(instant_stages):
     """逐帧瞬时 stage(int 数组) -> 各更高 stage 首次到达的下标(升序 int64 数组)。
