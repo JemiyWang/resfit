@@ -598,3 +598,16 @@ def test_gc_subgoal_shaping_done_zeros_next():
     F = gc_subgoal_shaping(FakePot(), torch.tensor([3.0]), torch.tensor([9.0]),
                            torch.tensor([0.0]), bonus=2.0, gamma=0.99, done=True)
     assert abs(F - (-6.0)) < 1e-6
+
+
+def test_validate_hiql_subgoal_requires_subgoal_and_renorm():
+    import types, pytest
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import validate_hiql_subgoal_args
+    base = dict(potential_source="hiql_subgoal", reward_shaping="potential",
+                subgoal_conditioned=True, renorm_subgoal=True, gc_value_ckpt="x")
+    validate_hiql_subgoal_args(types.SimpleNamespace(**base))      # ok,不报错
+    for bad in (dict(subgoal_conditioned=False), dict(renorm_subgoal=False),
+                dict(reward_shaping="none"), dict(gc_value_ckpt=None)):
+        d = dict(base); d.update(bad)
+        with pytest.raises(AssertionError):
+            validate_hiql_subgoal_args(types.SimpleNamespace(**d))

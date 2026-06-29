@@ -201,6 +201,20 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
     return base_policy
 
 
+def validate_hiql_subgoal_args(args):
+    """A2(--potential_source hiql_subgoal)的前置校验。其余 potential_source 不受影响。"""
+    if getattr(args, "potential_source", "stage") != "hiql_subgoal":
+        return
+    assert args.reward_shaping == "potential", \
+        "--potential_source hiql_subgoal 需 --reward_shaping potential"
+    assert getattr(args, "subgoal_conditioned", False), \
+        "--potential_source hiql_subgoal 需 --subgoal_conditioned(提供 gc_value/high_actor/z)"
+    assert getattr(args, "renorm_subgoal", False), \
+        "--potential_source hiql_subgoal 需 renorm_subgoal=True(z 须在 sqrt(rep_dim) 球面)"
+    assert getattr(args, "gc_value_ckpt", None), \
+        "--potential_source hiql_subgoal 需 --gc_value_ckpt"
+
+
 def compute_online_subgoal(subgoal, obs, base_policy, cur_rel=None):
     """按 state_mode 选特征来源出 z。
 
@@ -267,6 +281,11 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
             sig["act_feat_cache_weight_sha"] = act_feat_cache_sha
             sig["hiql_value_act_feat_signature"] = potential.act_feat_signature
             sig["hiql_value_act_weight_sha"] = potential.act_weight_sha
+    if args.potential_source == "hiql_subgoal":
+        sig["potential_source"] = "hiql_subgoal"
+        sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt) if args.gc_value_ckpt else None
+        sig["gc_potential_scale"] = round(float(args.gc_potential_scale), 8)
+        sig["subgoal_way_steps"] = int(args.subgoal_way_steps)
     if args.subgoal_conditioned:
         sig["subgoal"] = True
         sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
@@ -591,7 +610,7 @@ def build_parser():
     p.add_argument("--pi0_feat_cache", default=None,
                    help="pi0_feat 子目标:pi0 prefix 特征序列缓存(算 goal + 同源签名校验);仅 pi0_feat gc_value 用")
     p.add_argument("--stage_budget", default=None,
-                   help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(如 '1,1,1,0.3,0.1');不传=关(§18.3)")
+                   help="逐阶段残差幅度乘子,逗号分隔,长度=num_stages(piece=4 如 '1,1,1,0.3';threading=3 如 '1,1,0.3');不传=关(§18.3)")
     p.add_argument("--offline_base_mode", choices=["gt", "base_policy"], default="base_policy",
                    help="离线 buffer 的 base_action 来源:base_policy(默认,冻结 base 现算 base_action,"
                         "action 仍存 GT;bc_target=GT-base,锚向专家 + critic offline 锚对齐在线流形,"
@@ -617,10 +636,13 @@ def build_parser():
                    help="[别名] 等价 --reward_shaping staged;canonical flag 优先")
     p.add_argument("--stage_reward_bonus", type=float, default=1.0,
                    help="stage 整形幅度旋钮(staged/potential 共用;仅在 shaping≠none 时生效)")
-    p.add_argument("--potential_source", choices=["stage", "hiql"], default="stage",
-                   help="PBS 势函数 Φ 来源(③b):stage=整数 stage(默认,逐位等价);hiql=V(state)*scale")
+    p.add_argument("--potential_source", choices=["stage", "hiql", "hiql_subgoal"], default="stage",
+                   help="PBS 势函数 Φ 来源(③b):stage=整数 stage(默认,逐位等价);hiql=V(state)*scale;"
+                        "hiql_subgoal=V(s,z)*scale(A2 goal-cond)")
     p.add_argument("--hiql_value_ckpt", default=None,
                    help="--potential_source hiql 时 ③a 产出的 value.pt 路径")
+    p.add_argument("--gc_potential_scale", type=float, default=1.0,
+                   help="A2(hiql_subgoal)的 phi_scale,乘到 auto_scale 上(默认 1.0)")
     p.add_argument("--phi_scale", type=float, default=1.0,
                    help="hiql Φ 的额外缩放乘子(在 auto_scale 之上;默认 1.0)")
     p.add_argument("--output_dir", default="outputs_chunk",
@@ -753,6 +775,9 @@ def main():
     image_keys = list(base_policy.config.image_features.keys())
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
+
+    # --- A2 前置校验(hiql_subgoal 路) ---
+    validate_hiql_subgoal_args(args)
 
     # --- ③b: HiqlPotential(potential_source=hiql 时构建;stage 时保持 None 逐位等价)---
     # 必须在 create_vectorized_env 之前:value.pt 的 state_mode 决定训练 env 要不要经 info
@@ -988,6 +1013,17 @@ def main():
               f"offline_frac={args.online_finetune_offline_fraction} "
               f"every={args.online_finetune_every} future={args.online_finetune_future_mode}")
 
+    # --- A2: GcSubgoalPotential(hiql_subgoal 时构建;其余 source 保持 None 逐位等价)---
+    # 必须在 subgoal 已构造之后(复用同源 gc_value ckpt);主循环与离线 buffer 共用此对象。
+    gc_potential = None
+    if args.potential_source == "hiql_subgoal":
+        from resfit.rl_finetuning.chunk_residual.hiql_potential import GcSubgoalPotential
+        gc_potential = GcSubgoalPotential.from_ckpt(
+            args.gc_value_ckpt, num_stages=num_stages,
+            phi_scale=args.gc_potential_scale, device=args.device)
+        potential = None        # A2 不走 wrapper 的 potential 路径(wrapper 逐位等价无 shaping)
+        print(f"[gc-potential] A2 on; ckpt={args.gc_value_ckpt} scale={gc_potential.scale:.4f}")
+
     agent = QAgent(obs_shape=(img_c, img_h, img_w), prop_shape=(state_dim,),
                    action_dim=action_dim, rl_cameras=image_keys,
                    cfg=cfg.agent, residual_actor=True,
@@ -1075,7 +1111,8 @@ def main():
                     action_scaler=action_scaler, state_standardizer=state_standardizer,
                     image_keys=image_keys, bonus=args.stage_reward_bonus,
                     mode=shaping_mode, gamma=args.gamma, num_demos=args.offline_num_demos,
-                    stage_cache=args.offline_stage_cache, potential=potential,
+                    stage_cache=args.offline_stage_cache,
+                    potential=(gc_potential if args.potential_source == "hiql_subgoal" else potential),
                     subgoal=subgoal, way_steps=args.subgoal_way_steps,
                     act_feat_seqs=_offline_act_feat_seqs,
                     data_source=args.data_source, lerobot_repo_id=args.dataset,
@@ -1132,6 +1169,16 @@ def main():
             next_obs["observation.subgoal"] = compute_online_subgoal(subgoal, next_obs, base_policy, next_rel).to(
                 next_obs["observation.state"].device)
         done = terminated | truncated
+        if gc_potential is not None:
+            _pf = base_policy.last_prefix_feat() if subgoal.state_mode == "pi0_feat" else None
+            _s_start = subgoal.encode_state(obs, rel_raw=cur_rel, prefix_feat=_pf)
+            _s_end = subgoal.encode_state(next_obs, rel_raw=next_rel, prefix_feat=_pf)
+            _z_start = obs["observation.subgoal"]
+            from resfit.rl_finetuning.chunk_residual.hiql_potential import gc_subgoal_shaping
+            _shape = gc_subgoal_shaping(gc_potential, _s_start, _s_end, _z_start,
+                                        bonus=args.stage_reward_bonus, gamma=args.gamma,
+                                        done=bool(done.any()))
+            reward = reward + _shape
         add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
                              reward=reward, done=done, info=info, image_keys=image_keys,
                              lowdim_keys=lowdim_keys, online_rb=online_rb)
