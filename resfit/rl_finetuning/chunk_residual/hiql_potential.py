@@ -19,6 +19,17 @@ def potential_shaping(phi_start, phi_next, *, bonus, gamma, done):
     return bonus * (gamma * pn - float(phi_start))
 
 
+def gc_subgoal_shaping(potential, s_start, s_end, z_start, *, bonus, gamma, done):
+    """A2 单步 shaping:F = bonus·(γ·Φ(s_end,z_start) − Φ(s_start,z_start))。
+
+    phi_start 与 phi_next 用**同一个 z_start**(保证单步 PBS);done 时 phi_next=0
+    (由 potential_shaping 处理)。返回 float。
+    """
+    phi_a = potential.phi(s_start, z_start)
+    phi_b = potential.phi(s_end, z_start)
+    return potential_shaping(phi_a, phi_b, bonus=bonus, gamma=gamma, done=done)
+
+
 class HiqlPotential:
     """加载 ③a 的冻结 value,把标准化 state 映射到 PBS 势函数值 phi = V(state)*scale。
 

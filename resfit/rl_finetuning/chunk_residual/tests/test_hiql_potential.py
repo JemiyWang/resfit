@@ -570,3 +570,31 @@ def test_offline_buffer_signature_actfeat_potential_includes_cache_and_stats_has
     assert out["act_feat_cache_weight_sha"] == "cache-sha"
     assert out["hiql_value_act_feat_signature"] == potential.act_feat_signature
     assert out["hiql_value_act_weight_sha"] == "sha-act"
+
+
+def test_gc_subgoal_shaping_uses_same_z_and_telescopes():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import gc_subgoal_shaping
+
+    class FakePot:               # phi = s[0] + 10*z[0],便于手算
+        def phi(self, s, z):
+            return torch.tensor([float(s.reshape(-1)[0]) + 10.0 * float(z.reshape(-1)[0])])
+
+    s_start = torch.tensor([1.0]); s_end = torch.tensor([2.0]); z = torch.tensor([0.5])
+    # phi_a = 1 + 5 = 6 ; phi_b = 2 + 5 = 7 ; F = 1*(0.9*7 - 6) = 0.3
+    F = gc_subgoal_shaping(FakePot(), s_start, s_end, z, bonus=1.0, gamma=0.9, done=False)
+    assert abs(F - 0.3) < 1e-6
+
+
+def test_gc_subgoal_shaping_done_zeros_next():
+    import torch
+    from resfit.rl_finetuning.chunk_residual.hiql_potential import gc_subgoal_shaping
+
+    class FakePot:
+        def phi(self, s, z):
+            return torch.tensor([float(s.reshape(-1)[0])])
+
+    # done -> phi_next=0 -> F = bonus*(0 - phi_a) = 2*(0 - 3) = -6
+    F = gc_subgoal_shaping(FakePot(), torch.tensor([3.0]), torch.tensor([9.0]),
+                           torch.tensor([0.0]), bonus=2.0, gamma=0.99, done=True)
+    assert abs(F - (-6.0)) < 1e-6
