@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 
@@ -211,7 +212,8 @@ def compute_online_subgoal(subgoal, obs, base_policy, cur_rel=None):
     return subgoal.subgoal_online(obs, cur_rel)
 
 
-def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, potential=None):
+def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, potential=None,
+                              act_feat_cache_sig=None, act_feat_cache_sha=None):
     """决定 offline buffer 内容的全部参数;任一变化都意味着旧缓存失效需重建。
 
     内容依赖:动作/base_action 用 action_scaler(action_scale+min_range);state 标准化(来自
@@ -249,6 +251,22 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
                                   if potential is not None else None)
         sig["value_state_mode"] = (getattr(potential, "state_mode", None)
                                    if potential is not None else None)
+        sig["value_state_dim"] = (int(potential.model.state_dim)
+                                  if potential is not None else None)
+        if potential is not None and getattr(potential, "feature_mean", None) is not None:
+            sig["value_state_stats_sha"] = _array_sha256(
+                np.concatenate([
+                    potential.feature_mean.detach().cpu().numpy(),
+                    potential.feature_std.detach().cpu().numpy(),
+                ])
+            )
+        if potential is not None and getattr(potential, "state_mode", None) == "act_feat":
+            sig["act_feat_cache"] = (os.path.abspath(args.act_feat_cache)
+                                     if args.act_feat_cache else None)
+            sig["act_feat_cache_signature"] = act_feat_cache_sig
+            sig["act_feat_cache_weight_sha"] = act_feat_cache_sha
+            sig["hiql_value_act_feat_signature"] = potential.act_feat_signature
+            sig["hiql_value_act_weight_sha"] = potential.act_weight_sha
     if args.subgoal_conditioned:
         sig["subgoal"] = True
         sig["gc_value_ckpt"] = os.path.abspath(args.gc_value_ckpt)
@@ -276,6 +294,19 @@ def _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode, poten
         sig["lerobot_root"] = (os.path.abspath(args.lerobot_root)
                                if args.lerobot_root else None)
     return sig
+
+
+def _array_sha256(x) -> str:
+    arr = np.asarray(x, dtype=np.float32)
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def _env_state_mode_for_training(potential_state_mode, subgoal_state_mode):
+    if subgoal_state_mode == "eef_piece":
+        return "eef_piece"
+    if potential_state_mode == "eef_piece":
+        return "eef_piece"
+    return "eef"
 
 
 def _libero_offline_signature(args, image_keys, offline_cap, image_size):
@@ -431,10 +462,12 @@ def _needs_act_feat_cache(potential, subgoal_state_mode) -> bool:
 
 def _validate_actfeat_potential_cache(args, potential, cache_sig, cache_sha, act_feat_seqs,
                                       cache_stats=None) -> None:
+    if potential is None or getattr(potential, "state_mode", "act_feat") != "act_feat":
+        return
     assert args.act_feat_cache, "act_feat potential 需 --act_feat_cache(离线 act_feat 缓存序列)"
     assert act_feat_seqs is not None and len(act_feat_seqs) > 0, \
         f"act_feat potential 缓存为空: {args.act_feat_cache}"
-    first = np.asarray(act_feat_seqs[0], dtype=np.float32)
+    first = torch.as_tensor(act_feat_seqs[0], dtype=torch.float32)
     assert first.ndim == 2 and first.shape[0] > 0, \
         "act_feat potential 缓存首条序列须为 [T,D] 且 T>0"
     assert first.shape[1] == potential.model.state_dim, \
@@ -699,6 +732,7 @@ def main():
         assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
     _validate_offline_base_mode(args)
     base_policy = build_base_policy(args, args.device)
+    image_keys = list(base_policy.config.image_features.keys())
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
 
@@ -728,11 +762,10 @@ def main():
     _offline_act_feat_seqs, _act_feat_cache_stats, _act_feat_cache_sig, _act_feat_cache_sha = \
         _load_act_feat_cache_for_training(args, potential, _subgoal_sm)
 
-    # value 的 state_mode 决定训练 env 是否经 info 透出 rel_piece(只喂 Φ,不进 observation.state)
-    env_state_mode = getattr(potential, "state_mode", "eef") if potential is not None else "eef"
-    if args.subgoal_conditioned and _subgoal_sm == "eef_piece":
-        env_state_mode = "eef_piece"   # eef_piece 子目标需 env info["rel_piece"]
-    # act_feat / 无子目标:env_state_mode 保持上方 potential 决定的值(通常 "eef")
+    _potential_sm = getattr(potential, "state_mode", None) if potential is not None else None
+    # act_feat potential uses images/proprio through PotentialActFeatureEncoder;
+    # it does not require env state_mode="act_feat".
+    env_state_mode = _env_state_mode_for_training(_potential_sm, _subgoal_sm)
 
     if args.env_family == "libero":
         from resfit.rl_finetuning.chunk_residual.libero_env import create_libero_vectorized_env
@@ -776,6 +809,36 @@ def main():
                                        reward_shaping_mode="none",   # eval 不加 shaping,指标纯净
                                        base_action_mode=args.base_action_mode)
 
+    potential_feature_encoder = None
+    if potential is not None and potential.state_mode == "act_feat":
+        from resfit.rl_finetuning.chunk_residual.act_feature import (
+            ActFeatureExtractor, PotentialActFeatureEncoder,
+            act_weight_fingerprint, assert_act_base_samesource)
+
+        assert _act_feat_cache_sig is not None, "act_feat potential cache signature missing"
+        potential_image_keys = _act_feat_cache_sig.get("image_keys") or image_keys
+        potential_proprio_key = _act_feat_cache_sig.get("proprio_key", "observation.state")
+        potential_pooling = _act_feat_cache_sig.get("pooling", "mean")
+        assert_act_base_samesource(
+            gv_sha=potential.act_weight_sha,
+            cache_sha=_act_feat_cache_sha,
+            base_sha=act_weight_fingerprint(base_policy),
+            allow_mismatch=args.allow_act_base_mismatch,
+        )
+        potential_extractor = ActFeatureExtractor(
+            base_policy,
+            potential_image_keys,
+            proprio_key=potential_proprio_key,
+            pooling=potential_pooling,
+            proprio_dim=state_standardizer._mean.numel(),
+        )
+        potential_feature_encoder = PotentialActFeatureEncoder(
+            potential_extractor,
+            state_standardizer,
+            potential,
+            proprio_key=potential_proprio_key,
+        )
+
     # --- agent(复用 QAgent,action_dim=480)---
     from resfit.rl_finetuning.config.residual_td3 import ResidualTD3BoxCleanConfig
     cfg = ResidualTD3BoxCleanConfig()
@@ -800,10 +863,10 @@ def main():
                                   stage_reward_bonus=args.stage_reward_bonus,
                                   reward_shaping_mode=shaping_mode, gamma=args.gamma,
                                   base_action_mode=args.base_action_mode,
-                                  potential=potential)
+                                  potential=potential,
+                                  potential_feature_encoder=potential_feature_encoder)
 
     # --- 维度 ---
-    image_keys = list(base_policy.config.image_features.keys())
     lowdim_keys = ["observation.state", "observation.base_action", "observation.stage_id"]
     if args.subgoal_conditioned:
         lowdim_keys.append("observation.subgoal")
@@ -811,12 +874,18 @@ def main():
     img_c, img_h, img_w = obs0[image_keys[0]].shape[1:]
     state_dim = obs0["observation.state"].shape[1]
     if potential is not None:
-        # 命门:observation.state(给 actor/critic)绝不含特权 rel_piece;喂 Φ 的 V 输入维度
-        # = state_dim(+12 当 eef_piece)。断言 value.pt 与 task / 接线一致(online/offline 同源)。
-        exp_v_dim = state_dim + (12 if env_state_mode == "eef_piece" else 0)
-        assert potential.model.state_dim == exp_v_dim, (
-            f"Φ value 输入维度 {potential.model.state_dim} != observation.state({state_dim})"
-            f"+rel({12 if env_state_mode == 'eef_piece' else 0});value.pt 的 state_mode 与 task 不匹配")
+        if potential.state_mode == "act_feat":
+            assert _offline_act_feat_seqs is not None, "act_feat potential requires loaded act_feat sequences"
+            feat_dim = int(torch.as_tensor(_offline_act_feat_seqs[0]).shape[1])
+            assert potential.model.state_dim == feat_dim, (
+                f"Φ act_feat value 输入维度 {potential.model.state_dim} != act_feat cache dim {feat_dim}")
+        else:
+            # 命门:observation.state(给 actor/critic)绝不含特权 rel_piece;喂 Φ 的 V 输入维度
+            # = state_dim(+12 当 eef_piece)。断言 value.pt 与 task / 接线一致(online/offline 同源)。
+            exp_v_dim = state_dim + (12 if env_state_mode == "eef_piece" else 0)
+            assert potential.model.state_dim == exp_v_dim, (
+                f"Φ value 输入维度 {potential.model.state_dim} != observation.state({state_dim})"
+                f"+rel({12 if env_state_mode == 'eef_piece' else 0});value.pt 的 state_mode 与 task 不匹配")
     action_dim = env.action_dim * args.chunk_length     # = 480
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
@@ -952,8 +1021,11 @@ def main():
                 # 按 demo transition 数精确定容,否则 LazyTensorStorage 不足会挤掉早期 demo(锚不全)
                 offline_cap = count_offline_transitions(args.offline_dataset_path,
                                                         num_demos=args.offline_num_demos)
-            sig = _offline_buffer_signature(args, image_keys, offline_cap, shaping_mode,
-                                            potential=potential)
+            sig = _offline_buffer_signature(
+                args, image_keys, offline_cap, shaping_mode,
+                potential=potential,
+                act_feat_cache_sig=_act_feat_cache_sig,
+                act_feat_cache_sha=_act_feat_cache_sha)
 
         def _new_offline_rb(with_transform):
             # 命中缓存走 with_transform=False:存的是已合并 transition,勿让 MultiStepTransform 二次合并

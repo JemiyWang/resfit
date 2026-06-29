@@ -326,6 +326,7 @@ def test_transition_rewards_actfeat_requires_act_feat_seq():
 from types import SimpleNamespace
 
 from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+    _offline_buffer_signature,
     _load_act_feat_cache_for_training,
     _needs_act_feat_cache,
     _validate_actfeat_potential_cache,
@@ -354,6 +355,14 @@ def test_needs_act_feat_cache_for_potential_only():
     assert _needs_act_feat_cache(pot, None) is True
     assert _needs_act_feat_cache(None, "act_feat") is True
     assert _needs_act_feat_cache(SimpleNamespace(state_mode="eef"), None) is False
+
+
+def test_env_state_mode_actfeat_potential_keeps_env_eef():
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import _env_state_mode_for_training
+
+    assert _env_state_mode_for_training("act_feat", None) == "eef"
+    assert _env_state_mode_for_training("act_feat", "eef_piece") == "eef_piece"
+    assert _env_state_mode_for_training("eef_piece", None) == "eef_piece"
 
 
 def test_load_act_feat_cache_for_training_loads_potential_only():
@@ -457,3 +466,60 @@ def test_validate_actfeat_potential_cache_rejects_stats_mismatch():
             cache_stats=(np.array([0.0, 2.0, 3.0, 4.0], np.float32),
                          np.array([2.0, 2.0, 4.0, 4.0], np.float32)),
         )
+
+
+class _CacheArgs:
+    dataset = "ankile/dummy"
+    offline_dataset_path = None
+    offline_num_demos = 2
+    action_scale = 0.2
+    min_range_per_dim = 0.1
+    stage_reward_bonus = 1.0
+    gamma = 0.99
+    n_step = 3
+    task = "TwoArmBoxCleanup"
+    offline_stage_cache = None
+    potential_source = "hiql"
+    hiql_value_ckpt = "/tmp/value.pt"
+    phi_scale = 1.0
+    subgoal_conditioned = False
+    offline_base_mode = "gt"
+    data_source = "hdf5"
+    lerobot_root = None
+    act_feat_cache = "/tmp/act_feat_cache.npz"
+
+
+def test_offline_buffer_signature_actfeat_potential_includes_cache_and_stats_hash():
+    potential = SimpleNamespace(
+        model=SimpleNamespace(state_dim=4),
+        scale=1.25,
+        state_mode="act_feat",
+        feature_mean=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        feature_std=torch.tensor([2.0, 2.0, 4.0, 4.0]),
+        act_feat_signature={
+            "act_ckpt_id": "base-act",
+            "image_keys": ["observation.images.cam"],
+            "proprio_key": "observation.state",
+            "pooling": "mean",
+        },
+        act_weight_sha="sha-act",
+    )
+
+    out = _offline_buffer_signature(
+        _CacheArgs(),
+        ["observation.images.cam"],
+        12,
+        "potential",
+        potential=potential,
+        act_feat_cache_sig={"cache_id": "cache-sig"},
+        act_feat_cache_sha="cache-sha",
+    )
+
+    assert out["value_state_mode"] == "act_feat"
+    assert out["value_state_dim"] == 4
+    assert out["value_state_stats_sha"]
+    assert out["act_feat_cache"] == "/tmp/act_feat_cache.npz"
+    assert out["act_feat_cache_signature"] == {"cache_id": "cache-sig"}
+    assert out["act_feat_cache_weight_sha"] == "cache-sha"
+    assert out["hiql_value_act_feat_signature"] == potential.act_feat_signature
+    assert out["hiql_value_act_weight_sha"] == "sha-act"
