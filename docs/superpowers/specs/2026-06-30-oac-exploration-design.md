@@ -36,7 +36,10 @@ Out(YAGNI, 明确不做):
   pre-tanh 层, 所以偏移直接加在残差均值上, 比参考实现(在 pre-tanh 空间偏移)更直接。
 - **梯度取在 critic 真正看到的动作上**: `residual_actor=True` 时评估 `clamp(base_action + 残差均值, -1, 1)`,
   否则评估残差均值——镜像 `update_critic`(q_agent.py:359-364), 两种模式都正确。
-- **不确定性 σ_Q**: 用前两个 critic 头 `|Q1 - Q2| / 2`(忠于 OAC 原文; 本仓 `num_q` 默认 = 2)。
+- **不确定性 σ_Q**: 用 critic ensemble 的均值/标准差(`mu_Q = mean_k Q_k`、`sigma_Q = std_k Q_k`,
+  std 用总体口径 unbiased=False)。本仓 chunk 路 `num_q=10`(ensemble, 见 CriticConfig 默认),
+  此式对任意头数成立, 且 K=2 时退化为 OAC 原文的 `|Q1 - Q2| / 2`。
+  (修正: spec 初稿误写 num_q=2; 实测 chunk 路用 ResidualTD3 配置, 继承 num_q=10。)
 - **只在训练 rollout 探索时生效**: eval(`dist.mean`)与 critic target 路径不经过 OAC。
 - **默认值保守**: `oac_explore=False`、`oac_beta_ub=4.0`、`oac_delta=0.5`。
 
@@ -61,9 +64,9 @@ std_T = dist.scale.detach()                              # [B, A](捕获 stage_b
 with torch.enable_grad():
     crit_act = (torch.clamp(obs["observation.base_action"] + mu_T, -1.0, 1.0)
                 if self.residual_actor else mu_T)        # 镜像 update_critic
-    q = self.critic(obs["feat"], self._critic_prop(obs), crit_act)  # [K, B, 1]
-    mu_Q    = 0.5 * (q[0] + q[1]).squeeze(-1)            # [B]
-    sigma_Q = 0.5 * (q[0] - q[1]).abs().squeeze(-1)      # [B]
+    q = self.critic(obs["feat"], self._critic_prop(obs), crit_act).squeeze(-1)  # [K, B]
+    mu_Q    = q.mean(0)                                  # [B]  ensemble 均值
+    sigma_Q = q.std(0, unbiased=False)                  # [B]  ensemble 标准差(K=2 即 |Q1-Q2|/2)
     q_ub    = (mu_Q + self.oac_beta_ub * sigma_Q).sum()
 grad  = torch.autograd.grad(q_ub, mu_T)[0]              # 只对 mu_T 求导, 不污染 critic.params.grad
 Sigma = std_T ** 2
@@ -122,8 +125,9 @@ else:
 1. **零回归**: `oac_explore=False`, 固定 RNG, `act()` 输出 == 改前 `_act_default`。
 2. **偏移方向**: mock 一个 Q 对某动作维单调的 critic, 断言 `mu_E` 沿该维朝 Q 增大方向移动;
    `oac_beta_ub` 越大 / `sigma_Q`(两头分歧)越大, 偏移越大。
-3. **combined 条件**: `residual_actor=True` 时改 `observation.base_action` 会改变梯度/偏移
-   (证明梯度取在合动作上)。
+3. **combined 条件**: `_act_oac` 的 q_ub_fn 用 `clamp(base_action + 残差均值)`(residual_actor=True),
+   逐行镜像 update_critic; 由代码审查 + residual_actor=True 的 manual act 跑覆盖
+   (因 base_action 同时进 actor 输入, 难做隔离的数值断言, 故不单设数值测试)。
 4. **batched 独立**: B>1 时各行偏移相互独立, 改一行的 base/feat 不影响别行。
 5. **CLI wiring**: `--oac_explore` 等 flag 正确落到 cfg(仿现有 `test_*_cli_wiring.py`)。
 6. **形状/数值健壮**: `mu_E`、采样动作形状正确、无 NaN(含 grad 全 0 时 denom 不除零)。
