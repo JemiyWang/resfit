@@ -128,6 +128,11 @@ class QAgentConfig:
     # TD3 target action noise configuration
     target_action_noise: bool = True  # Whether to add noise to target actions in TD3
 
+    # OAC(乐观 actor-critic)探索:仅改探索采样,默认关、关时零回归。见 docs/superpowers/specs/2026-06-30-oac-exploration-design.md
+    oac_explore: bool = False
+    oac_beta_ub: float = 4.0
+    oac_delta: float = 0.5
+
     def __post_init__(self):
         pass
 

@@ -728,6 +728,12 @@ def build_parser():
                    help="在线 store 容量(transition 数,FIFO)")
     p.add_argument("--online_finetune_min_trans", type=int, default=2_000,
                    help="在线 store 达到此 transition 数才开始微调")
+    p.add_argument("--oac_explore", action="store_true",
+                   help="开启 OAC 乐观探索(只改探索采样,默认关、关时零回归)")
+    p.add_argument("--oac_beta_ub", type=float, default=4.0,
+                   help="OAC 乐观上界系数 β_UB(Q_UB = μ_Q + β_UB·σ_Q)")
+    p.add_argument("--oac_delta", type=float, default=0.5,
+                   help="OAC 均值偏移的 KL 预算 δ(偏移≈√(2δ)·std)")
     return p
 
 
@@ -902,6 +908,9 @@ def main():
     cfg.agent.bc_loss_coef = args.demo_bc_coef
     cfg.agent.bc_loss_dynamic = 0          # 均匀 BC(②a 不开 DAPG 动态)
     cfg.agent.device = args.device         # 让 --device 传到 agent(encoders/nets);否则用 config 默认 cuda
+    cfg.agent.oac_explore = args.oac_explore
+    cfg.agent.oac_beta_ub = args.oac_beta_ub
+    cfg.agent.oac_delta = args.oac_delta
     if args.demo_bc_coef > 0:
         assert args.actor == "raw", "demo_bc 第一版只支持 --actor raw"
         assert args.offline_fraction > 0, \
