@@ -81,3 +81,57 @@ def test_shift_zero_grad_no_nan():
     mu_E = optimistic_mean_shift(mu_T, std_T, lambda a: (a * 0.0).sum(-1), 0.5)
     assert torch.isfinite(mu_E).all()
     assert torch.allclose(mu_E, mu_T, atol=1e-3)           # 梯度为0 -> 几乎不偏移
+
+
+import pytest
+
+
+def _build_agent(oac_explore, beta_ub=4.0, delta=0.5):
+    from resfit.rl_finetuning.config.rlpd import QAgentConfig
+    from resfit.rl_finetuning.off_policy.rl.q_agent import QAgent
+    torch.manual_seed(0)
+    C, H, W = 3, 84, 84
+    cfg = QAgentConfig()
+    cfg.device = "cpu"
+    cfg.critic.loss.type = "mse"
+    cfg.oac_explore = oac_explore
+    cfg.oac_beta_ub = beta_ub
+    cfg.oac_delta = delta
+    agent = QAgent(obs_shape=(C, H, W), prop_shape=(5,), action_dim=12,
+                   rl_cameras=["observation.images.agentview"], cfg=cfg,
+                   residual_actor=True)
+    agent.train(False)
+    return agent, C, H, W
+
+
+def _obs(C, H, W, B=8):
+    return {"observation.images.agentview": torch.rand(B, C, H, W),
+            "observation.state": torch.randn(B, 5),
+            "observation.base_action": torch.tanh(torch.randn(B, 12))}
+
+
+@pytest.mark.manual
+def test_act_oac_returns_finite_shape():
+    agent, C, H, W = _build_agent(oac_explore=True)
+    with torch.no_grad():
+        a = agent.act(_obs(C, H, W), eval_mode=False, stddev=0.05, cpu=True)
+    assert a.shape == (8, 12)
+    assert torch.isfinite(a).all()
+
+
+@pytest.mark.manual
+def test_act_dispatch_default_when_off():
+    # oac_explore=False:_act_oac 不应被调用(置爆炸桩仍不报)
+    agent, C, H, W = _build_agent(oac_explore=False)
+    agent._act_oac = lambda *a, **k: (_ for _ in ()).throw(AssertionError("OAC 不该被调用"))
+    with torch.no_grad():
+        agent.act(_obs(C, H, W), eval_mode=False, stddev=0.05, cpu=True)   # 不报即对
+
+
+@pytest.mark.manual
+def test_act_dispatch_default_when_eval():
+    # oac_explore=True 但 eval_mode=True:走均值,不走 OAC
+    agent, C, H, W = _build_agent(oac_explore=True)
+    agent._act_oac = lambda *a, **k: (_ for _ in ()).throw(AssertionError("eval 不该走 OAC"))
+    with torch.no_grad():
+        agent.act(_obs(C, H, W), eval_mode=True, stddev=0.0, cpu=True)      # 不报即对

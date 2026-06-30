@@ -16,6 +16,7 @@ from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.off_policy.networks.encoder import VitEncoder
 from resfit.rl_finetuning.off_policy.rl.actor import Actor
 from resfit.rl_finetuning.off_policy.rl.critic import Critic
+from resfit.rl_finetuning.off_policy.rl.oac_explore import optimistic_mean_shift
 from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage, append_subgoal
 
 
@@ -71,6 +72,11 @@ class QAgent(nn.Module):
         self.num_stages = num_stages
         self.subgoal_conditioned = subgoal_conditioned
         self.subgoal_dim = subgoal_dim
+
+        # OAC 探索(默认关;getattr 兜底老 cfg 实例)
+        self.oac_explore = getattr(cfg, "oac_explore", False)
+        self.oac_beta_ub = getattr(cfg, "oac_beta_ub", 0.0)
+        self.oac_delta = getattr(cfg, "oac_delta", 0.0)
 
         # Build the per-camera encoders *after* `self.rl_cameras` is defined so
         # that the helper function can iterate over them.
@@ -292,13 +298,16 @@ class QAgent(nn.Module):
         assert "feat" not in obs
         obs["feat"] = self._encode(obs, augment=False)
 
-        action = self._act_default(
-            obs=obs,
-            eval_mode=eval_mode,
-            stddev=stddev,
-            clip=None,
-            use_target=False,
-        )
+        if self.oac_explore and not eval_mode:
+            action = self._act_oac(obs, stddev)
+        else:
+            action = self._act_default(
+                obs=obs,
+                eval_mode=eval_mode,
+                stddev=stddev,
+                clip=None,
+                use_target=False,
+            )
 
         if unsqueezed:
             action = action.squeeze(0)
@@ -331,6 +340,33 @@ class QAgent(nn.Module):
             action = dist.sample(clip=clip)
 
         return action
+
+    def _act_oac(self, obs: dict[str, torch.Tensor], stddev: float) -> torch.Tensor:
+        """OAC 乐观探索:把探索分布均值沿 Q 乐观上界梯度偏移后采样。
+
+        只用于训练 rollout 探索(eval / target 路径不经此)。
+        梯度取在 critic 真实看到的动作上(residual_actor=True 时为 clamp(base+残差均值))。
+        """
+        from resfit.rl_finetuning.off_policy.rl.oac_explore import q_upper_bound
+
+        dist = self.actor.forward(obs, stddev)        # TruncatedNormal(scaled_mu, std)
+        mu_T = dist.loc                               # [B, A] 残差均值
+        std_T = dist.scale                            # [B, A]
+
+        feat = obs["feat"]
+        prop = self._critic_prop(obs)
+        base_action = obs.get("observation.base_action")
+
+        def q_ub_fn(a: torch.Tensor) -> torch.Tensor:
+            if self.residual_actor:
+                crit_act = torch.clamp(base_action + a, -1.0, 1.0)
+            else:
+                crit_act = a
+            q = self.critic(feat, prop, crit_act)     # [K, B, 1]
+            return q_upper_bound(q, self.oac_beta_ub)  # [B]
+
+        mu_E = optimistic_mean_shift(mu_T, std_T, q_ub_fn, self.oac_delta)
+        return utils.TruncatedNormal(mu_E, std_T).sample(clip=None)
 
     def update_critic(
         self,
