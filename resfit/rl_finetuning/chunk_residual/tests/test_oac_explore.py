@@ -1,5 +1,8 @@
 from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
 from resfit.rl_finetuning.config.rlpd import QAgentConfig
+import pytest
+import torch
+from resfit.rl_finetuning.off_policy.rl.oac_explore import optimistic_mean_shift, q_upper_bound
 
 
 def _req(extra):
@@ -26,11 +29,6 @@ def test_qagent_config_has_oac_fields_with_defaults():
     assert cfg.oac_explore is False
     assert cfg.oac_beta_ub == 4.0
     assert cfg.oac_delta == 0.5
-
-
-import math
-import torch
-from resfit.rl_finetuning.off_policy.rl.oac_explore import q_upper_bound, optimistic_mean_shift
 
 
 def test_q_upper_bound_two_heads_matches_paper():
@@ -81,9 +79,6 @@ def test_shift_zero_grad_no_nan():
     mu_E = optimistic_mean_shift(mu_T, std_T, lambda a: (a * 0.0).sum(-1), 0.5)
     assert torch.isfinite(mu_E).all()
     assert torch.allclose(mu_E, mu_T, atol=1e-3)           # 梯度为0 -> 几乎不偏移
-
-
-import pytest
 
 
 def _build_agent(oac_explore, beta_ub=4.0, delta=0.5):

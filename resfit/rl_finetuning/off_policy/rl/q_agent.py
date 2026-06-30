@@ -16,7 +16,7 @@ from resfit.rl_finetuning.off_policy.common_utils import utils
 from resfit.rl_finetuning.off_policy.networks.encoder import VitEncoder
 from resfit.rl_finetuning.off_policy.rl.actor import Actor
 from resfit.rl_finetuning.off_policy.rl.critic import Critic
-from resfit.rl_finetuning.off_policy.rl.oac_explore import optimistic_mean_shift
+from resfit.rl_finetuning.off_policy.rl.oac_explore import optimistic_mean_shift, q_upper_bound
 from resfit.rl_finetuning.off_policy.rl.stage_utils import append_stage, append_subgoal
 
 
@@ -347,8 +347,6 @@ class QAgent(nn.Module):
         只用于训练 rollout 探索(eval / target 路径不经此)。
         梯度取在 critic 真实看到的动作上(residual_actor=True 时为 clamp(base+残差均值))。
         """
-        from resfit.rl_finetuning.off_policy.rl.oac_explore import q_upper_bound
-
         dist = self.actor.forward(obs, stddev)        # TruncatedNormal(scaled_mu, std)
         mu_T = dist.loc                               # [B, A] 残差均值
         std_T = dist.scale                            # [B, A]
