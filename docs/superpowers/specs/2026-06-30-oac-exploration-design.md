@@ -123,8 +123,10 @@ else:
 ## 7. 测试策略(全 CPU, 不启真训练)
 
 1. **零回归**: `oac_explore=False`, 固定 RNG, `act()` 输出 == 改前 `_act_default`。
-2. **偏移方向**: mock 一个 Q 对某动作维单调的 critic, 断言 `mu_E` 沿该维朝 Q 增大方向移动;
-   `oac_beta_ub` 越大 / `sigma_Q`(两头分歧)越大, 偏移越大。
+2. **偏移方向**: mock 一个 Q 对某动作维单调的 critic, 断言 `mu_E` 沿 Q 上界梯度方向移动。
+   注意: 归一化偏移在 Σ⁻¹-范数下恒为 √(2δ), **与 `oac_beta_ub` 无关**——β_UB 只改变梯度方向
+   (σ_Q 项如何加权各动作维), 不改变偏移大小; 偏移大小由 δ 与 std 决定。故**不**写
+   "β_UB 越大偏移越大"的断言(会失败)。(终审纠正: spec 初稿此处措辞有误。)
 3. **combined 条件**: `_act_oac` 的 q_ub_fn 用 `clamp(base_action + 残差均值)`(residual_actor=True),
    逐行镜像 update_critic; 由代码审查 + residual_actor=True 的 manual act 跑覆盖
    (因 base_action 同时进 actor 输入, 难做隔离的数值断言, 故不单设数值测试)。
