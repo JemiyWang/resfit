@@ -30,15 +30,6 @@ def gc_subgoal_shaping(potential, s_start, s_end, z_start, *, bonus, gamma, done
     return potential_shaping(phi_a, phi_b, bonus=bonus, gamma=gamma, done=done)
 
 
-def _stat_to_tensor(x, device):
-    """把 act_feat mean/std(可能已是 torch.Tensor,含非 CPU device;或 numpy/list)转成
-    dtype=float32、指定 device 的张量。已是 tensor 时用 .to() 直接搬(对 CUDA tensor 安全);
-    否则走原 np.asarray+torch.as_tensor 路(numpy/list 输入,逐位等价旧行为)。"""
-    if isinstance(x, torch.Tensor):
-        return x.to(device=device, dtype=torch.float32)
-    return torch.as_tensor(np.asarray(x), dtype=torch.float32, device=device)
-
-
 class HiqlPotential:
     """加载 ③a 的冻结 value,把标准化 state 映射到 PBS 势函数值 phi = V(state)*scale。
 
@@ -66,13 +57,11 @@ class HiqlPotential:
         if state_mode == "act_feat":
             if feature_mean is None or feature_std is None:
                 raise ValueError("state_mode='act_feat' requires feature mean/std in value checkpoint")
-            # load_value(path, map_location=device) 对整个 ckpt pickle 生效:mean/std 在存盘时
-            # 已是 torch.Tensor(见 train_hiql_value.unpack_state_aux),device='cuda' 时会被
-            # torch.load 直接搬到 GPU。此时若走 np.asarray(tensor) 对 CUDA tensor 会报
-            # TypeError(需先 .cpu() 才能转 numpy);已是 tensor 时改用 .to() 搬,避免这个坑
-            # (数值/dtype 结果与 np.asarray 路完全一致,只是不强制经过 numpy 往返)。
-            self.feature_mean = _stat_to_tensor(feature_mean, device)
-            self.feature_std = _stat_to_tensor(feature_std, device)
+            # 不用 np.asarray 包装 —— load_value(map_location=device) 会把 ckpt 里存的
+            # mean/std(train_hiql_value 存盘即 torch.Tensor)搬到 device;np.asarray(cuda_tensor)
+            # 会崩,torch.as_tensor 本就吃 numpy/cpu/cuda 张量并搬到 device、结果逐位等价。
+            self.feature_mean = torch.as_tensor(feature_mean, dtype=torch.float32, device=device)
+            self.feature_std = torch.as_tensor(feature_std, dtype=torch.float32, device=device)
             if int(self.feature_mean.numel()) != int(self.model.state_dim):
                 raise ValueError(
                     f"act_feat mean dim {self.feature_mean.numel()} != value state_dim {self.model.state_dim}"
