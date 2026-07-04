@@ -160,6 +160,33 @@ def _make_actfeat_ckpt(tmp_path, vmin=0.0, vmax=4.0):
     return p, m, mean, std, sig
 
 
+def test_hiqlpotential_actfeat_handles_map_location_gpu_stats(monkeypatch, tmp_path):
+    """torch.load(path, map_location=device) 会把 ckpt 里的 mean/std(本已是 torch.Tensor)
+    连同 device 一起搬(load_value 的 map_location=device 对整个 pickle 生效,不只是权重)。
+    真实场景里 device='cuda' 时,mean/std 变成 CUDA tensor;此时若 __init__ 仍对它们调用
+    np.asarray() 会像真 CUDA tensor 一样报 TypeError('can't convert cuda:0 device type
+    tensor to numpy')(这正是 pothiql act_feat smoke 在线上首次真跑时炸的地方)。
+    这里用 monkeypatch 复刻这个失败特征(不占真 GPU、不需要 CUDA 硬件),验证 __init__
+    对『已是 tensor』的 feature_mean/std 走 .to() 而非 np.asarray()。"""
+    p, model, mean, std, sig = _make_actfeat_ckpt(tmp_path)
+
+    real_asarray = np.asarray
+
+    def fake_asarray(x, *a, **k):
+        if isinstance(x, torch.Tensor):
+            raise TypeError(
+                "can't convert cuda:0 device type tensor to numpy. "
+                "Use Tensor.cpu() to copy the tensor to host memory first.")
+        return real_asarray(x, *a, **k)
+
+    import resfit.rl_finetuning.chunk_residual.hiql_potential as hp_mod
+    monkeypatch.setattr(hp_mod.np, "asarray", fake_asarray)
+
+    pot = HiqlPotential.from_ckpt(p, num_stages=5, phi_scale=1.0, device="cpu")
+    assert torch.allclose(pot.feature_mean, mean)
+    assert torch.allclose(pot.feature_std, std)
+
+
 def test_hiqlpotential_loads_actfeat_metadata_and_standardizes(tmp_path):
     p, model, mean, std, sig = _make_actfeat_ckpt(tmp_path)
     pot = HiqlPotential.from_ckpt(p, num_stages=5, phi_scale=1.0, device="cpu")
