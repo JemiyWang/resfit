@@ -62,6 +62,26 @@ def threading_stage(env) -> int:
     return 0
 
 
+def pouring_stage(env) -> int:
+    """TwoArmPouring 5 段:
+    0 起步 / 1 抓起 cup / 2 球倒入碗 / 3 抓起碗搬向 pad / 4 碗放上 pad(成功)。
+
+    顺序由 demo 数据核实(100% 同序):cup_grasped→ball_in_bowl→bowl_grasped→bowl_on_pad。
+    顶段用 _check_success(比 datagen bowl_on_pad 信号更可靠,后者仅 84% 成功 demo 触发);
+    高段短路优先,闩锁(max-so-far)由 wrapper 负责,这里只判瞬时阶段。
+    """
+    if env._check_success():                            # 4 成功
+        return 4
+    ball_in_bowl = env.check_contact(env.bowl, env.ball)
+    if ball_in_bowl and _grasped(env, env.bowl):        # 3 球已入碗 + 碗被抓起搬运
+        return 3
+    if ball_in_bowl:                                    # 2 球已倒入碗
+        return 2
+    if _grasped(env, env.cup):                          # 1 抓起 cup
+        return 1
+    return 0
+
+
 def lifttray_stage(env) -> int:
     """TwoArmLiftTray 4 段:0 起步 / 1 一个方块搬上盘 / 2 两个方块都上盘 / 3 抬盘成功。
 
@@ -83,11 +103,13 @@ def lifttray_stage(env) -> int:
 STAGE_DETECTORS = {
     "TwoArmThreePieceAssembly": threepiece_stage,
     "TwoArmThreading": threading_stage,
+    "TwoArmPouring": pouring_stage,
     "TwoArmLiftTray": lifttray_stage,
 }
 NUM_STAGES = {
     "TwoArmThreePieceAssembly": 4,
     "TwoArmThreading": 3,
+    "TwoArmPouring": 5,
     "TwoArmLiftTray": 4,
 }
 

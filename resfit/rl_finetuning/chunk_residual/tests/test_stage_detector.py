@@ -14,6 +14,7 @@ from resfit.rl_finetuning.chunk_residual.stage_detectors import (
     lifttray_stage,
     threading_stage,
     threepiece_stage,
+    pouring_stage,
 )
 
 D, L = 4, 5
@@ -434,3 +435,82 @@ def test_lifttray_stage_sequential_pick_separates_two_stages():
 def test_lifttray_registered():
     assert NUM_STAGES["TwoArmLiftTray"] == 4
     assert get_stage_detector("TwoArmLiftTray") is lifttray_stage
+
+
+# ---------- pouring 5 段检测器契约 ----------
+class _FakeCup:
+    contact_geoms = ["cup0", "cup1"]
+
+class _FakeBowl:
+    contact_geoms = ["bowl0", "bowl1"]
+
+class _FakeBall:
+    contact_geoms = ["ball0"]
+
+def _is_bowl(object_geoms):
+    return "bowl0" in object_geoms
+
+
+class _FakePouringEnv:
+    """GR1 dict-gripper fake;grasp_cup/grasp_bowl 独立控制;check_contact 返回 ball_in_bowl。"""
+    def __init__(self, success=False, ball_in_bowl=False, grasp_cup=False, grasp_bowl=False):
+        self._success = success
+        self._bib = ball_in_bowl
+        self._gc, self._gb = grasp_cup, grasp_bowl
+        self.robots = [_DictGripperRobot()]     # GR1 单机器人,gripper=dict(迭代得 str 键)
+        self.cup = _FakeCup()
+        self.bowl = _FakeBowl()
+        self.ball = _FakeBall()
+
+    def _check_success(self):
+        return self._success
+
+    def check_contact(self, a, b):               # 检测器调 check_contact(env.bowl, env.ball)
+        return self._bib
+
+    def _check_grasp(self, gripper, object_geoms):
+        if isinstance(gripper, str):
+            return False
+        return self._gb if _is_bowl(object_geoms) else self._gc
+
+
+def test_pouring_stage_start_is_0():
+    assert pouring_stage(_FakePouringEnv()) == 0
+
+def test_pouring_stage_cup_grasped_is_1():
+    assert pouring_stage(_FakePouringEnv(grasp_cup=True)) == 1
+
+def test_pouring_stage_ball_in_bowl_is_2():
+    assert pouring_stage(_FakePouringEnv(ball_in_bowl=True)) == 2
+
+def test_pouring_stage_ball_in_bowl_and_bowl_grasped_is_3():
+    assert pouring_stage(_FakePouringEnv(ball_in_bowl=True, grasp_bowl=True)) == 3
+
+def test_pouring_stage_success_is_4():
+    assert pouring_stage(_FakePouringEnv(success=True)) == 4
+
+def test_pouring_stage_priority_success_over_lower():
+    # 同时满足 → 高阶段优先 = 成功(4)
+    assert pouring_stage(_FakePouringEnv(
+        success=True, ball_in_bowl=True, grasp_cup=True, grasp_bowl=True)) == 4
+
+def test_pouring_stage_bowl_grasped_before_pour_is_0():
+    # 倒球前就抓碗(球未入碗、cup 未抓)→ 仍 0(stage 3 要求球已入碗;不误触发)
+    assert pouring_stage(_FakePouringEnv(grasp_bowl=True)) == 0
+
+def test_pouring_stage_ball_in_bowl_not_success_is_3_when_carrying():
+    # 球入碗 + 抓碗但未 success → 3(搬运中)
+    assert pouring_stage(_FakePouringEnv(ball_in_bowl=True, grasp_bowl=True, success=False)) == 3
+
+def test_pouring_stage_monotonic_separation():
+    # 三相位依次:抓cup(1)→倒入+松cup(2)→抓碗搬运(3),证明 5 段能切开
+    seq = [
+        _FakePouringEnv(grasp_cup=True),                              # 1
+        _FakePouringEnv(ball_in_bowl=True, grasp_cup=False),          # 2
+        _FakePouringEnv(ball_in_bowl=True, grasp_bowl=True),          # 3
+    ]
+    assert [pouring_stage(e) for e in seq] == [1, 2, 3]
+
+def test_pouring_registered():
+    assert NUM_STAGES["TwoArmPouring"] == 5
+    assert get_stage_detector("TwoArmPouring") is pouring_stage
