@@ -11,6 +11,7 @@ from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualE
 from resfit.rl_finetuning.chunk_residual.stage_detectors import (
     NUM_STAGES,
     get_stage_detector,
+    lifttray_stage,
     threading_stage,
     threepiece_stage,
 )
@@ -377,3 +378,59 @@ def test_threading_stage_priority_success_over_grasp():
 def test_threading_registered():
     assert NUM_STAGES["TwoArmThreading"] == 3
     assert get_stage_detector("TwoArmThreading") is threading_stage
+
+
+# ---------- lifttray 4 段检测器契约 ----------
+class _FakeBox:
+    def __init__(self, name):
+        self.name = name
+
+
+class _FakeLiftTrayEnv:
+    """success + obj0/obj1 是否与 pot_base 接触 独立控制。
+    check_contact(geoms_1, geoms_2) 仅 geoms_1=='pot_base' 时按 obj.name 返回其 on_tray。"""
+    def __init__(self, success=False, obj0_on=False, obj1_on=False):
+        self._success = success
+        self._on = {"obj0": obj0_on, "obj1": obj1_on}
+        self.obj0 = _FakeBox("obj0")
+        self.obj1 = _FakeBox("obj1")
+
+    def _check_success(self):
+        return self._success
+
+    def check_contact(self, geoms_1, geoms_2=None):
+        if geoms_1 != "pot_base":
+            return False
+        return self._on.get(getattr(geoms_2, "name", None), False)
+
+
+def test_lifttray_stage_start_is_0():
+    assert lifttray_stage(_FakeLiftTrayEnv()) == 0
+
+
+def test_lifttray_stage_one_block_on_tray_is_1():
+    assert lifttray_stage(_FakeLiftTrayEnv(obj0_on=True)) == 1
+    assert lifttray_stage(_FakeLiftTrayEnv(obj1_on=True)) == 1   # 顺序无关,哪块都算 1
+
+
+def test_lifttray_stage_both_on_tray_is_2():
+    assert lifttray_stage(_FakeLiftTrayEnv(obj0_on=True, obj1_on=True)) == 2
+
+
+def test_lifttray_stage_success_is_3():
+    assert lifttray_stage(_FakeLiftTrayEnv(success=True)) == 3
+
+
+def test_lifttray_stage_priority_success_over_lower():
+    assert lifttray_stage(_FakeLiftTrayEnv(success=True, obj0_on=True, obj1_on=True)) == 3
+
+
+def test_lifttray_stage_sequential_pick_separates_two_stages():
+    # 核心意图:obj1 先上盘→1;obj0 后上盘(两块都在)→2 → 两次搬运落在不同段(持久里程碑)
+    assert lifttray_stage(_FakeLiftTrayEnv(obj1_on=True)) == 1
+    assert lifttray_stage(_FakeLiftTrayEnv(obj0_on=True, obj1_on=True)) == 2
+
+
+def test_lifttray_registered():
+    assert NUM_STAGES["TwoArmLiftTray"] == 4
+    assert get_stage_detector("TwoArmLiftTray") is lifttray_stage

@@ -62,13 +62,33 @@ def threading_stage(env) -> int:
     return 0
 
 
+def lifttray_stage(env) -> int:
+    """TwoArmLiftTray 4 段:0 起步 / 1 一个方块搬上盘 / 2 两个方块都上盘 / 3 抬盘成功。
+
+    里程碑用"方块与盘底 pot_base 接触"(持久态,复用 _check_success 同款谓词),按已上盘
+    方块数计数(顺序无关);高段短路优先,闩锁(max-so-far)由 wrapper 负责,这里只判瞬时。
+    注:不用"离地/抓起"——那是瞬时信号,两次搬运不重叠,经 wrapper max 闩锁会被压成同一段。
+    """
+    if env._check_success():                              # 3 抬盘成功
+        return 3
+    n = int(env.check_contact("pot_base", env.obj0)) + \
+        int(env.check_contact("pot_base", env.obj1))
+    if n >= 2:                                            # 两块都在盘上
+        return 2
+    if n >= 1:                                            # 一块在盘上
+        return 1
+    return 0
+
+
 STAGE_DETECTORS = {
     "TwoArmThreePieceAssembly": threepiece_stage,
     "TwoArmThreading": threading_stage,
+    "TwoArmLiftTray": lifttray_stage,
 }
 NUM_STAGES = {
     "TwoArmThreePieceAssembly": 4,
     "TwoArmThreading": 3,
+    "TwoArmLiftTray": 4,
 }
 
 
