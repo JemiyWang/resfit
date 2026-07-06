@@ -6,7 +6,7 @@
 做法:对每个目标残差 L2 范数,跑 N 个 episode(num_envs=1,逐 episode 记最高 stage,
 绕开多环境 stage 追踪坑),用 stage_reach_rates 汇总。残差 = 每 chunk 重采样的随机方向、
 缩放到目标范数(模拟训练里 residual_norm 长到 ~1.5 的幅度;方向随机,是对"训练出的崩溃残差"
-的代理)。若幅度↑时 reach(stage4=success) 先崩、reach(stage1-3) 还在 → 支持 (a);若各 reach
+的代理)。若幅度↑时 reach(stage3=success) 先崩、reach(stage1-2) 还在 → 支持 (a);若各 reach
 一起崩 → 支持 (b)。
 
 用法(从仓库根目录,conda env residual):

@@ -59,17 +59,26 @@ class _FakeTPEnv:
         return self._grasp2 if _is_piece2(object_geoms) else self._grasp
 
 
-def test_threepiece_stage_success_is_4():
-    assert threepiece_stage(_FakeTPEnv(second=True)) == 4
+def test_threepiece_stage_success_is_3():
+    assert threepiece_stage(_FakeTPEnv(second=True)) == 3
 
 
 def test_threepiece_stage_first_assembled_is_2():
     assert threepiece_stage(_FakeTPEnv(first=True)) == 2
 
 
-def test_threepiece_stage_grasped_is_1():
-    # 抓起 piece1 但尚未装好 → 应为阶段 1
-    assert threepiece_stage(_FakeTPEnv(grasp=True)) == 1
+def test_threepiece_stage_both_grasped_is_1():
+    # 新口径:piece1 和 piece2 同时被抓起 → 阶段 1
+    assert threepiece_stage(_FakeTPEnv(grasp=True, grasp2=True)) == 1
+
+
+def test_threepiece_stage_only_piece1_grasped_is_0():
+    # 仅抓 piece1、未抓 piece2 → 仍 0(stage 1 要求两件都抓)
+    assert threepiece_stage(_FakeTPEnv(grasp=True)) == 0
+
+
+def test_threepiece_stage_only_piece2_grasped_is_0():
+    assert threepiece_stage(_FakeTPEnv(grasp2=True)) == 0
 
 
 def test_threepiece_stage_start_is_0():
@@ -77,8 +86,8 @@ def test_threepiece_stage_start_is_0():
 
 
 def test_threepiece_stage_priority_success_over_lower():
-    # 同时满足时,高阶段优先
-    assert threepiece_stage(_FakeTPEnv(second=True, first=True, grasp=True)) == 4
+    # 同时满足时,高阶段优先 → 成功段(3)
+    assert threepiece_stage(_FakeTPEnv(second=True, first=True, grasp=True)) == 3
 
 
 def test_registry_unknown_task_returns_none():
@@ -117,33 +126,39 @@ class _RealisticTPEnv:
         return self._grasp2 if _is_piece2(object_geoms) else self._grasp
 
 
-def test_threepiece_stage_grasped_with_dict_gripper_is_1():
-    # 真环境 gripper=dict;抓住 piece1 未装好 → 应为 1
-    assert threepiece_stage(_RealisticTPEnv(grasp=True)) == 1
+def test_threepiece_stage_both_grasped_dict_gripper_is_1():
+    # 真环境 gripper=dict;piece1+piece2 都抓住、未装好 → 1
+    assert threepiece_stage(_RealisticTPEnv(grasp=True, grasp2=True)) == 1
 
 
-def test_threepiece_stage_assembled_but_still_grasped_is_1():
-    # piece1 已靠近 base(first 谓词 True)但仍被握住 → 还没释放,应判 1,不应跳 2
-    assert threepiece_stage(_RealisticTPEnv(first=True, grasp=True)) == 1
+def test_threepiece_stage_only_piece1_dict_gripper_is_0():
+    # 真环境仅抓 piece1 → 0(stage 1 要求两件都抓)
+    assert threepiece_stage(_RealisticTPEnv(grasp=True)) == 0
+
+
+def test_threepiece_stage_assembled_still_grasped_is_2():
+    # 新口径:piece1 已装好(first 谓词 True)即判 2,不再要求先释放
+    assert threepiece_stage(_RealisticTPEnv(first=True, grasp=True)) == 2
 
 
 def test_threepiece_stage_assembled_and_released_is_2():
-    # 靠近 base 且已释放 → 2
+    # piece1 装好(无论是否仍握)→ 2
     assert threepiece_stage(_RealisticTPEnv(first=True, grasp=False)) == 2
 
 
-def test_threepiece_stage_piece2_grasped_is_3():
-    # piece1 已装好 + 正握 piece2 → 3
-    assert threepiece_stage(_RealisticTPEnv(first=True, grasp=False, grasp2=True)) == 3
+def test_threepiece_stage_piece2_grasped_after_assembled_is_2():
+    # 新口径:piece1 装好后抓 piece2 仍归 2(装配里程碑主导,抓 piece2 不再单列)
+    assert threepiece_stage(_RealisticTPEnv(first=True, grasp=False, grasp2=True)) == 2
 
 
-def test_threepiece_stage_piece2_grasped_priority_over_piece1_still_grasped():
-    # piece1 已装好,piece2 已抓起,且 piece1 仍被(误)握 → 仍判 3(piece2 抓起优先)
-    assert threepiece_stage(_RealisticTPEnv(first=True, grasp=True, grasp2=True)) == 3
+def test_threepiece_stage_success_over_all_is_3():
+    # piece2 装好(成功)优先于任何低阶段
+    assert threepiece_stage(
+        _RealisticTPEnv(second=True, first=True, grasp=True, grasp2=True)) == 3
 
 
-def test_num_stages_threepiece_is_5():
-    assert NUM_STAGES["TwoArmThreePieceAssembly"] == 5
+def test_num_stages_threepiece_is_4():
+    assert NUM_STAGES["TwoArmThreePieceAssembly"] == 4
 
 
 # ---------- wrapper 的 stage 闩锁/归零 ----------

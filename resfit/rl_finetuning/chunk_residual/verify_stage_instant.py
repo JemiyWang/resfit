@@ -57,7 +57,7 @@ def main():
     print(f"\n{'#'*60}")
     print(f"[stage 瞬时出现次数] {dict(sorted(seen.items()))}  (共 {steps} 步)")
     saw_1 = seen.get(1, 0) > 0
-    print(f"[stage 1(抓起piece1) 是否出现] {saw_1}  次数={seen.get(1,0)}")
+    print(f"[stage 1(抓起piece1和piece2) 是否出现] {saw_1}  次数={seen.get(1,0)}")
     if not saw_1:
         print("  → stage 1 从未瞬时出现:真环境 _grasped 可能没触发(双臂夹爪迭代),或抓取瞬间太短")
     vec_env.close()

@@ -32,20 +32,19 @@ def _grasped(env, obj) -> bool:
 
 
 def threepiece_stage(env) -> int:
-    """TwoArmThreePieceAssembly 5 段:
-    0 起步 / 1 piece1抓 / 2 piece1放好释放 / 3 piece2抓起 / 4 成功。
+    """TwoArmThreePieceAssembly 4 段:
+    0 起步 / 1 抓起 piece1 和 piece2(两件都被握)/ 2 放好 piece1 / 3 放好 piece2(成功)。
 
-    瓶颈段 stage2→3 拆细:在"piece1 装好释放"与"成功"之间插入"已抓起 piece2"子阶段,
-    让 staged 稠密奖励在该大段内有梯度化信用。闩锁(max-so-far)由 wrapper 负责。
+    用户口径:抓取里程碑要求 piece1 和 piece2 **都**被握住才算 1(与 threading
+    "针+脚架都抓起"同套路);装配里程碑分两段(piece1 装好即 2,不要求先释放;
+    piece2 装好即成功 3)。高阶段短路优先,闩锁(max-so-far)由 wrapper 负责,
+    这里只判瞬时阶段。
     """
     if env._check_second_piece_is_assembled():    # == _check_success
-        return 4
-    if env._check_first_piece_is_assembled() and _grasped(env, env.piece_2):
         return 3
-    grasped_piece1 = _grasped(env, env.piece_1)
-    if env._check_first_piece_is_assembled() and not grasped_piece1:
+    if env._check_first_piece_is_assembled():
         return 2
-    if grasped_piece1:
+    if _grasped(env, env.piece_1) and _grasped(env, env.piece_2):
         return 1
     return 0
 
@@ -68,7 +67,7 @@ STAGE_DETECTORS = {
     "TwoArmThreading": threading_stage,
 }
 NUM_STAGES = {
-    "TwoArmThreePieceAssembly": 5,
+    "TwoArmThreePieceAssembly": 4,
     "TwoArmThreading": 3,
 }
 
