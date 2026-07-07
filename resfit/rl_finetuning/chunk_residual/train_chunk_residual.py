@@ -42,6 +42,7 @@ from resfit.rl_finetuning.utils.normalization import ActionScaler, StateStandard
 from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
     ChunkResidualEnvWrapper, resolve_shaping_mode)
 from resfit.rl_finetuning.chunk_residual.stage_replay import sample_stage_balanced
+from resfit.rl_finetuning.chunk_residual.critic_warmup import run_critic_warmup
 from resfit.rl_finetuning.chunk_residual.stage_diag import flatten_stage_diagnostics, stage_diagnostics
 from resfit.rl_finetuning.chunk_residual.stage_detectors import NUM_STAGES
 from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
@@ -1180,6 +1181,7 @@ def main():
     last_diag = None
     last_ft_metrics = None
     total = 2 * args.chunk_length if args.smoke else args.total_env_steps
+    did_critic_warmup = False
     while env_steps <= total:
         next_rel = None   # FIX D: silence unbound-var lint; overwritten below when subgoal_conditioned
         if args.subgoal_conditioned:
@@ -1226,7 +1228,7 @@ def main():
         env_steps += args.chunk_length
 
         if env_steps >= args.learning_starts and len(online_rb) > online_batch_size:
-            for i in range(args.utd):
+            def _sample_train_batch():
                 if args.stage_balanced:
                     online_batch = sample_stage_balanced(online_rb, online_batch_size, generator=sample_gen)
                 else:
@@ -1234,9 +1236,17 @@ def main():
                 online_batch = online_batch.to(args.device, non_blocking=True)  # 喂 GPU 前搬设备
                 if offline_rb is not None:                          # RLPD 混采:online + offline demo 锚
                     offline_batch = offline_rb.sample(offline_batch_size).to(args.device, non_blocking=True)
-                    batch = concat_mixed_batch(online_batch, offline_batch)   # 取公共 key,容忍 _weight 不一致
-                else:
-                    batch = online_batch
+                    return concat_mixed_batch(online_batch, offline_batch)   # 取公共 key,容忍 _weight 不一致
+                return online_batch
+
+            if args.critic_warmup_steps > 0 and not did_critic_warmup:
+                print(f"[critic-warmup] starting {args.critic_warmup_steps} critic-only "
+                      f"updates at env_steps={env_steps} (actor frozen, no env stepping)…")
+                run_critic_warmup(agent, args.critic_warmup_steps, _sample_train_batch)
+                did_critic_warmup = True
+
+            for i in range(args.utd):
+                batch = _sample_train_batch()
                 update_actor = ((i + 1) % args.utd == 0)
                 bc_batch = None
                 if args.demo_bc_coef > 0 and update_actor and offline_rb is not None:
