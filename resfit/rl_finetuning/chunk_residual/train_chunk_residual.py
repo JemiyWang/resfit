@@ -583,6 +583,9 @@ def build_parser():
     p.add_argument("--min_range_per_dim", type=float, default=0.1)
     p.add_argument("--total_env_steps", type=int, default=500_000)
     p.add_argument("--learning_starts", type=int, default=10_000)
+    p.add_argument("--critic_warmup_steps", type=int, default=0,
+                   help="critic-only updates on the filled buffer before actor training "
+                        "(mirrors offpolicy _run_critic_warmup). 0 = disabled (default).")
     p.add_argument("--eval_every_env_steps", type=int, default=10_000)
     p.add_argument("--utd", type=int, default=4)
     p.add_argument("--n_step", type=int, default=3)
