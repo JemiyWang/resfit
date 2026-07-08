@@ -8,7 +8,7 @@ class _MockAgent:
     def update(self, batch, stddev, update_actor, bc_batch=None, ref_agent=None):
         self.calls.append(dict(stddev=stddev, update_actor=update_actor,
                                bc_batch=bc_batch, ref_agent=ref_agent))
-        return {"critic_loss": 0.5}
+        return {"train/critic_loss": 0.5}
 
 
 def test_runs_critic_only_n_times():
@@ -25,7 +25,7 @@ def test_runs_critic_only_n_times():
     assert all(c["update_actor"] is False for c in agent.calls)
     assert all(c["stddev"] == 0.0 for c in agent.calls)
     assert all(c["bc_batch"] is None and c["ref_agent"] is None for c in agent.calls)
-    assert out == {"critic_loss": 0.5}
+    assert out == {"train/critic_loss": 0.5}
 
 
 def test_zero_steps_is_noop():
@@ -33,3 +33,12 @@ def test_zero_steps_is_noop():
     out = run_critic_warmup(agent, 0, lambda: object(), log_every=0)
     assert agent.calls == []
     assert out is None
+
+
+def test_log_every_prints_progress_with_loss(capsys):
+    agent = _MockAgent()
+    run_critic_warmup(agent, 2, lambda: object(), log_every=1)
+    out = capsys.readouterr().out
+    assert "[critic-warmup] 1/2" in out
+    assert "critic_loss=0.5000" in out
+    assert "[critic-warmup] 2/2" in out

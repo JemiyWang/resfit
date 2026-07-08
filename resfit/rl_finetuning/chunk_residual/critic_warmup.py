@@ -18,7 +18,7 @@ def run_critic_warmup(agent, steps, sample_batch_fn, *, log_every=1000):
         batch = sample_batch_fn()
         metrics = agent.update(batch, 0.0, False, bc_batch=None, ref_agent=None)
         if log_every and (i + 1) % log_every == 0:
-            cl = metrics.get("critic_loss") if isinstance(metrics, dict) else None
+            cl = metrics.get("train/critic_loss") if isinstance(metrics, dict) else None
             tail = f" critic_loss={cl:.4f}" if isinstance(cl, (int, float)) else ""
             print(f"[critic-warmup] {i + 1}/{steps}{tail}")
     return metrics
