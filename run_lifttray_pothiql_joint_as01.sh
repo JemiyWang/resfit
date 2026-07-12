@@ -1,0 +1,68 @@
+#!/bin/bash
+# lifttray pothiql_joint 的 action_scale=0.1 变体(as01)。
+#   逐行复制 run_lifttray_pothiql_joint_rerun0629.sh(源自 wandb somalim5 / 6-29 首启 56py161s),
+#   **唯一变量 = --action_scale 0.05 → 0.1**。另同步换 offcache 路径 + wandb_name/output_dir 插入 as01。
+#   action_scale 进 offline buffer 签名且被 action_scaler 烘进存储动作(train_chunk_residual.py:259)
+#     → 旧 lifttray_..._pothiql_joint_offcache(62G,as005)失效,必须**首建新 offcache**(~62G/~80min base_policy CPU forward)。
+#   value/gc_value/high_actor/act_feat 与 action_scale 无关(离线 hdf5 训),直接复用同 rerun0629。
+set -euo pipefail
+export CUDA_VISIBLE_DEVICES=5
+export MUJOCO_GL=egl
+export HF_HUB_OFFLINE=1
+export PYTHONPATH=/mnt/mnt/data/resfit
+export LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+cd /mnt/mnt/data/resfit
+exec /mnt/mnt/data/envs/residual/bin/python -u -m resfit.rl_finetuning.chunk_residual.train_chunk_residual \
+  --task \
+  TwoArmLiftTray \
+  --base_wandb_id \
+  /mnt/mnt/data/wjm/residual/residual-offpolicy-rl/artifacts/run_e0o0sckj_best:v4 \
+  --dataset \
+  ankile/dexmg-two-arm-lift-tray \
+  --offline_dataset_path \
+  resfit/dataset/two_arm_lift_tray.hdf5 \
+  --chunk_length \
+  1 \
+  --base_action_mode \
+  queue \
+  --base_n_action_steps \
+  10 \
+  --action_scale \
+  0.1 \
+  --actor_lr \
+  1e-6 \
+  --actor \
+  raw \
+  --reward_shaping \
+  potential \
+  --potential_source \
+  hiql \
+  --hiql_value_ckpt \
+  outputs_chunk/lifttray_value_hdf5.pt \
+  --offline_fraction \
+  0.5 \
+  --offline_base_mode \
+  base_policy \
+  --demo_bc_coef \
+  0.1 \
+  --offline_buffer_cache \
+  outputs_chunk/lifttray_actfeat_hdf5_bp_hiqlv512_sg15_as01_pothiql_joint_offcache \
+  --subgoal_conditioned \
+  --gc_value_ckpt \
+  outputs_chunk/lifttray_gc_value_actfeat_hdf5_hiqlv512.pt \
+  --high_actor_ckpt \
+  outputs_chunk/lifttray_high_actor_actfeat_hdf5_hiqlv512.pt \
+  --act_feat_cache \
+  outputs_chunk/lifttray_act_feat_hdf5.npz \
+  --subgoal_way_steps \
+  15 \
+  --online_finetune_value \
+  --online_finetune_high_actor \
+  --total_env_steps \
+  500000 \
+  --wandb_project \
+  dexmg-chunk-residual \
+  --wandb_name \
+  lifttray_actfeat_hdf5_bp_bcfixed01_hiqlv512_sg15_as01_pothiql_joint_rerun0629 \
+  --output_dir \
+  outputs_chunk/lifttray_actfeat_hdf5_bp_bcfixed01_hiqlv512_sg15_as01_pothiql_joint_rerun0629
