@@ -141,3 +141,61 @@ def test_pouring_staged_joint_script_aligned_with_rerun0703():
         "run_anw5pphu_best:v2",
     ):
         assert flag in text, flag
+
+
+def test_three_piece_ablation_seed_script_modes_are_clean():
+    text = Path("run_three_piece_ablation_seed.sh").read_text()
+
+    # Baseline invariants from three_piece_actfeat_bp_bc01_hiqlv512_sg15_staged_joint_seed<seed>.
+    for token in (
+        "GPU=${2:?需要 gpu}",
+        "SEED=${3:?需要 seed}",
+        "HDF5=resfit/dataset/two_arm_three_piece_assembly.hdf5",
+        "DS=ankile/dexmg-two-arm-three-piece-assembly",
+        "BASE=resfit/out/piecce/best",
+        "GCV=outputs_chunk/three_piece_gc_value_actfeat_hiqlv512.pt",
+        "HIA=outputs_chunk/three_piece_high_actor_actfeat_hiqlv512.pt",
+        "CACHE=outputs_chunk/three_piece_act_feat.npz",
+        "--task TwoArmThreePieceAssembly --base_wandb_id \"$BASE\" --dataset \"$DS\"",
+        "--chunk_length 1 --base_action_mode queue --base_n_action_steps 10",
+        "--action_scale 0.05 --actor_lr 1e-6 --actor raw",
+        "--offline_dataset_path \"$HDF5\"",
+        "--offline_fraction 0.5",
+        "--offline_base_mode base_policy",
+        "--subgoal_conditioned --gc_value_ckpt \"$GCV\" --high_actor_ckpt \"$HIA\" --act_feat_cache \"$CACHE\"",
+        "--subgoal_way_steps \"$WAY\"",
+        "--online_finetune_value --online_finetune_high_actor",
+        "--seed \"$SEED\"",
+        "--total_env_steps 500000",
+    ):
+        assert token in text, token
+
+    # nobc keeps stage machinery and changes only BC-related naming / coefficient.
+    assert "nobc)" in text
+    assert "DEMO_BC=\"0.0\"" in text
+    assert "SHAPING_FLAGS=(--stage_balanced --reward_shaping staged --stage_reward_bonus 1.0)" in text
+    assert "STAGE_FLAGS=(--offline_stage_cache \"$STAGES\")" in text
+    assert "OFFCACHE=outputs_chunk/three_piece_actfeat_bp_nobc_hiqlv512_sg15_staged_offcache" in text
+    assert "NAME=three_piece_actfeat_bp_nobc_hiqlv512_sg15_staged_joint_seed${SEED}" in text
+
+    # nostage removes every stage-dependent training mechanism and uses a separate cache.
+    assert "nostage)" in text
+    assert "DEMO_BC=\"0.1\"" in text
+    assert "SHAPING_FLAGS=(--no_stage_balanced --reward_shaping none)" in text
+    assert "STAGE_FLAGS=()" in text
+    assert "OFFCACHE=outputs_chunk/three_piece_actfeat_bp_bc01_hiqlv512_sg15_nostage_offcache" in text
+    assert "NAME=three_piece_actfeat_bp_bc01_hiqlv512_sg15_nostage_joint_seed${SEED}" in text
+
+    assert "gate \"$OFFCACHE/buffer_meta.json\"" not in text
+    assert "--demo_bc_coef \"$DEMO_BC\"" in text
+    assert "\"${SHAPING_FLAGS[@]}\"" in text
+    assert "\"${STAGE_FLAGS[@]}\"" in text
+
+
+def test_three_piece_ablation_launcher_runs_three_fixed_seeds():
+    text = Path("launch_three_piece_ablation_3seeds.sh").read_text()
+    assert "SEEDS=(1 2 3)" in text
+    assert "Usage: bash launch_three_piece_ablation_3seeds.sh <nobc|nostage> <gpu_seed1> <gpu_seed2> <gpu_seed3>" in text
+    assert "bash run_three_piece_ablation_seed.sh \"$MODE\" \"$GPU\" \"$SEED\"" in text
+    assert "logs/three_piece_${MODE}_seed${SEED}.log" in text
+    assert "mkdir -p logs" in text
