@@ -120,7 +120,11 @@ launch_one(){
   GPU=$(pick_gpu) || exit 6
   local LOG=logs/pouring_${MODE}_seed${SEED}.log
   echo "[launcher] start mode=$MODE seed=$SEED gpu=$GPU per_gpu=$PER_GPU eval_num_envs=${EVAL_NUM_ENVS:-8(default)} log=$LOG" >&2
-  setsid bash run_pouring_ablation_seed.sh "$MODE" "$GPU" "$SEED" > "$LOG" 2>&1 < /dev/null &
+  # nohup (not setsid): nohup exec's, so $! is the real long-lived training bash PID (setsid
+  # fork-exits, leaving $! a dead pid -> reservations get cleaned early and the seed1 liveness
+  # check false-fails). nohup also ignores SIGHUP so the run survives terminal close; for long
+  # staggered runs, launch the launcher itself under tmux/`setsid` so Ctrl-C can't reach seeds.
+  nohup bash run_pouring_ablation_seed.sh "$MODE" "$GPU" "$SEED" > "$LOG" 2>&1 < /dev/null &
   local cpid=$!
   echo "$GPU" > "$RESV_DIR/resv_${cpid}"   # reserve this card under the training PID
   echo "$cpid"
