@@ -1,31 +1,46 @@
 #!/usr/bin/env bash
-# Launch pouring ablation seeds 1/2/3 safely, auto-picking free GPUs.
+# Launch pouring ablation seeds 1/2/3, with GPU placement control.
 # Modes:
 #   nosubgoal          : full staged baseline minus subgoal(+joint).       [offcache: NEW, must build]
 #   nostage            : staged reward shaping off (subgoal+joint kept).   [offcache: reuse existing complete]
 #   nostage_nosubgoal  : staged off AND subgoal off (flat demo-anchored).  [offcache: reuse existing complete]
-# GPU selection is automatic: the least-loaded card by nvidia-smi memory.used, skipping
-# cards busy with other jobs (used >= FREE_MB, default 2000) and cards already reserved by
-# a sibling seed or another concurrent launch. Reservations live under logs/.gpu_resv/,
-# keyed by the training PID and auto-cleaned when that PID exits. Override with FREE_MB=<MiB>.
+#
+# GPU placement (env vars):
+#   GPUS=0,1,2     restrict to these cards and round-robin seeds onto them (empty = auto-scan all).
+#   PER_GPU=1      max concurrent runs to pack onto one card (e.g. PER_GPU=2 puts 2 runs/card).
+#   FREE_MB=2000   auto-scan only: a card counts as "free" when memory.used < FREE_MB.
+#   EVAL_NUM_ENVS  passed to each run (fewer eval envs => less GPU mem + CPU; 50-episode
+#                  metric unchanged). Unset => code default 8.
+# One run ~10GB GPU mem (base + 8 eval envs). On a 96GB card PER_GPU=2..4 is comfortable;
+# the real caps are CPU cores (env stepping) and RAM (replay buffers ~30-60GB/run), not GPU mem.
+# Examples:
+#   bash launch_pouring_ablation_3seeds.sh nosubgoal                     # auto, 1 run/card
+#   GPUS=0,1 PER_GPU=2 bash launch_pouring_ablation_3seeds.sh nostage        # 3 seeds -> 0,1,0
+#   GPUS=0 PER_GPU=3 EVAL_NUM_ENVS=4 bash launch_pouring_ablation_3seeds.sh nosubgoal  # all 3 on card 0
+#
+# Reservations under logs/.gpu_resv/ (file resv_<pid> = gpu index) let same-batch and
+# concurrent launches count runs per card and honor PER_GPU; auto-cleaned when the PID exits.
 # If the mode-specific offcache does not exist, seed1 starts first; seed2/3 start after
 # buffer_meta.json appears (so they reuse the cache instead of racing to rebuild it).
-# Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>
+# Usage: [GPUS=..] [PER_GPU=..] [EVAL_NUM_ENVS=..] bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>
 set -euo pipefail
 if [ "$#" -ne 1 ]; then
-  echo "Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
+  echo "Usage: [GPUS=..] [PER_GPU=..] [EVAL_NUM_ENVS=..] bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
   exit 2
 fi
 MODE=$1
 SEEDS=(1 2 3)
-FREE_MB=${FREE_MB:-2000}   # a GPU counts as "free" when memory.used < FREE_MB
+FREE_MB=${FREE_MB:-2000}   # auto-scan: a GPU counts as "free" when memory.used < FREE_MB
+GPUS="${GPUS:-}"           # e.g. GPUS=0,1,2 to restrict+round-robin; empty = auto-scan all
+PER_GPU="${PER_GPU:-1}"    # max concurrent runs packed onto one card
+[ -n "${EVAL_NUM_ENVS:-}" ] && export EVAL_NUM_ENVS   # propagate to the seed runner
 
 case "$MODE" in
   nosubgoal)         OFFCACHE=outputs_chunk/pouring_actfeat_hdf5_bp_bc01_hiqlv512_sg15_as005_staged_nosubgoal_offcache ;;
   nostage)           OFFCACHE=outputs_chunk/pouring_actfeat_hdf5_bp_hiqlv512_sg15_as005_subgoal_joint_nobc_nopot_offcache ;;
   nostage_nosubgoal) OFFCACHE=outputs_chunk/pouring_hdf5_bp_bc01_as005_nosubgoal_nojoint_nopot_offcache ;;
   *)
-    echo "Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
+    echo "Usage: [GPUS=..] [PER_GPU=..] [EVAL_NUM_ENVS=..] bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
     exit 2
     ;;
 esac
@@ -34,56 +49,80 @@ cd /mnt/mnt/data/resfit || exit 3
 mkdir -p logs
 RESV_DIR=logs/.gpu_resv
 mkdir -p "$RESV_DIR"
-ASSIGNED=()   # GPUs picked by this launcher invocation
 
-# Drop reservation files whose owning PID has exited.
+# Reservation file per run: name resv_<training_pid>, content = gpu index. Auto-cleaned
+# when the training PID exits. This is the single source of truth for "runs per card".
 clean_stale_resv(){
-  local f rpid
+  local f pid
   shopt -s nullglob
-  for f in "$RESV_DIR"/gpu_*; do
-    rpid=$(cat "$f" 2>/dev/null || true)
-    if [ -z "$rpid" ] || ! kill -0 "$rpid" 2>/dev/null; then rm -f "$f"; fi
+  for f in "$RESV_DIR"/resv_*; do
+    pid="${f##*/resv_}"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then rm -f "$f"; fi
   done
   shopt -u nullglob
 }
 
-# Echo the index of the least-loaded GPU not already taken (in-batch ASSIGNED or a live
-# reservation from a concurrent launch). Warns if even the best candidate is >= FREE_MB.
+# How many live runs are currently reserved on gpu $1.
+resv_count(){
+  local target=$1 f g n=0
+  shopt -s nullglob
+  for f in "$RESV_DIR"/resv_*; do
+    g=$(cat "$f" 2>/dev/null || true)
+    [ "$g" = "$target" ] && n=$((n+1))
+  done
+  shopt -u nullglob
+  echo "$n"
+}
+
+# Echo the GPU index for the next seed.
+#  - GPUS set: round-robin over that set (fewest current runs first), up to PER_GPU per card.
+#  - GPUS empty: least-loaded card by nvidia-smi with a free slot (< PER_GPU runs); warns if
+#    even the freest card is >= FREE_MB used (no truly-free card left).
 pick_gpu(){
   clean_stale_resv
-  local reserved=" " f idx gi gm best="" best_mem=""
-  shopt -s nullglob
-  for f in "$RESV_DIR"/gpu_*; do reserved+="${f##*/gpu_} "; done
-  shopt -u nullglob
-  for idx in "${ASSIGNED[@]:-}"; do [ -n "$idx" ] && reserved+="$idx "; done
+  local gi gm best="" best_mem="" best_cnt="" c
+  if [ -n "$GPUS" ]; then
+    local -a pool
+    IFS=',' read -ra pool <<< "$GPUS"
+    for gi in "${pool[@]}"; do
+      gi=$(echo "$gi" | tr -d ' '); [ -z "$gi" ] && continue
+      c=$(resv_count "$gi")
+      [ "$c" -ge "$PER_GPU" ] && continue
+      if [ -z "$best_cnt" ] || [ "$c" -lt "$best_cnt" ]; then best="$gi"; best_cnt="$c"; fi
+    done
+    if [ -z "$best" ]; then
+      echo "[launcher] no free slot: every card in GPUS=$GPUS already has PER_GPU=$PER_GPU runs" >&2
+      return 1
+    fi
+    echo "$best"; return 0
+  fi
   while IFS=',' read -r gi gm; do
     gi=$(echo "$gi" | tr -d ' '); gm=$(echo "$gm" | tr -d ' ')
     [ -z "$gi" ] && continue
-    [[ " $reserved " == *" $gi "* ]] && continue
+    [ "$(resv_count "$gi")" -ge "$PER_GPU" ] && continue
     if [ -z "$best_mem" ] || [ "$gm" -lt "$best_mem" ]; then best="$gi"; best_mem="$gm"; fi
   done < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits)
   if [ -z "$best" ]; then
-    echo "[launcher] no GPU available (all reserved/assigned)" >&2
+    echo "[launcher] no GPU available (every card already has PER_GPU=$PER_GPU runs)" >&2
     return 1
   fi
   if [ "$best_mem" -ge "$FREE_MB" ]; then
-    echo "[launcher] WARN: freest free-GPU is $best with ${best_mem}MiB used (>= ${FREE_MB}MiB); using it anyway" >&2
+    echo "[launcher] WARN: no truly-free GPU (freest is gpu $best at ${best_mem}MiB >= ${FREE_MB}MiB); packing onto it" >&2
   fi
   echo "$best"
 }
 
-# Pick a GPU, launch the seed on it detached, and reserve that GPU under the training PID.
+# Pick a GPU, launch the seed on it detached, and reserve that card under the training PID.
 launch_one(){
   local idx=$1
   local SEED=${SEEDS[$idx]}
   local GPU
   GPU=$(pick_gpu) || exit 6
   local LOG=logs/pouring_${MODE}_seed${SEED}.log
-  echo "[launcher] start mode=$MODE seed=$SEED gpu=$GPU log=$LOG" >&2
+  echo "[launcher] start mode=$MODE seed=$SEED gpu=$GPU per_gpu=$PER_GPU eval_num_envs=${EVAL_NUM_ENVS:-8(default)} log=$LOG" >&2
   setsid bash run_pouring_ablation_seed.sh "$MODE" "$GPU" "$SEED" > "$LOG" 2>&1 < /dev/null &
   local cpid=$!
-  echo "$cpid" > "$RESV_DIR/gpu_${GPU}"   # reserve for concurrent launches (survives subshell)
-  ASSIGNED+=("$GPU")
+  echo "$GPU" > "$RESV_DIR/resv_${cpid}"   # reserve this card under the training PID
   echo "$cpid"
 }
 

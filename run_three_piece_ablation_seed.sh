@@ -35,6 +35,12 @@ GCV=outputs_chunk/three_piece_gc_value_actfeat_hiqlv512.pt
 HIA=outputs_chunk/three_piece_high_actor_actfeat_hiqlv512.pt
 WAY=15
 
+# Optional eval-env override (env var EVAL_NUM_ENVS). Fewer eval envs => less GPU memory
+# + less CPU/rendering during eval; the 50-episode metric is unchanged (evaluate_dexmg.py
+# runs `while done_episodes < num_episodes`, num_envs is only parallelism). Unset => code default 8.
+EVAL_ENVS_FLAGS=()
+[ -n "${EVAL_NUM_ENVS:-}" ] && EVAL_ENVS_FLAGS=(--eval_num_envs "$EVAL_NUM_ENVS")
+
 # Subgoal(+joint) flag set, shared by any subgoal-ON mode.
 SUBGOAL_ON_FLAGS=(--subgoal_conditioned --gc_value_ckpt "$GCV" --high_actor_ckpt "$HIA" \
   --act_feat_cache "$CACHE" --subgoal_way_steps "$WAY" \
@@ -97,6 +103,7 @@ $RUN -m resfit.rl_finetuning.chunk_residual.train_chunk_residual \
   --offline_base_mode base_policy --demo_bc_coef "$DEMO_BC" \
   --offline_buffer_cache "$OFFCACHE" \
   "${SUBGOAL_FLAGS[@]}" \
+  "${EVAL_ENVS_FLAGS[@]}" \
   --seed "$SEED" \
   --total_env_steps 500000 \
   --wandb_project dexmg-chunk-residual --wandb_name "$NAME" \
