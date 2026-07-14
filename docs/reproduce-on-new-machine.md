@@ -243,6 +243,35 @@ test -s "$ART/run_e0o0sckj_best:v4/policy/model.safetensors"
 > 第 6 节资产下齐后就能过；缺则 FATAL 退出，按提示补文件。
 > `outputs_chunk/pouring_value_hdf5.pt` 不属于当前 staged pouring 方案；它是旧 `run_pouring_pothiql_joint_rerun0703.sh` 的 HIQL potential value checkpoint，当前 `run_pouring_staged_joint.sh` 不需要。
 
+### 8.1 消融实验（three_piece / pouring 各 3 臂 × 3 seed，自动选卡）
+
+在 §8 全 staged 基线之外，还有两套 3-臂消融启动器（均已被 git 跟踪，随 clone 下来），
+每套跑 3 个 seed、**自动挑空卡**（`nvidia-smi memory.used` 最低且 `< FREE_MB`，默认 2000MiB；
+`FREE_MB=<MiB>` 可调），并发/同批不撞卡（`logs/.gpu_resv/` 按训练 PID 预留、进程退出自动清）。
+
+```bash
+# three_piece（资产同 §9 three_piece 行；数据集 §5 three_piece 行）
+bash launch_three_piece_ablation_3seeds.sh nosubgoal          # staged 开 + BC0.1 + subgoal 关(joint 连带关)
+bash launch_three_piece_ablation_3seeds.sh nostage            # staged 关 + BC0.1 + subgoal 开(+joint)
+bash launch_three_piece_ablation_3seeds.sh nostage_nosubgoal  # staged 关 + BC0.1 + subgoal 关 = flat demo-anchored
+
+# pouring（资产同 §9 pouring 行，含 §6 外部 base 复刻；数据集 §5 pouring 行）
+bash launch_pouring_ablation_3seeds.sh nosubgoal
+bash launch_pouring_ablation_3seeds.sh nostage
+bash launch_pouring_ablation_3seeds.sh nostage_nosubgoal
+```
+
+- 每个 mode 的 offcache 在新机上都不存在 → **首次自建**（seed1 先建约 26G+/~80min base_policy CPU forward，
+  seed2/3 等 `buffer_meta.json` 出现再起，避免并发写同一 cache）。
+- `nosubgoal` / `nostage_nosubgoal` 是 **subgoal 关** 的臂：代码会连带关掉 joint 在线微调
+  （`--online_finetune_value/high_actor`；否则 `online_hiql_finetune.py` assert），且不需要
+  `gc_value / high_actor / act_feat`（残差用 base-dim eef 状态）；§6 下齐这些资产也无妨，用不到而已。
+- `nostage` 是 **subgoal 开** 的臂，需要 §9 表里该任务的 `gc_value / high_actor / act_feat`。
+- pouring 的 `nostage` / `nostage_nosubgoal` 的 `--offline_buffer_cache` 指向一对本机既有的
+  同签名 cache 路径（源机器只读复用、省重建）；新机上没有这两份 → 同样首建，结果一致。
+  wandb run 名 / `output_dir` 用的是准确的 `..._nostage_joint_seedN` / `..._nostage_nosubgoal_seedN`，
+  与 cache 路径名无关，溯源不受影响。
+
 **can_sort 特别说明**：当前 GitHub 上没有 can_sort 的 staged 主实验脚本，也没有
 `TwoArmCanSortRandom` 的 stage detector / `NUM_STAGES` 注册。因此它不能直接满足
 “subgoal + BC loss + staged reward shaping”的后续主实验口径。已有资产只覆盖默认

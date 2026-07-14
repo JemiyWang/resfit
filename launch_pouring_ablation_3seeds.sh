@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Launch three_piece ablation seeds 1/2/3 safely, auto-picking free GPUs.
+# Launch pouring ablation seeds 1/2/3 safely, auto-picking free GPUs.
 # Modes:
-#   nosubgoal          : full staged baseline minus subgoal(+joint).
-#   nostage            : staged reward shaping off (subgoal+joint kept).
-#   nostage_nosubgoal  : staged off AND subgoal off (flat demo-anchored residual).
+#   nosubgoal          : full staged baseline minus subgoal(+joint).       [offcache: NEW, must build]
+#   nostage            : staged reward shaping off (subgoal+joint kept).   [offcache: reuse existing complete]
+#   nostage_nosubgoal  : staged off AND subgoal off (flat demo-anchored).  [offcache: reuse existing complete]
 # GPU selection is automatic: the least-loaded card by nvidia-smi memory.used, skipping
 # cards busy with other jobs (used >= FREE_MB, default 2000) and cards already reserved by
 # a sibling seed or another concurrent launch. Reservations live under logs/.gpu_resv/,
-# keyed by the training PID and auto-cleaned when that PID exits. Override the "free"
-# threshold with FREE_MB=<MiB> if needed.
+# keyed by the training PID and auto-cleaned when that PID exits. Override with FREE_MB=<MiB>.
 # If the mode-specific offcache does not exist, seed1 starts first; seed2/3 start after
 # buffer_meta.json appears (so they reuse the cache instead of racing to rebuild it).
-# Usage: bash launch_three_piece_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>
+# Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>
 set -euo pipefail
 if [ "$#" -ne 1 ]; then
-  echo "Usage: bash launch_three_piece_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
+  echo "Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
   exit 2
 fi
 MODE=$1
@@ -22,11 +21,11 @@ SEEDS=(1 2 3)
 FREE_MB=${FREE_MB:-2000}   # a GPU counts as "free" when memory.used < FREE_MB
 
 case "$MODE" in
-  nosubgoal)         OFFCACHE=outputs_chunk/three_piece_actfeat_bp_bc01_hiqlv512_sg15_staged_nosubgoal_offcache ;;
-  nostage)           OFFCACHE=outputs_chunk/three_piece_actfeat_bp_bc01_hiqlv512_sg15_nostage_offcache ;;
-  nostage_nosubgoal) OFFCACHE=outputs_chunk/three_piece_actfeat_bp_bc01_hiqlv512_sg15_nostage_nosubgoal_offcache ;;
+  nosubgoal)         OFFCACHE=outputs_chunk/pouring_actfeat_hdf5_bp_bc01_hiqlv512_sg15_as005_staged_nosubgoal_offcache ;;
+  nostage)           OFFCACHE=outputs_chunk/pouring_actfeat_hdf5_bp_hiqlv512_sg15_as005_subgoal_joint_nobc_nopot_offcache ;;
+  nostage_nosubgoal) OFFCACHE=outputs_chunk/pouring_hdf5_bp_bc01_as005_nosubgoal_nojoint_nopot_offcache ;;
   *)
-    echo "Usage: bash launch_three_piece_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
+    echo "Usage: bash launch_pouring_ablation_3seeds.sh <nosubgoal|nostage|nostage_nosubgoal>" >&2
     exit 2
     ;;
 esac
@@ -79,9 +78,9 @@ launch_one(){
   local SEED=${SEEDS[$idx]}
   local GPU
   GPU=$(pick_gpu) || exit 6
-  local LOG=logs/three_piece_${MODE}_seed${SEED}.log
+  local LOG=logs/pouring_${MODE}_seed${SEED}.log
   echo "[launcher] start mode=$MODE seed=$SEED gpu=$GPU log=$LOG" >&2
-  setsid bash run_three_piece_ablation_seed.sh "$MODE" "$GPU" "$SEED" > "$LOG" 2>&1 < /dev/null &
+  setsid bash run_pouring_ablation_seed.sh "$MODE" "$GPU" "$SEED" > "$LOG" 2>&1 < /dev/null &
   local cpid=$!
   echo "$cpid" > "$RESV_DIR/gpu_${GPU}"   # reserve for concurrent launches (survives subshell)
   ASSIGNED+=("$GPU")
@@ -107,7 +106,7 @@ while true; do
     exit 0
   fi
   if ! kill -0 "$PID1" 2>/dev/null; then
-    echo "[launcher] seed1 exited before offcache became ready; inspect logs/three_piece_${MODE}_seed1.log" >&2
+    echo "[launcher] seed1 exited before offcache became ready; inspect logs/pouring_${MODE}_seed1.log" >&2
     exit 5
   fi
   sleep 60
