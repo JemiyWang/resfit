@@ -23,6 +23,19 @@ export CUDA_VISIBLE_DEVICES="$GPU"
 export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8
 export HF_ENDPOINT=https://hf-mirror.com HF_HUB_OFFLINE=1
 export PYTHONPATH=/mnt/mnt/data/resfit
+
+# wandb 身份。entity/email 非机密,写死;API key 绝不写进本文件——本脚本被 git 跟踪且
+# remote 在 GitHub,提交 key 会被 secret scanning 自动吊销,在跑的 run 全部断线。
+# key 三选一(每台机器做一次):`wandb login <key>` 写 ~/.netrc / 外部 export WANDB_API_KEY
+# / 放 ~/.wandb_env(不在仓库内,不会被 clone 走)。
+[ -f "$HOME/.wandb_env" ] && . "$HOME/.wandb_env"
+export WANDB_ENTITY="${WANDB_ENTITY:-674575221-beijing-institute-of-technology}"
+export WANDB_USER_EMAIL="${WANDB_USER_EMAIL:-674575221@qq.com}"
+if [ -z "${WANDB_API_KEY:-}" ] && ! grep -q api.wandb.ai "$HOME/.netrc" 2>/dev/null; then
+  echo "[piece_${MODE}_seed${SEED}] FATAL 无 wandb 凭证: 先 'wandb login <key>' 或 export WANDB_API_KEY" >&2
+  exit 4
+fi
+
 cd /mnt/mnt/data/resfit || exit 3
 RUN="conda run -n residual --no-capture-output python -u"
 
