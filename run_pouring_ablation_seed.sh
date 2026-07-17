@@ -51,8 +51,16 @@ HIA=outputs_chunk/pouring_high_actor_actfeat_hdf5_hiqlv512.pt
 WAY=15
 
 # Optional eval-env override (env var EVAL_NUM_ENVS). Fewer eval envs => less GPU memory
-# + less CPU/rendering during eval; the 50-episode metric is unchanged (evaluate_dexmg.py
-# runs `while done_episodes < num_episodes`, num_envs is only parallelism). Unset => code default 8.
+# + less CPU/rendering during eval, but it is NOT metric-neutral: never compare arms that
+# ran with different EVAL_NUM_ENVS. evaluate_dexmg.py stops the instant the 50th episode
+# completes (`while done_episodes < num_episodes` :194, break :289), discarding the up to
+# num_envs-1 episodes still in flight -- and those skew long, i.e. toward failures, which
+# inflates the reported rate as num_envs grows. Measured on TwoArmPouring step-0, where the
+# residual is exactly 0 so every run evaluates the identical frozen base: envs=8 -> .786
+# (n=29, [.70,.86]), envs=4 -> .547 (n=9, [.48,.60]), envs=1 -> .598 (n=8, [.52,.66]).
+# Disjoint ranges, one base ckpt, exec=10 throughout, and June/July envs=8 runs agree
+# (.791/.782) -> the knob, not seed noise or code drift. TwoArmLiftTray shows no such split.
+# Unset => code default 8; leave it unset unless every arm in the comparison overrides it too.
 EVAL_ENVS_FLAGS=()
 [ -n "${EVAL_NUM_ENVS:-}" ] && EVAL_ENVS_FLAGS=(--eval_num_envs "$EVAL_NUM_ENVS")
 

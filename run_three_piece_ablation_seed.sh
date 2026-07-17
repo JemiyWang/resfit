@@ -49,8 +49,15 @@ HIA=outputs_chunk/three_piece_high_actor_actfeat_hiqlv512.pt
 WAY=15
 
 # Optional eval-env override (env var EVAL_NUM_ENVS). Fewer eval envs => less GPU memory
-# + less CPU/rendering during eval; the 50-episode metric is unchanged (evaluate_dexmg.py
-# runs `while done_episodes < num_episodes`, num_envs is only parallelism). Unset => code default 8.
+# + less CPU/rendering during eval, but it is NOT metric-neutral: never compare arms that
+# ran with different EVAL_NUM_ENVS. evaluate_dexmg.py stops the instant the 50th episode
+# completes (`while done_episodes < num_episodes` :194, break :289), discarding the up to
+# num_envs-1 episodes still in flight -- and those skew long, i.e. toward failures, which
+# inflates the reported rate as num_envs grows. Measured on step-0, where the residual is
+# exactly 0 so every run evaluates the identical frozen base: TwoArmThreePieceAssembly
+# envs=8 -> .568 (n=31), envs=4 -> .429 (n=9), envs=1 -> .398 (n=9); the effect is starker
+# on TwoArmPouring (.786 / .547 / .598, disjoint ranges) and absent on TwoArmLiftTray.
+# Unset => code default 8; leave it unset unless every arm in the comparison overrides it too.
 EVAL_ENVS_FLAGS=()
 [ -n "${EVAL_NUM_ENVS:-}" ] && EVAL_ENVS_FLAGS=(--eval_num_envs "$EVAL_NUM_ENVS")
 

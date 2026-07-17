@@ -9,14 +9,17 @@
 #   GPUS=0,1,2     restrict to these cards and round-robin seeds onto them (empty = auto-scan all).
 #   PER_GPU=1      max concurrent runs to pack onto one card (e.g. PER_GPU=2 puts 2 runs/card).
 #   FREE_MB=2000   auto-scan only: a card counts as "free" when memory.used < FREE_MB.
-#   EVAL_NUM_ENVS  passed to each run (fewer eval envs => less GPU mem + CPU; 50-episode
-#                  metric unchanged). Unset => code default 8.
+#   EVAL_NUM_ENVS  passed to each run (fewer eval envs => less GPU mem + CPU). WARNING: this
+#                  CHANGES the measured success rate, it is not a free knob -- on Pouring the
+#                  identical frozen base measures .786 at envs=8 vs .547 at envs=4 (details +
+#                  evidence in run_pouring_ablation_seed.sh). Override it only if every arm
+#                  you will compare against uses the same value. Unset => code default 8.
 # One run ~10GB GPU mem (base + 8 eval envs). On a 96GB card PER_GPU=2..4 is comfortable;
 # the real caps are CPU cores (env stepping) and RAM (replay buffers ~30-60GB/run), not GPU mem.
 # Examples:
 #   bash launch_pouring_ablation_3seeds.sh nosubgoal                     # auto, 1 run/card
 #   GPUS=0,1 PER_GPU=2 bash launch_pouring_ablation_3seeds.sh nostage        # 3 seeds -> 0,1,0
-#   GPUS=0 PER_GPU=3 EVAL_NUM_ENVS=4 bash launch_pouring_ablation_3seeds.sh nosubgoal  # all 3 on card 0
+#   GPUS=0 PER_GPU=3 bash launch_pouring_ablation_3seeds.sh nosubgoal   # all 3 on card 0
 #
 # Reservations under logs/.gpu_resv/ (file resv_<pid> = gpu index) let same-batch and
 # concurrent launches count runs per card and honor PER_GPU; auto-cleaned when the PID exits.
