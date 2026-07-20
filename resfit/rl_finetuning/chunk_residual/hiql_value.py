@@ -69,6 +69,38 @@ def build_transitions(state_seqs):
     return s, sn, done
 
 
+def build_transitions_with_rewards(state_seqs, success_flags):
+    """带成功/失败标签的 transitions -> (s, s_next, done, reward)。
+
+    与 build_transitions 相比:done 的语义与逐位取值完全相同(轨迹末 transition=1),
+    额外产出 reward——成功轨迹末端 +1、失败轨迹末端 −1、中间步 0(RISE value 口径)。
+
+    ★ 跳过 T<2 的逻辑与 build_transitions 逐位一致,且 success_flags 在同一次遍历里消费:
+      若分两次构造(seqs 一次、flags 一次),被跳过的短 demo 会让标签整体错位一格且不报错。
+    """
+    assert len(success_flags) == len(state_seqs), \
+        f"success_flags 长度 {len(success_flags)} != state_seqs {len(state_seqs)}"
+    s_list, sn_list, done_list, rew_list = [], [], [], []
+    for seq, ok in zip(state_seqs, success_flags):
+        seq = np.asarray(seq, dtype=np.float32)
+        T = seq.shape[0]
+        if T < 2:
+            continue
+        s_list.append(seq[:-1])
+        sn_list.append(seq[1:])
+        d = np.zeros(T - 1, dtype=np.float32)
+        d[-1] = 1.0
+        done_list.append(d)
+        r = np.zeros(T - 1, dtype=np.float32)
+        r[-1] = 1.0 if ok else -1.0
+        rew_list.append(r)
+    s = torch.from_numpy(np.concatenate(s_list, axis=0))
+    sn = torch.from_numpy(np.concatenate(sn_list, axis=0))
+    done = torch.from_numpy(np.concatenate(done_list, axis=0)).unsqueeze(1)
+    reward = torch.from_numpy(np.concatenate(rew_list, axis=0)).unsqueeze(1)
+    return s, sn, done, reward
+
+
 def save_value(path, model, *, v_stats, mean, std, dataset_id,
                state_mode="eef", rel_piece_stats=None,
                act_feat_signature=None, act_weight_sha=None):
@@ -115,11 +147,13 @@ def load_value(path, map_location="cpu"):
     return model, info
 
 
-def train_value(s, s_next, done, *, gamma=0.99, expectile=0.7, ema=0.005,
+def train_value(s, s_next, done, *, reward=None, gamma=0.99, expectile=0.7, ema=0.005,
                 lr=3e-4, batch_size=256, steps=50000, hidden=256, seed=0):
     """在 (s, s_next, done) 上训 action-free IQL expectile value。
 
-    goal-reaching 内部 reward = done(末步=1 否则 0)。EMA target net 稳定 bootstrap。
+    reward=None(默认):goal-reaching 内部 reward = done(末步=1 否则 0),与既有实现逐位等价。
+    reward 显式传入(success_signed 路):成功轨迹末 +1、失败轨迹末 −1、中间 0
+    (来自 build_transitions_with_rewards)。EMA target net 稳定 bootstrap。
     返回 (model, v_stats),v_stats = 训练后全数据上 V 的 {min,max,mean}。
     """
     torch.manual_seed(seed)
@@ -129,7 +163,7 @@ def train_value(s, s_next, done, *, gamma=0.99, expectile=0.7, ema=0.005,
     for p in target.parameters():
         p.requires_grad_(False)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    reward = done  # r_t = 1 if done else 0 == done
+    reward = done if reward is None else reward  # 默认 r_t = 1 if done else 0 == done
     bs = min(batch_size, n)
     for _ in range(steps):
         idx = torch.randint(0, n, (bs,))

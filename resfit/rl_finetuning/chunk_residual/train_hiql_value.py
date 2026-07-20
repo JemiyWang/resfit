@@ -15,7 +15,7 @@ import torch
 from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 from resfit.rl_finetuning.chunk_residual.hiql_value import (
-    build_transitions, train_value, save_value,
+    build_transitions, build_transitions_with_rewards, train_value, save_value,
 )
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
     STATE18_KEYS, assemble_state18, assemble_state_by_env, expected_low_dim_keys,
@@ -293,6 +293,55 @@ def assert_act_feat_pair_consistent(gc_info, act_sig, state_mode, *, pi0_sig=Non
             f"pi0_feat gc_value/high_actor 签名核心字段不一致 {bad}: gc={gv} vs ha={ha}")
 
 
+def merge_labeled_reads(reads):
+    """把多个 act_feat 数据集的读入合并到同一特征空间(Task 13 success_signed 用)。
+
+    reads: list of (seqs_std_list, mean, std, is_success)。每个来自 read_per_demo_states,
+    其 seqs 已用**该组自己的** (mean,std) 标准化。分开读会落在不一致空间,故:
+      恢复原始特征 (raw = seqs*std + mean) → 合并算联合 (mean,std) → 用联合 stats 重标准化。
+    返回 (seqs_all, flags, joint_mean, joint_std)。joint stats 存进 value.pt,
+    online scorer 才能用同一套 stats 标准化在线特征。
+    """
+    import numpy as np
+    raw_seqs, flags = [], []
+    for seqs_std, mean, std, ok in reads:
+        mean = np.asarray(mean, dtype=np.float32)
+        std = np.asarray(std, dtype=np.float32)
+        for seq in seqs_std:
+            raw = np.asarray(seq, dtype=np.float32) * std + mean
+            raw_seqs.append(raw)
+            flags.append(bool(ok))
+    allf = np.concatenate(raw_seqs, axis=0)
+    jmean = allf.mean(axis=0).astype(np.float32)
+    jstd = np.maximum(allf.std(axis=0), 1e-6).astype(np.float32)
+    seqs_all = [((r - jmean) / jstd).astype(np.float32) for r in raw_seqs]
+    return seqs_all, flags, jmean, jstd
+
+
+def validate_terminal_reward_cfg(args):
+    """Task 13:success_signed 模式的前置校验。违规即 SystemExit(argparse 风格)。"""
+    import sys
+    mode = getattr(args, "terminal_reward_mode", "legacy")
+    if mode == "legacy":
+        # 沿用既有严格性:单数据集路必须有 --hdf5
+        if not getattr(args, "hdf5", None):
+            print("[error] legacy 模式需 --hdf5(源 hdf5)", file=sys.stderr)
+            sys.exit(2)
+        return
+    # success_signed
+    if getattr(args, "state_mode", "eef") != "act_feat":
+        print("[error] --terminal_reward_mode success_signed 目前仅支持 --state_mode act_feat"
+              "(eef/eef_piece 的多数据集合并未接;它们 standardizer 由 --dataset 共享,"
+              "如需可另加)", file=sys.stderr)
+        sys.exit(2)
+    # ★ 标签只从 --success_dataset/--failure_dataset 显式来,禁止按目录名推断
+    #   (RISE 的 'fail'/'infer' 目录名约定在本项目 rollout_* 命名下会静默全判成功)
+    if not (getattr(args, "success_dataset", None) and getattr(args, "failure_dataset", None)):
+        print("[error] success_signed 需同时传 --success_dataset 与 --failure_dataset"
+              "(各至少一个);标签只从这两个参数显式给,不从目录名推断", file=sys.stderr)
+        sys.exit(2)
+
+
 def add_act_feat_args(p):
     """给 parser 加 act_feat 公共 flags(state_mode 各脚本自定义,不在此处)。"""
     p.add_argument("--act_feat_cache", default=None, help="act_feat 嵌入缓存 npz(cache-or-build)")
@@ -304,7 +353,9 @@ def add_act_feat_args(p):
 
 def build_parser():
     p = argparse.ArgumentParser(description="离线训练 HIQL action-free value(③a)")
-    p.add_argument("--hdf5", required=True, help="源 hdf5(含 data/demo_i/obs/<key>)")
+    # legacy 单数据集路用 --hdf5;success_signed 多数据集路用 --success/--failure_dataset。
+    # 故 --hdf5 改为非必填,由 validate_terminal_reward_cfg 按模式强制(legacy 仍需 --hdf5)。
+    p.add_argument("--hdf5", default=None, help="源 hdf5(含 data/demo_i/obs/<key>);legacy 模式必填")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--output", default="value.pt")
     p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat"], default="eef",
@@ -325,6 +376,15 @@ def build_parser():
     p.add_argument("--steps", type=int, default=50_000)
     p.add_argument("--value_hidden", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    # Task 13:成/败终端奖励。legacy(默认)= 每条轨迹末端都 +1,不分成败,与既有实现逐位等价。
+    # success_signed = 成功轨迹末端 +1、失败轨迹末端 −1(RISE value 口径),用于混合质量数据。
+    p.add_argument("--terminal_reward_mode", choices=["legacy", "success_signed"],
+                   default="legacy",
+                   help="legacy: r=done(既有行为);success_signed: 成功末+1/失败末−1(需成/败数据集)")
+    p.add_argument("--success_dataset", action="append", default=[],
+                   help="成功 episode 数据集(hdf5 或 lerobot 路径),可重复。success_signed 必填")
+    p.add_argument("--failure_dataset", action="append", default=[],
+                   help="失败 episode 数据集,可重复。success_signed 必填")
     return p
 
 
@@ -332,19 +392,45 @@ def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
     validate_data_source_cfg(args)
+    validate_terminal_reward_cfg(args)
     extractor, act_ckpt_id, image_keys, act_sig, act_sha = setup_act_feat(args)
-    seqs, standardizer, aux = read_per_demo_states(
-        args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
-        cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
-        act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
-        act_proprio_key=args.act_proprio_key, pooling=args.pooling,
-        data_source=args.data_source, lerobot_root=args.lerobot_root)
-    s, s_next, done = build_transitions(seqs)
-    print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
-          f"transitions={s.shape[0]} state_dim={s.shape[1]}")
-    mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
+
+    if args.terminal_reward_mode == "success_signed":
+        # act_feat 多数据集:成功集/失败集各自读入(各带自算 stats),恢复原始特征 →
+        # 联合 stats 重标准化 → 全部落同一空间。标签只从 --success/--failure_dataset 显式来。
+        def _read(path, ok):
+            # 多数据集共用一个 --act_feat_cache 路径会因签名(含 dataset_id)冲突,故此路不缓存。
+            sq, _, aux_d = read_per_demo_states(
+                path, args.dataset, args.state_mode, num_demos=args.num_demos,
+                act_feat_cache=None,
+                act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
+                act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+                data_source=args.data_source, lerobot_root=args.lerobot_root)
+            return (sq, aux_d[0], aux_d[1], ok)
+
+        reads = [_read(p, True) for p in args.success_dataset] + \
+                [_read(p, False) for p in args.failure_dataset]
+        seqs, flags, jmean, jstd = merge_labeled_reads(reads)
+        s, s_next, done, reward = build_transitions_with_rewards(seqs, flags)
+        mean, std, rel_stats = torch.as_tensor(jmean), torch.as_tensor(jstd), None
+        n_succ = sum(flags)
+        print(f"[hiql_value] success_signed: {n_succ} 成功 / {len(flags) - n_succ} 失败 demo; "
+              f"transitions={s.shape[0]} state_dim={s.shape[1]}")
+    else:
+        seqs, standardizer, aux = read_per_demo_states(
+            args.hdf5, args.dataset, args.state_mode, num_demos=args.num_demos,
+            cache_path=args.state30_cache, act_feat_cache=args.act_feat_cache,
+            act_extractor=extractor, act_image_keys=image_keys, act_ckpt_id=act_ckpt_id,
+            act_proprio_key=args.act_proprio_key, pooling=args.pooling,
+            data_source=args.data_source, lerobot_root=args.lerobot_root)
+        s, s_next, done = build_transitions(seqs)
+        reward = None
+        print(f"[hiql_value] state_mode={args.state_mode} demos={len(seqs)} "
+              f"transitions={s.shape[0]} state_dim={s.shape[1]}")
+        mean, std, rel_stats = unpack_state_aux(standardizer, aux, args.state_mode)
+
     model, v_stats = train_value(
-        s, s_next, done, gamma=args.gamma, expectile=args.expectile, ema=args.ema,
+        s, s_next, done, reward=reward, gamma=args.gamma, expectile=args.expectile, ema=args.ema,
         lr=args.lr, batch_size=args.batch_size, steps=args.steps,
         hidden=args.value_hidden, seed=args.seed)
     save_value(
