@@ -318,6 +318,28 @@ def merge_labeled_reads(reads):
     return seqs_all, flags, jmean, jstd
 
 
+PI0_SIG_CORE = ("serve_ckpt_id", "image_keys", "proprio_key", "pooling", "prompt")
+
+
+def assert_pi0_caches_samesource(sigs):
+    """多个 pi0_feat 缓存必须来自同一个 kai0/同款抽取配置,否则特征空间不同。
+
+    success_signed 会同时读成功集与失败集的缓存;若两者的 ψ 来自不同 serve 权重
+    (或不同 prompt/image_keys/pooling),特征不可比,V 会学乱且**不会报错**。
+    """
+    if len(sigs) < 2:
+        return
+    base = sigs[0]
+    for i, sig in enumerate(sigs[1:], start=1):
+        bad = [k for k in PI0_SIG_CORE if sig.get(k) != base.get(k)]
+        if bad:
+            raise ValueError(
+                f"pi0_feat 缓存 #{i} 与 #0 的核心签名字段不一致 {bad}: "
+                f"#0={{{', '.join(f'{k}={base.get(k)!r}' for k in bad)}}} vs "
+                f"#{i}={{{', '.join(f'{k}={sig.get(k)!r}' for k in bad)}}}。"
+                "成功集与失败集的 ψ 必须来自同一个 kai0,否则特征空间不同")
+
+
 def validate_terminal_reward_cfg(args):
     """Task 13:success_signed 模式的前置校验。违规即 SystemExit(argparse 风格)。"""
     import sys
@@ -328,11 +350,12 @@ def validate_terminal_reward_cfg(args):
             print("[error] legacy 模式需 --hdf5(源 hdf5)", file=sys.stderr)
             sys.exit(2)
         return
-    # success_signed
-    if getattr(args, "state_mode", "eef") != "act_feat":
-        print("[error] --terminal_reward_mode success_signed 目前仅支持 --state_mode act_feat"
-              "(eef/eef_piece 的多数据集合并未接;它们 standardizer 由 --dataset 共享,"
-              "如需可另加)", file=sys.stderr)
+    # success_signed:特征类 state(act_feat / pi0_feat)才有"各集自算 stats"的问题,
+    # 由 merge_labeled_reads 统一到联合空间。eef/eef_piece 的 standardizer 由 --dataset
+    # 共享(天然一致),多数据集合并未接,如需可另加。
+    if getattr(args, "state_mode", "eef") not in ("act_feat", "pi0_feat"):
+        print("[error] --terminal_reward_mode success_signed 目前仅支持 "
+              "--state_mode act_feat|pi0_feat", file=sys.stderr)
         sys.exit(2)
     # ★ 标签只从 --success_dataset/--failure_dataset 显式来,禁止按目录名推断
     #   (RISE 的 'fail'/'infer' 目录名约定在本项目 rollout_* 命名下会静默全判成功)
@@ -358,13 +381,15 @@ def build_parser():
     p.add_argument("--hdf5", default=None, help="源 hdf5(含 data/demo_i/obs/<key>);legacy 模式必填")
     p.add_argument("--dataset", required=True, help="LeRobot dataset id(取 state norm stats)")
     p.add_argument("--output", default="value.pt")
-    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat"], default="eef",
-                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)。"
-                        "pi0_feat 仅用于 train_hiql_gc_value,本脚本不支持。")
+    p.add_argument("--state_mode", choices=["eef", "eef_piece", "act_feat", "pi0_feat"],
+                   default="eef",
+                   help="eef(18)|eef_piece(30,sim 特权)|act_feat(冻结 ACT encoder 池化 ⊕ 本体)|"
+                        "pi0_feat(冻结 kai0/pi05 prefix 池化特征 ψ,cache-required 不连 serve)")
     p.add_argument("--num_demos", type=int, default=None, help="只用前 N 条 demo(冒烟用;默认全部)")
     p.add_argument("--state30_cache", default=None,
                    help="state30 v2 缓存路径(eef_piece+全量时命中跳过 replay;不传=每次 replay)")
     add_act_feat_args(p)
+    add_pi0_feat_args(p)
     p.add_argument("--data_source", choices=["hdf5", "lerobot"], default="hdf5",
                    help="act_feat 数据源:hdf5(默认)|lerobot(从 LeRobot 数据集读,no-stage)")
     p.add_argument("--lerobot_root", default=None, help="--data_source lerobot 的本地数据根目录")
@@ -391,8 +416,75 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     validate_act_feat_cfg(args)
+    if args.state_mode == "pi0_feat" and args.terminal_reward_mode == "success_signed":
+        # success_signed 的缓存来自 --success/--failure_dataset,--pi0_feat_cache 不适用;
+        # 故只做非缓存部分的校验(validate_pi0_feat_cfg 与 gc_value 共用,不改其行为)。
+        _missing = [k for k in ("pi0_serve_ckpt_id", "pi0_image_keys", "pi0_proprio_key")
+                    if not getattr(args, k, None)]
+        if _missing:
+            raise ValueError(f"--state_mode pi0_feat 需提供 {_missing}")
+    else:
+        validate_pi0_feat_cfg(args)
     validate_data_source_cfg(args)
     validate_terminal_reward_cfg(args)
+
+    if args.state_mode == "pi0_feat":
+        # pi0_feat:纯缓存路(不连 serve)。ψ = kai0/pi05 prefix 池化特征,与 wm_bridge 的
+        # Kai0HiqlScorer 同源。act_* 一律不适用。
+        from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+        act_sig = act_sha = None
+
+        def _read_pi0(cache_path):
+            _, _, sig = load_pi0_feat_cache(cache_path)      # 缓存自带签名(含 build 的 num_demos)
+            # 防张冠李戴:缓存签名核心字段须与 CLI 一致
+            for k, v in (("serve_ckpt_id", args.pi0_serve_ckpt_id),
+                         ("image_keys", args.pi0_image_keys),
+                         ("proprio_key", args.pi0_proprio_key),
+                         ("pooling", args.pi0_pooling),
+                         ("prompt", args.pi0_prompt)):
+                if sig.get(k) != v:
+                    raise ValueError(
+                        f"缓存 {cache_path} 签名 {k}={sig.get(k)!r} 与 CLI {v!r} 不符(指向了错误的缓存?)")
+            sq, _, stats = read_per_demo_states(
+                args.hdf5, args.dataset, "pi0_feat", num_demos=args.num_demos,
+                pi0_feat_cache=cache_path, pi0_feat_signature=sig)   # 用缓存签名→自洽命中
+            return sq, stats, sig
+
+        if args.terminal_reward_mode == "success_signed":
+            # 成功集/失败集各一个缓存;两者 ψ 必须同源,否则特征空间不同(静默学乱)
+            reads, sigs = [], []
+            for path, ok in ([(p, True) for p in args.success_dataset]
+                             + [(p, False) for p in args.failure_dataset]):
+                sq, stats, sig = _read_pi0(path)
+                reads.append((sq, stats[0], stats[1], ok))
+                sigs.append(sig)
+            assert_pi0_caches_samesource(sigs)
+            seqs, flags, jmean, jstd = merge_labeled_reads(reads)
+            s, s_next, done, reward = build_transitions_with_rewards(seqs, flags)
+            mean, std, rel_stats = torch.as_tensor(jmean), torch.as_tensor(jstd), None
+            pi0_sig = sigs[0]
+            n_succ = sum(flags)
+            print(f"[hiql_value] pi0_feat success_signed: {n_succ} 成功 / "
+                  f"{len(flags) - n_succ} 失败 demo; transitions={s.shape[0]} "
+                  f"state_dim={s.shape[1]}")
+        else:
+            seqs, stats, pi0_sig = _read_pi0(args.pi0_feat_cache)
+            s, s_next, done = build_transitions(seqs)
+            reward = None
+            mean, std, rel_stats = torch.as_tensor(stats[0]), torch.as_tensor(stats[1]), None
+            print(f"[hiql_value] pi0_feat demos={len(seqs)} transitions={s.shape[0]} "
+                  f"state_dim={s.shape[1]}")
+
+        model, v_stats = train_value(
+            s, s_next, done, reward=reward, gamma=args.gamma, expectile=args.expectile,
+            ema=args.ema, lr=args.lr, batch_size=args.batch_size, steps=args.steps,
+            hidden=args.value_hidden, seed=args.seed)
+        save_value(args.output, model, v_stats=v_stats, mean=mean, std=std,
+                   dataset_id=args.dataset, state_mode="pi0_feat",
+                   rel_piece_stats=None, pi0_feat_signature=pi0_sig)
+        print(f"[hiql_value] saved {args.output}; state_mode=pi0_feat v_stats={v_stats}")
+        return
+
     extractor, act_ckpt_id, image_keys, act_sig, act_sha = setup_act_feat(args)
 
     if args.terminal_reward_mode == "success_signed":

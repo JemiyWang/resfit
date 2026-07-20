@@ -103,7 +103,8 @@ def build_transitions_with_rewards(state_seqs, success_flags):
 
 def save_value(path, model, *, v_stats, mean, std, dataset_id,
                state_mode="eef", rel_piece_stats=None,
-               act_feat_signature=None, act_weight_sha=None):
+               act_feat_signature=None, act_weight_sha=None,
+               pi0_feat_signature=None):
     """存 value.pt:权重 + 维度 + V 统计 + state mean/std + dataset_id + state_mode(+ rel_piece stats)。
 
     state_mode=eef(18)|eef_piece(30);eef_piece 时 rel_piece_stats=(mean(12,),std(12,)),
@@ -125,6 +126,11 @@ def save_value(path, model, *, v_stats, mean, std, dataset_id,
         payload["act_feat_signature"] = dict(act_feat_signature)
     if act_weight_sha is not None:
         payload["act_weight_sha"] = str(act_weight_sha)
+    if pi0_feat_signature is not None:
+        # pi0_feat 模式:记录 ψ 缓存签名(含 serve_ckpt_id)。wm_bridge 的 Kai0HiqlScorer
+        # 靠它做 ψ 同源校验——在线 kai0 与训 V 时编 ψ 的必须是同一份权重,
+        # 否则 Φ 被喂进没见过的特征空间且不报错,只静默给出垃圾势。
+        payload["pi0_feat_signature"] = dict(pi0_feat_signature)
     torch.save(payload, path)
 
 
@@ -144,6 +150,7 @@ def load_value(path, map_location="cpu"):
     info["rel_piece_std"] = ckpt.get("rel_piece_std")
     info["act_feat_signature"] = ckpt.get("act_feat_signature")
     info["act_weight_sha"] = ckpt.get("act_weight_sha")
+    info["pi0_feat_signature"] = ckpt.get("pi0_feat_signature")
     return model, info
 
 
