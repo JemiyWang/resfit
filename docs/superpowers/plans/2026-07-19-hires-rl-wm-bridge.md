@@ -1397,6 +1397,160 @@ git commit -m "feat(wm_bridge): imagination evaluator that owns checkpoint savin
 
 ---
 
+### Task 7b: 优势估计器 proxy 值 logging（选项 2 监控曲线）
+
+> 用户 2026-07-19 选选项 2：每 eval 点 rollout 10 集想象轨迹，用优势估计器逐帧打分，
+> **只存原始值不判成败**（阈值 θ 留给用户离线用 block_success/block_fail 标定）。
+> 设计与效度命门见 spec §6.7。**这是 imagined proxy,不是实机成功率。**
+
+**Files:**
+- Modify: `resfit/rl_finetuning/wm_bridge/fake_eval.py`
+- Test: `resfit/rl_finetuning/wm_bridge/tests/test_adv_eval_logging.py`
+
+**Interfaces:**
+- `make_imagination_evaluator(output_dir, config, *, adv_scorer=None, eval_env=None, n_eval_episodes=10)`
+  —— `adv_scorer` 为 None 时退化为纯存 checkpoint（Task 7 行为逐位不变）
+- `adv_scorer.score_frames(frames) -> np.ndarray (T,)` —— 优势估计器逐帧标量
+- 追加写 `<output_dir>/imagined_adv_eval.jsonl`，每集一行:
+  `{env_step, episode_idx, adv_final, adv_max, adv_mean, adv_traj:[...]}`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `resfit/rl_finetuning/wm_bridge/tests/test_adv_eval_logging.py`：
+
+```python
+import json
+import os
+
+import numpy as np
+
+from resfit.rl_finetuning.wm_bridge import fake_eval
+
+
+class _StubAdvScorer:
+    """逐帧打分:第 k 集第 t 帧 → 0.1*episode + 0.01*t,便于断言写出的值。"""
+    def __init__(self):
+        self.ep = 0
+    def score_frames(self, frames):
+        T = frames.shape[0] if hasattr(frames, "shape") else len(frames)
+        vals = np.array([0.1 * self.ep + 0.01 * t for t in range(T)], np.float32)
+        self.ep += 1
+        return vals
+
+
+class _StubEvalEnv:
+    """reset→step×(2*chunk) 产出想象轨迹的帧;这里只需给 evaluator 帧序列。"""
+    def rollout_frames(self, agent):        # evaluator 用它拿一集的逐帧
+        return np.zeros((50, 3, 8, 8), np.float32)
+
+
+def test_no_adv_scorer_is_bitwise_task7(tmp_path, monkeypatch):
+    """adv_scorer=None 时行为与 Task 7 一致:只存 checkpoint,不写 jsonl。"""
+    monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    ev = fake_eval.make_imagination_evaluator(str(tmp_path), config=None)
+    m = ev(env=None, agent=object(), num_episodes=1, device="cpu", global_step=0)
+    assert m["eval/success_rate"] == 0.0
+    assert not os.path.exists(tmp_path / "imagined_adv_eval.jsonl")
+
+
+def test_logs_raw_values_per_episode(tmp_path, monkeypatch):
+    monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    ev = fake_eval.make_imagination_evaluator(
+        str(tmp_path), config=None,
+        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=3)
+    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=50000)
+    rows = [json.loads(l) for l in open(tmp_path / "imagined_adv_eval.jsonl")]
+    assert len(rows) == 3
+    assert all(r["env_step"] == 50000 for r in rows)
+    # 第 1 集 traj = [0.0, 0.01, ...]; final = 0.49, max = 0.49
+    assert rows[0]["episode_idx"] == 0
+    assert abs(rows[0]["adv_final"] - 0.49) < 1e-4
+    assert len(rows[0]["adv_traj"]) == 50
+
+
+def test_no_success_failure_classification_in_log(tmp_path, monkeypatch):
+    """★ 只存原始值,绝不写 success/failure 字段(阈值留给用户离线定)。"""
+    monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    ev = fake_eval.make_imagination_evaluator(
+        str(tmp_path), config=None,
+        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=1)
+    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=0)
+    row = json.loads(open(tmp_path / "imagined_adv_eval.jsonl").readline())
+    assert "success" not in row and "is_success" not in row and "threshold" not in row
+
+
+def test_appends_across_eval_points(tmp_path, monkeypatch):
+    """训练中断不丢已存:每个 eval 点追加,不覆盖。"""
+    monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    ev = fake_eval.make_imagination_evaluator(
+        str(tmp_path), config=None,
+        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=2)
+    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=50000)
+    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=100000)
+    rows = [json.loads(l) for l in open(tmp_path / "imagined_adv_eval.jsonl")]
+    assert len(rows) == 4
+    assert {r["env_step"] for r in rows} == {50000, 100000}
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `cd /mnt/mnt/data/resfit && /mnt/mnt/data/chj/conda_envs/residual/bin/python -m pytest resfit/rl_finetuning/wm_bridge/tests/test_adv_eval_logging.py -q`
+Expected: FAIL（`make_imagination_evaluator` 尚不收 `adv_scorer` 等参数）
+
+- [ ] **Step 3: 扩展 `make_imagination_evaluator`**
+
+在 Task 7 的 `make_imagination_evaluator` 上加可选参数与 logging（`adv_scorer=None` 时逐位等价 Task 7）：
+
+```python
+def make_imagination_evaluator(output_dir, config, *, adv_scorer=None,
+                               eval_env=None, n_eval_episodes=10):
+    import json
+    log_path = os.path.join(output_dir, "imagined_adv_eval.jsonl")
+
+    def run_dexmg_evaluation(*, env=None, agent=None, num_episodes=None,
+                             device=None, global_step=0, **kwargs):
+        os.makedirs(output_dir, exist_ok=True)
+        save_checkpoint(agent, os.path.join(output_dir, "imagination_last.pt"),
+                        global_step=global_step, config=config, success_rate=0.0)
+        # 选项2:优势估计器 proxy 值 logging(只存原始值,不判成败)
+        if adv_scorer is not None and eval_env is not None:
+            with open(log_path, "a") as f:
+                for ep in range(n_eval_episodes):
+                    frames = eval_env.rollout_frames(agent)      # 冻结策略 rollout 一集
+                    vals = np.asarray(adv_scorer.score_frames(frames), np.float32)
+                    f.write(json.dumps({
+                        "env_step": int(global_step), "episode_idx": ep,
+                        "adv_final": float(vals[-1]), "adv_max": float(vals.max()),
+                        "adv_mean": float(vals.mean()),
+                        "adv_traj": [round(float(v), 5) for v in vals],
+                    }) + "\n")
+        return {"eval/success_rate": 0.0}
+
+    return run_dexmg_evaluation
+```
+
+（`np` 须在 `fake_eval.py` 顶部 `import numpy as np`。）
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `cd /mnt/mnt/data/resfit && /mnt/mnt/data/chj/conda_envs/residual/bin/python -m pytest resfit/rl_finetuning/wm_bridge/tests/test_adv_eval_logging.py resfit/rl_finetuning/wm_bridge/tests/test_fake_eval.py -q`
+Expected: 全绿（Task 7 的 4 个测试仍过 → `adv_scorer=None` 逐位等价）
+
+- [ ] **Step 5: 提交**
+
+```bash
+cd /mnt/mnt/data/resfit
+git add resfit/rl_finetuning/wm_bridge/fake_eval.py \
+        resfit/rl_finetuning/wm_bridge/tests/test_adv_eval_logging.py
+git commit -m "feat(wm_bridge): log raw advantage-estimator values per imagined eval rollout"
+```
+
+> **eval_env.rollout_frames 与 adv_scorer 的接线**是子任务：`eval_env` 复用 `ImaginationVecEnv`
+> 做冻结-策略 rollout；`adv_scorer` 是优势估计器（另一个 kai0 组件/serve，独立加载）。
+> `--eval_every_env_steps 50000`、`n_eval_episodes=10` 由 launcher 透传。
+
+---
+
 ### Task 8: `contract.py` —— 结构断言兜底
 
 **Files:**

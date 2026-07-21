@@ -341,14 +341,43 @@ pi05 推理**（含扩散去噪）产出、无纯特征端点——那是 25 倍
 rollout 集 caption 亦不一致；而 WM 微调时 block 域 caption 已统一为 `"build block"`
 （`RISE_Hi/temp/三域数据构建方案.md` §3.4）。WM 靠 T5 编 caption 做条件，喂错即偏离训练分布。
 
-### 6.7 `fake_eval.py`
+### 6.7 `fake_eval.py` —— 存 checkpoint + 记录想象 proxy 监控值
 
-自己调 `save_checkpoint` 存 `imagination_last.pt`，返回 `{"eval/success_rate": 0.0}`。
+每个 eval 点（`--eval_every_env_steps`，实机默认 **50000**）做两件事：
 
-**不返回递增哨兵去骗过 `:1312` 的 `sr > best_sr` 比较**——那是把存盘寄托在一个假指标上。
-返回恒定 0.0 让 trainer 的 best 逻辑自然失效，存盘由本模块显式负责。
+**① 存 checkpoint。** 自己调 `save_checkpoint` 存 `imagination_last.pt`。
+向 trainer 返回 `{"eval/success_rate": 0.0}` 恒定 0.0——**不返回递增哨兵去骗过 `:1312` 的
+`sr > best_sr` 比较**（那是把存盘寄托在假指标上）；best 逻辑自然失效，存盘由本模块显式负责。
 
-想象空间不产生任何被报告的指标。真实成功率只在实机 eval 测（20 trials + 子目标 rubric）。
+**② 记录优势估计器的原始 proxy 值（选项 2 监控曲线）。** 用**冻结的策略**（无探索噪声）
+rollout **N=10** 集想象轨迹（每集 = `max_segments` 个 chunk），对每集用**优势估计器**逐帧打分,
+追加写一行原始值到 `imagined_adv_eval.jsonl`。
+
+> 优势估计器（kai0 训、依赖人工 stage 标注）**独立于训练用的 V**：它**绝不进 reward**
+> （reward 只有 §5 的 PBRS 势差），只当独立标尺——这与 S1.5（§10）用它验 ψ 一致性是同一
+> 独立性来源。★ 打标 V 训练数据 与 当独立标尺 二选一；本处只当标尺,不打标,不冲突。
+
+```json
+{"env_step": 50000, "episode_idx": 0,
+ "adv_final": 0.83, "adv_max": 0.91, "adv_mean": 0.42,
+ "adv_traj": [0.01, 0.05, ..., 0.83]}
+```
+
+- **只存原始值，不做 success/failure 判定。** 阈值 θ 由用户后期离线定（见下"命门"）。
+- 追加写（每 eval 点 10 行），训练中断不丢已存的。
+- 用途：用户离线画 ① 均值±方差 vs step（收敛曲线）② 过 θ 比例 vs step（proxy 成功率曲线）。
+
+**★ 效度命门（必须写进论文，否则曲线可被审稿人推翻）：**
+- 这是 **imagined proxy**，**不是实机成功率**。论文里该曲线的 caption 必须标
+  `imagined proxy, not real-robot success`。论文 headline 成功率只来自实机（§10 轨道 B）。
+- **阈值 θ 必须用独立 ground truth 标定，不可看着 SHORE-RL 结果挑。** 推荐:用优势估计器给
+  已人工标注的 `block_success` / `block_fail` 真实末态打分,取分开两组的 θ(中点/Youden's J),
+  **在看任何 SHORE-RL 想象结果之前固定死**。否则就是 threshold-fishing。
+- 估计器在**想象帧**上打分本身有 OOD 风险(它训练在真实帧),与 §3.3 / limitation 7 同源;
+  仅作监控可接受,不作报告指标。
+
+**接口**：evaluator 需持有优势估计器的打分器 `adv_scorer.score_frames(frames) -> (T,) 标量`
+与想象 env（rollout 用）。估计器的加载(另一个 kai0 组件/serve)是独立子任务,不在核心闭环。
 
 ### 6.8 `contract.py`
 
@@ -408,8 +437,22 @@ rollout 集 caption 亦不一致；而 WM 微调时 block 域 caption 已统一�
 | S0 | 契约固化：真实起点 → `infer()` → 存 25 帧 | 肉眼确认预测帧合理；**动作可控性**：同起点喂不同动作，画面须分化 | D |
 | S1 | `ImaginationVecEnv` 跑通 reset→step×50→step×50→reset | 时序、形状、proprio 正确；`RiseFrameScorer` 仅用于此阶段验闭环 | D |
 | S1.5 | ψ 一致性验收 | `Φ(ψ̂_k)`（想象帧）vs `Φ(ψ_k)`（真实帧）随 k 的一致性曲线——**同时验收 D 的质量与 kai0 在想象帧上的重编码是否 OOD** | D + V |
-| S2 | 残差 TD3（`Kai0HiqlScorer` + PBRS） | 训练不发散；critic loss 收敛；残差幅度不撞 `action_scale` 上限 | D + V |
-| S3 | 实机 eval | 20 trials × rubric | S2 |
+| S2 | 残差 TD3（`Kai0HiqlScorer` + PBRS），**500k 步**，全程在想象里不碰真机 | 训练不发散；critic loss 收敛；残差幅度不撞 `action_scale` 上限 | D + V |
+| S3 | **实机 eval（论文结果，轨道 B）** | 20 trials × rubric，base vs SHORE-RL | S2 |
+
+**两轨结构（回答"如何得到可展示结果"）：**
+
+- **轨道 A（训练+监控，在想象里）**：残差 TD3 训 500k 步，reward = PBRS 势差，**不碰真机**。
+  eval 频率**实机默认 50k 步 / 10 集**（用户 2026-07-19 定，比仿真 10k/50 更省）。每 eval 点存
+  checkpoint + 记录优势估计器原始 proxy 值到 jsonl（§6.7）。**这一轨产出的一切都是想象 proxy,
+  不是论文成功率。**
+- **轨道 B（论文证据，在真机上）**：取轨道 A 的若干 checkpoint（建议 step 0 / 250k / 500k）
+  部署到真机，每任务 20 autonomous trials + 子目标 rubric，matched initial states、盲评。
+  报告 **base vs SHORE-RL** 成功率——**这是论文里唯一的成功率数字**。最有说服力的呈现:
+  多 checkpoint 真机曲线,展示"想象里训的残差随训练在真机上稳步提升/不塌"(anti-collapse 主线),
+  直接回答 imagination-to-real 迁移这个核心风险。
+  ★ 真机 eval 由用户执行(硬件+rubric);proxy 曲线只用于监控与 Ablation,caption 须标
+  `imagined proxy, not real-robot success`。
 
 **S0 的动作可控性检查不能跳过。** 草案 §6 第 10 条指出，shipped 配置下 WM 确实是动作条件的
 （`train_mode: 'video_only'` 只冻结名字含 `'action_'` 的参数，而动作条件模块叫 `act_vit_in`/`act_in`），
