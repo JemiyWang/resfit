@@ -139,6 +139,82 @@ def build_main_libero(client, *, lerobot_root, language, pooling, serve_ckpt_id,
     print(f"[build_pi0_feat libero] wrote {out_cache}: {len(seqs)} demos, dim={seqs[0].shape[1]}")
 
 
+# LeRobot 键(数据集里) → serve 裸键(kai0 期望,见 piper_deploy.py 的 payload["images"])。
+TELEAVATAR_CAM_MAP = {
+    "observation.images.top_head": "top_head",
+    "observation.images.hand_left": "hand_left",
+    "observation.images.hand_right": "hand_right",
+}
+
+# monkeypatch 锚点:测试对本模块属性打桩;函数内引用这些名字须走模块级(见 build_main_teleavatar)。
+open_lerobot = None
+lerobot_episode_count = None
+lerobot_episode_frames = None
+
+
+def build_teleavatar_serve_obs(images, state, prompt, *, size=224):
+    """block/teleavatar 的 kai0 serve obs(嵌套 schema,对齐 piper_deploy.py)。
+
+    images: {serve裸键: CHW-or-HWC 图};state: (Dp,) proprio。
+    每图 resize_with_pad 到 size×size 并转 CHW(与 libero 路同款客户端预处理 → 与部署同源)。
+    prompt 原样透传(serve 侧 tokenize)。
+
+    ⚠️ 首次连真 serve 时须核对:①嵌套 vs 扁平 ②prompt 是文本还是预编码 embedding
+       ③图是否要 uint8/CHW(piper_deploy 是 CHW uint8)。三者以真 serve config 为准,
+       与 spec §13 的"接数据当天核对项"一致。
+    """
+    from resfit.rl_finetuning.chunk_residual.libero_obs import _to_hwc_uint8, resize_with_pad
+    imgs = {}
+    for cam, im in images.items():
+        hwc = resize_with_pad(_to_hwc_uint8(im), size, size)   # HWC uint8
+        imgs[cam] = np.transpose(hwc, (2, 0, 1))               # CHW uint8(对齐 piper_deploy)
+    return {
+        "state": np.asarray(state, np.float32).reshape(-1),
+        "images": imgs,
+        "prompt": prompt,
+    }
+
+
+def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
+                          serve_ckpt_id, out_cache, num_demos=None,
+                          proprio_key="observation.state"):
+    """teleavatar/block 数据源:从 LeRobot 读三相机 demo,逐帧经 serve 取 prefix_feat ⊕ state → 缓存。
+
+    与 libero 路同构,差别仅在 obs schema(嵌套三相机)与 cam 键映射。
+    """
+    global open_lerobot, lerobot_episode_count, lerobot_episode_frames
+    if open_lerobot is None:            # 真实运行时懒加载;测试已 monkeypatch 则跳过
+        from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
+            open_lerobot as _ol, lerobot_episode_count as _lc, lerobot_episode_frames as _lf)
+        open_lerobot, lerobot_episode_count, lerobot_episode_frames = _ol, _lc, _lf
+
+    lerobot_keys = list(TELEAVATAR_CAM_MAP.keys())
+    ds = open_lerobot(repo_id, lerobot_root)
+    n = lerobot_episode_count(ds)
+    if num_demos is not None:
+        n = min(n, num_demos)
+    raw_feats, proprios = [], []
+    for ep in range(n):
+        fr = lerobot_episode_frames(ds, ep, lerobot_keys, proprio_key)
+        T = fr["state"].shape[0]
+        assert T > 0, f"episode {ep} has 0 frames"
+        feats = []
+        for t in range(T):
+            images = {TELEAVATAR_CAM_MAP[lk]: np.asarray(fr["images"][lk][t])
+                      for lk in lerobot_keys}
+            obs = build_teleavatar_serve_obs(images, np.asarray(fr["state"][t]), prompt)
+            feats.append(np.asarray(client.infer(obs)["prefix_feat"], np.float32))
+        raw_feats.append(np.stack(feats, axis=0))
+        proprios.append(np.asarray(fr["state"], np.float32))
+    seqs, mean, std = assemble_pi0_feat_seqs(raw_feats, proprios)
+    sig = pi0_feat_signature(repo_id, num_demos,
+                             image_keys=list(TELEAVATAR_CAM_MAP.values()),
+                             proprio_key=proprio_key, pooling=pooling, prompt=prompt,
+                             serve_ckpt_id=serve_ckpt_id, serve_metadata=_server_metadata(client))
+    save_pi0_feat_cache(out_cache, seqs, (mean, std), signature=sig)
+    print(f"[build_pi0_feat teleavatar] wrote {out_cache}: {len(seqs)} demos, dim={seqs[0].shape[1]}")
+
+
 def _connect(host, port):
     from openpi_client.websocket_client_policy import WebsocketClientPolicy
     import websockets.sync.client as _wsc
@@ -154,27 +230,35 @@ def _connect(host, port):
     return WebsocketClientPolicy(host=host, port=port)
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", required=True)
     ap.add_argument("--port", type=int, required=True)
-    ap.add_argument("--data_source", choices=["dexmg_hdf5", "libero"], default="dexmg_hdf5",
-                    help="数据来源:dexmg_hdf5(旧行为)或 libero(LeRobot demo)")
+    ap.add_argument("--data_source", choices=["dexmg_hdf5", "libero", "teleavatar"],
+                    default="dexmg_hdf5",
+                    help="数据来源:dexmg_hdf5(旧行为)|libero(LeRobot demo)|teleavatar(block 三相机)")
     # dexmg_hdf5 专用参数(data_source=dexmg_hdf5 时必须,否则可省)
     ap.add_argument("--hdf5", default=None)
     ap.add_argument("--dataset", default=None)
     ap.add_argument("--image_keys", type=lambda s: s.split(","), default=None)
-    ap.add_argument("--proprio_key", default=None)
+    ap.add_argument("--proprio_key", default="observation.state")
     ap.add_argument("--prompt", default="")
-    # libero 专用参数
+    # libero / teleavatar 专用参数
     ap.add_argument("--lerobot_root", default=None, help="LeRobot 数据集根目录")
     ap.add_argument("--language", default=None,
                     help="LIBERO 任务语言串(直接传,数据集 episodes.jsonl 即任务语言;不依赖 LIBERO 库)")
+    ap.add_argument("--repo_id", default=None,
+                    help="teleavatar:LeRobot 数据集名/目录(如 block_success),与 --lerobot_root 组合")
     # 公共参数
     ap.add_argument("--pooling", choices=["last", "mean"], default="last")
     ap.add_argument("--serve_ckpt_id", required=True)
     ap.add_argument("--out_cache", required=True)
     ap.add_argument("--num_demos", type=int, default=None)
+    return ap
+
+
+def main():
+    ap = build_parser()
     args = ap.parse_args()
 
     if args.data_source == "dexmg_hdf5":
@@ -183,17 +267,27 @@ def main():
                                    ("--proprio_key", args.proprio_key)] if v is None]
         if missing:
             ap.error(f"data_source=dexmg_hdf5 时以下参数必须提供: {', '.join(missing)}")
-    else:  # libero
+    elif args.data_source == "libero":
         missing = [f for f, v in [("--lerobot_root", args.lerobot_root),
                                    ("--language", args.language)] if v is None]
         if missing:
             ap.error(f"data_source=libero 时以下参数必须提供: {', '.join(missing)}")
+    else:  # teleavatar
+        missing = [f for f, v in [("--lerobot_root", args.lerobot_root),
+                                   ("--repo_id", args.repo_id)] if v is None]
+        if missing:
+            ap.error(f"data_source=teleavatar 时以下参数必须提供: {', '.join(missing)}")
 
     client = _connect(args.host, args.port)
     if args.data_source == "libero":
         build_main_libero(client, lerobot_root=args.lerobot_root, language=args.language,
                           pooling=args.pooling, serve_ckpt_id=args.serve_ckpt_id,
                           out_cache=args.out_cache, num_demos=args.num_demos)
+    elif args.data_source == "teleavatar":
+        build_main_teleavatar(client, lerobot_root=args.lerobot_root, repo_id=args.repo_id,
+                              prompt=args.prompt, pooling=args.pooling,
+                              serve_ckpt_id=args.serve_ckpt_id, out_cache=args.out_cache,
+                              num_demos=args.num_demos, proprio_key=args.proprio_key)
     else:
         build_main(client, hdf5=args.hdf5, dataset_id=args.dataset, image_keys=args.image_keys,
                    proprio_key=args.proprio_key, prompt=args.prompt, pooling=args.pooling,
