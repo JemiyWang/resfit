@@ -44,6 +44,8 @@ def test_logs_raw_values_per_episode(tmp_path, monkeypatch):
     # 第 1 集 traj = [0.0, 0.01, ...]; final = 0.49, max = 0.49
     assert rows[0]["episode_idx"] == 0
     assert abs(rows[0]["adv_final"] - 0.49) < 1e-4
+    assert abs(rows[0]["adv_max"] - 0.49) < 1e-4
+    assert abs(rows[0]["adv_mean"] - 0.245) < 1e-4
     assert len(rows[0]["adv_traj"]) == 50
 
 
