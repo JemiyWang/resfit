@@ -284,10 +284,13 @@ class Scorer(Protocol):
 **`Kai0HiqlScorer`（唯一可报告实现）**：`ψ → hiql_value.ValueMLP → Φ`。ψ 由 base_bridge
 从 kai0 serve 的 `prefix_feat` 取得（§6.5），本模块不自己编码。
 
+> **base 统一用 kai0 套件（pi05）**，不涉及 ACT。V 的 state_mode = `pi0_feat`（ψ=kai0 prefix_feat）。
+> block 实机无可用 ACT encoder，act_feat 一路不采用，相关内容已从本设计移除。
+
 **同源命门（必须断言）**：V 离线训练时用来编 ψ 的 kai0 权重，与在线 base serve 的权重
-**必须同源**。仓库已有先例——`hiql_value.py:74` 的 `act_weight_sha` / `act_feat_signature`
-与 `train_chunk_residual.py:886` 的 `assert_act_base_samesource`。本模块须比照实现：
-value.pt 里记 ψ 编码器权重 sha，启动时与 serve 上报的权重 sha 比对，不符即拒绝启动。
+**必须同源**。已落地机制（Task 14）：value.pt 里记 `pi0_feat_signature`（含 `serve_ckpt_id` /
+image_keys / proprio_key / pooling / prompt）；wm_bridge 启动时把它与在线 serve 的 kai0
+配置比对，核心字段不符即拒绝启动（`assert_pi0_caches_samesource` 同款比对逻辑）。
 否则 Φ 会被喂进一个它没见过的特征空间，且**不会报错，只会静默给出垃圾势**。
 
 **前提**：kai0 serve 必须以透出 `prefix_feat` 的方式启动。`libero_pi05_adapter.py:54`

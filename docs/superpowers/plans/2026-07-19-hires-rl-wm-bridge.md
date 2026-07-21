@@ -366,11 +366,11 @@ git commit -m "feat(wm_bridge): action token packing + frame unpacking (self-own
 - Test: `resfit/rl_finetuning/wm_bridge/tests/test_scorers.py`
 
 **Interfaces:**
-- Consumes: `resfit.rl_finetuning.chunk_residual.hiql_value.load_value(path, map_location) -> (ValueMLP, info)`；`info` 含 `mean` / `std` / `state_dim` / `act_weight_sha`
+- Consumes: `resfit.rl_finetuning.chunk_residual.hiql_value.load_value(path, map_location) -> (ValueMLP, info)`；`info` 含 `mean` / `std` / `state_dim` / `pi0_feat_signature`（同源锚，含 `serve_ckpt_id`）
 - Produces:
   - `Scorer` Protocol：`phi(psi: np.ndarray, proprio: np.ndarray) -> float`
   - `DummyScorer()` —— 恒返回 `0.0`，仅测试用
-  - `Kai0HiqlScorer(value_model, mean, std, expected_psi_sha=None)`，类方法 `from_value_ckpt(path, device="cpu") -> Kai0HiqlScorer`，属性 `expected_psi_sha`
+  - `Kai0HiqlScorer(value_model, mean, std, expected_psi_anchor=None)`，类方法 `from_value_ckpt(path, device="cpu") -> Kai0HiqlScorer`，属性 `expected_psi_anchor`
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -466,7 +466,7 @@ class Scorer(Protocol):
 class DummyScorer:
     """恒 0。仅供单元测试;真实训练须显式 --allow_dummy_scorer 才可用(见 launcher)。"""
 
-    expected_psi_sha = None
+    expected_psi_anchor = None
 
     def phi(self, psi, proprio) -> float:
         return 0.0
@@ -475,7 +475,7 @@ class DummyScorer:
 class Kai0HiqlScorer:
     """ψ ⊕ proprio → 标准化 → ValueMLP → Φ。"""
 
-    def __init__(self, value_model, *, mean, std, expected_psi_sha=None):
+    def __init__(self, value_model, *, mean, std, expected_psi_anchor=None):
         self.model = value_model
         self.model.eval()
         self.mean = np.asarray(mean, dtype=np.float32).reshape(-1)
@@ -483,14 +483,17 @@ class Kai0HiqlScorer:
         assert self.mean.shape == self.std.shape, "mean/std 维度须一致"
         assert np.all(self.std > 0), "std 须逐维为正"
         self.state_dim = int(self.mean.shape[0])
-        self.expected_psi_sha = expected_psi_sha
+        self.expected_psi_anchor = expected_psi_anchor
 
     @classmethod
     def from_value_ckpt(cls, path, device="cpu"):
         from resfit.rl_finetuning.chunk_residual.hiql_value import load_value
         model, info = load_value(path, map_location=device)
+        # 同源锚 = value.pt 的 pi0_feat_signature.serve_ckpt_id(Task 14 落地机制)。
+        # base 统一用 kai0/pi05,不涉及 ACT;不再用 act_weight_sha。
+        sig = info.get("pi0_feat_signature") or {}
         return cls(model, mean=info["mean"], std=info["std"],
-                   expected_psi_sha=info.get("act_weight_sha"))
+                   expected_psi_anchor=sig.get("serve_ckpt_id"))
 
     def phi(self, psi, proprio) -> float:
         p = np.asarray(psi, dtype=np.float32).reshape(-1)
@@ -967,7 +970,7 @@ class _StubBase:
 class _CountingScorer:
     """Φ = ψ 的第 0 维,便于精确验算 PBRS。"""
 
-    expected_psi_sha = None
+    expected_psi_anchor = None
 
     def phi(self, psi, proprio):
         return float(np.asarray(psi).reshape(-1)[0])
@@ -1407,8 +1410,8 @@ git commit -m "feat(wm_bridge): imagination evaluator that owns checkpoint savin
   - `check_agent_image_size() -> None`
   - `check_runtime_args(args) -> None`
   - `check_scorer(scorer, allow_dummy: bool) -> None`
-  - `check_psi_samesource(scorer, serve_psi_sha) -> None`
-  - `check_all(args, scorer, serve_psi_sha, allow_dummy) -> None`
+  - `check_psi_samesource(scorer, serve_ckpt_id) -> None`
+  - `check_all(args, scorer, serve_ckpt_id, allow_dummy) -> None`
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -1473,27 +1476,27 @@ def test_dummy_scorer_allowed_with_flag():
 
 
 def test_psi_sha_mismatch_raises():
-    sc = types.SimpleNamespace(expected_psi_sha="aaa")
+    sc = types.SimpleNamespace(expected_psi_anchor="aaa")
     with pytest.raises(ContractError, match="同源"):
-        contract.check_psi_samesource(sc, serve_psi_sha="bbb")
+        contract.check_psi_samesource(sc, serve_ckpt_id="bbb")
 
 
 def test_psi_sha_match_passes():
-    sc = types.SimpleNamespace(expected_psi_sha="aaa")
-    contract.check_psi_samesource(sc, serve_psi_sha="aaa")
+    sc = types.SimpleNamespace(expected_psi_anchor="aaa")
+    contract.check_psi_samesource(sc, serve_ckpt_id="aaa")
 
 
 def test_psi_sha_missing_warns_but_does_not_raise():
     """指纹缺失=无法验证,不等于已知异源。对齐 act_feature.py:149-153 的先例。"""
-    sc = types.SimpleNamespace(expected_psi_sha=None)
+    sc = types.SimpleNamespace(expected_psi_anchor=None)
     with pytest.warns(UserWarning, match="无法验证同源"):
-        contract.check_psi_samesource(sc, serve_psi_sha="bbb")
+        contract.check_psi_samesource(sc, serve_ckpt_id="bbb")
 
 
 def test_serve_sha_missing_warns_but_does_not_raise():
-    sc = types.SimpleNamespace(expected_psi_sha="aaa")
+    sc = types.SimpleNamespace(expected_psi_anchor="aaa")
     with pytest.warns(UserWarning, match="无法验证同源"):
-        contract.check_psi_samesource(sc, serve_psi_sha=None)
+        contract.check_psi_samesource(sc, serve_ckpt_id=None)
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -1609,36 +1612,39 @@ def check_scorer(scorer, allow_dummy: bool) -> None:
             "确要如此请显式传 --allow_dummy_scorer")
 
 
-def check_psi_samesource(scorer, serve_psi_sha) -> None:
-    """V 训练时编 ψ 的 kai0 权重必须与在线 serve 同源,否则静默给出垃圾势。
+def check_psi_samesource(scorer, serve_ckpt_id) -> None:
+    """训 V 时编 ψ 的 kai0(pi05)权重必须与在线 serve 同源,否则静默给出垃圾势。
 
-    ★ 指纹缺失 = 无法验证,不等于已知异源。对齐仓库既有 assert_act_base_samesource
-      (act_feature.py:149-153)的处理:warn 并要求先过一致性 smoke,不 raise。
-      只有"指纹都在且不等"才是已知异源,才 raise。
+    同源锚 = value.pt 的 pi0_feat_signature.serve_ckpt_id(base 统一 kai0,不涉及 ACT)。
+    在线 serve_ckpt_id 由 launcher 的 --pi0_serve_ckpt_id 提供,与之比对。
+
+    ★ 锚缺失 = 无法验证,不等于已知异源。对齐仓库既有 warn-not-raise 惯例
+      (pi0_feat 的 assert_pi0_caches_samesource / hiql 既有 same-source 检查):
+      warn 并要求先过 S1.5 一致性检查,不 raise。只有"两边都在且不等"才 raise。
     """
     import warnings
 
-    expected = getattr(scorer, "expected_psi_sha", None)
-    if expected is None or serve_psi_sha is None:
+    expected = getattr(scorer, "expected_psi_anchor", None)
+    if expected is None or serve_ckpt_id is None:
         warnings.warn(
-            "[wm_bridge] ψ 编码器指纹缺失(value.pt 未记 act_weight_sha 或未传 "
-            "--kai0_ckpt),无法验证同源。异源不会报错,只会静默给出垃圾势 —— "
-            "务必先跑 S1.5 一致性检查再开训。", stacklevel=2)
+            "[wm_bridge] ψ 同源锚缺失(value.pt 未记 pi0_feat_signature.serve_ckpt_id "
+            "或未传在线 --pi0_serve_ckpt_id),无法验证同源。异源不会报错,只会静默给出"
+            "垃圾势 —— 务必先跑 S1.5 一致性检查再开训。", stacklevel=2)
         return
-    if str(expected) != str(serve_psi_sha):
+    if str(expected) != str(serve_ckpt_id):
         raise ContractError(
-            f"ψ 编码器不同源:value.pt 记的是 {expected},serve 上报的是 {serve_psi_sha}。"
+            f"ψ 不同源:value.pt 记的 serve_ckpt_id={expected},在线是 {serve_ckpt_id}。"
             "Φ 会被喂进它没见过的特征空间,且不会报错,只会静默给出垃圾势")
 
 
-def check_all(args, scorer, serve_psi_sha, allow_dummy: bool) -> None:
+def check_all(args, scorer, serve_ckpt_id, allow_dummy: bool) -> None:
     check_upstream_symbols()
     check_wrapper_step_loop()
     check_agent_image_size()
     check_runtime_args(args)
     check_scorer(scorer, allow_dummy)
     if not allow_dummy:
-        check_psi_samesource(scorer, serve_psi_sha)
+        check_psi_samesource(scorer, serve_ckpt_id)
 ```
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -1932,9 +1938,12 @@ def parse_bridge_args(argv):
     p.add_argument("--init_state_dataset", action="append", default=[],
                    help="想象起点采样的数据集路径,可重复。成功集与失败集都要传"
                         "(残差的主战场是基座跑偏的状态)。无默认值")
+    p.add_argument("--pi0_serve_ckpt_id", type=str, default=None,
+                   help="在线 kai0 serve 的 ckpt 标签(如 pi05_block_awbc_49999),与 value.pt 的"
+                        "pi0_feat_signature.serve_ckpt_id 比对做同源校验。须与训 V/建 ψ 缓存时同一标签")
     p.add_argument("--kai0_ckpt", type=str, default=None,
-                   help="kai0 权重目录,用于算 ψ 编码器指纹做同源校验。"
-                        "serve 在 websocket 后面拿不到 state_dict,只能对本地权重算")
+                   help="(可选加固)kai0 权重目录;传了则额外用 psi_fingerprint 做内容哈希级校验。"
+                        "默认同源校验走 serve_ckpt_id 标签即可,此项可不传")
     bridge_args, rest = p.parse_known_args(argv)
     return bridge_args, rest
 
@@ -1992,14 +2001,9 @@ def build_imagination_factories(bridge_args) -> dict:
         if state["base"] is None:
             state["base"] = base
             if not bridge_args.allow_dummy_scorer:
-                # ★ 指纹对本地 checkpoint 目录算,不问运行中的 serve —— kai0 在
-                #   websocket 后面,客户端拿不到 state_dict()
-                from resfit.rl_finetuning.wm_bridge.psi_fingerprint import (
-                    kai0_ckpt_fingerprint,
-                )
-                serve_sha = (kai0_ckpt_fingerprint(bridge_args.kai0_ckpt)
-                             if bridge_args.kai0_ckpt else None)
-                contract.check_psi_samesource(scorer, serve_sha)
+                # 同源锚 = serve_ckpt_id 标签(Task 14):value.pt 记的 vs 在线传的比对。
+                # 在线值来自 --pi0_serve_ckpt_id(与训 V / 建 ψ 缓存时同一标签)。
+                contract.check_psi_samesource(scorer, bridge_args.pi0_serve_ckpt_id)
         return base
 
     def fake_create_vectorized_env(*, env_name=None, num_envs=1, device="cpu",
@@ -2208,15 +2212,19 @@ def build_block_sources(dataset_paths=BLOCK_DATASETS, camera_map=None):
     return sources
 ```
 
-创建 `resfit/rl_finetuning/wm_bridge/psi_fingerprint.py`：
+创建 `resfit/rl_finetuning/wm_bridge/psi_fingerprint.py`（**可选加固,非默认路径**）：
+
+> 默认同源校验走 serve_ckpt_id 标签比对（value.pt 的 pi0_feat_signature.serve_ckpt_id vs
+> 在线 --pi0_serve_ckpt_id,Task 14 落地机制,§6.4）。本文件提供更强的**内容哈希级**校验:
+> 只在 launcher 传了 --kai0_ckpt 时启用,防"标签对但权重被换过"。base 用 kai0/pi05,不涉及 ACT。
 
 ```python
-"""kai0 权重指纹 —— 用于 ψ 同源校验。
+"""kai0 权重指纹 —— ψ 同源的可选内容哈希级校验(默认走 serve_ckpt_id 标签,见 §6.4)。
 
 ★ 对本地 checkpoint 目录算,不问运行中的 serve:kai0 在 websocket 后面,
   客户端拿不到 state_dict()。所以指纹的对象是"启动 serve 时用的那份权重文件"。
 
-确定性策略与 act_feature.act_weight_fingerprint 一致:按路径排序、逐文件哈希内容。
+确定性策略:按路径排序、逐文件哈希内容(与仓库既有权重指纹惯例一致)。
 """
 from __future__ import annotations
 
