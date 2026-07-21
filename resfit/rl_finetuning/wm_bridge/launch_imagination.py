@@ -15,6 +15,7 @@ WM / RL 两侧源码 0 行改动。仓库先例:run_td3_meta_only_wrapper.py。
 """
 from __future__ import annotations
 
+import importlib
 import runpy
 import sys
 import types
@@ -39,14 +40,18 @@ def install_fakes(factories: dict) -> None:
             sys.modules[mod_name] = mod
         setattr(mod, symbol, fn)
 
-        # 部分 import 形式会走父包属性而非 sys.modules,两头都设上
+        # 部分 import 形式会走父包属性而非 sys.modules,两头都设上。
+        # 父包(resfit.dexmg.environments / resfit.rl_finetuning.utils /
+        # resfit.lerobot.policies)本身是空壳(无 __init__.py,namespace
+        # package),import 它不会触发 robosuite/dexmimicgen 等重依赖——重的
+        # 只是被我们整体假冒掉的叶子子模块。用真父包而非 __path__-less 假
+        # 模块,才能让父包继续满足"是一个包"的语义,避免其余同名兄弟子模块
+        # 被误判为 "not a package"。
         parent_name, _, leaf = mod_name.rpartition(".")
         if parent_name:
             parent = sys.modules.get(parent_name)
             if parent is None:
-                parent = types.ModuleType(parent_name)
-                parent._wm_bridge_fake = True
-                sys.modules[parent_name] = parent
+                parent = importlib.import_module(parent_name)
             setattr(parent, leaf, mod)
 
 
