@@ -12,8 +12,10 @@ class _ConstValue(nn.Module):
     def __init__(self, state_dim):
         super().__init__()
         self.state_dim = state_dim
+        self.grad_enabled_during_forward = None
 
     def forward(self, s):
+        self.grad_enabled_during_forward = torch.is_grad_enabled()
         return s.sum(dim=-1, keepdim=True)
 
 
@@ -47,8 +49,11 @@ def test_kai0_scorer_returns_python_float():
 
 
 def test_kai0_scorer_does_not_track_grad():
+    # model.parameters() 为空(_ConstValue 无 nn.Parameter),所以不能靠 "p.grad is
+    # None" 断言(那样即使 phi 里的 torch.no_grad() 被删掉,循环也不会执行,测试恒真)。
+    # 改为让 stub 在 forward 时直接记录 torch.is_grad_enabled(),精确验证 phi 是否
+    # 真的在 no_grad 上下文里跑前向。
     model = _ConstValue(2)
     sc = Kai0HiqlScorer(model, mean=np.zeros(2, np.float32), std=np.ones(2, np.float32))
     sc.phi(np.ones(1, np.float32), np.ones(1, np.float32))
-    for p in model.parameters():
-        assert p.grad is None
+    assert model.grad_enabled_during_forward is False
