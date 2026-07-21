@@ -176,7 +176,8 @@ def build_teleavatar_serve_obs(images, state, prompt, *, size=224):
 
 def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
                           serve_ckpt_id, out_cache, num_demos=None,
-                          proprio_key="observation.state"):
+                          proprio_key="observation.state",
+                          num_shards=1, shard_index=0):
     """teleavatar/block 数据源:从 LeRobot 读三相机 demo,逐帧经 serve 取 prefix_feat ⊕ state → 缓存。
 
     与 libero 路同构,差别仅在 obs schema(嵌套三相机)与 cam 键映射。
@@ -197,7 +198,11 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
     eps = list_teleavatar_episodes(dataset_root)
     if num_demos is not None:
         eps = eps[:num_demos]
-    assert eps, f"没从 {dataset_root} 读到任何 episode"
+    # 分片(4 卡并行):跨步取 eps[shard::num_shards],各分片均衡且不重叠。
+    assert 0 <= shard_index < num_shards, f"shard_index {shard_index} 须在 [0,{num_shards})"
+    if num_shards > 1:
+        eps = eps[shard_index::num_shards]
+    assert eps, f"没从 {dataset_root} 读到任何 episode(shard {shard_index}/{num_shards})"
     raw_feats, proprios = [], []
     # ★ 整段 torchcodec 批量解码(read_teleavatar_episode_batched),~17x 快于逐帧 ds[i]。
     for ep in eps:
@@ -260,6 +265,9 @@ def build_parser():
     ap.add_argument("--serve_ckpt_id", required=True)
     ap.add_argument("--out_cache", required=True)
     ap.add_argument("--num_demos", type=int, default=None)
+    # teleavatar 分片(多卡并行):各分片跨步取 eps[shard_index::num_shards]
+    ap.add_argument("--num_shards", type=int, default=1)
+    ap.add_argument("--shard_index", type=int, default=0)
     return ap
 
 
@@ -293,7 +301,8 @@ def main():
         build_main_teleavatar(client, lerobot_root=args.lerobot_root, repo_id=args.repo_id,
                               prompt=args.prompt, pooling=args.pooling,
                               serve_ckpt_id=args.serve_ckpt_id, out_cache=args.out_cache,
-                              num_demos=args.num_demos, proprio_key=args.proprio_key)
+                              num_demos=args.num_demos, proprio_key=args.proprio_key,
+                              num_shards=args.num_shards, shard_index=args.shard_index)
     else:
         build_main(client, hdf5=args.hdf5, dataset_id=args.dataset, image_keys=args.image_keys,
                    proprio_key=args.proprio_key, prompt=args.prompt, pooling=args.pooling,

@@ -126,3 +126,39 @@ def test_build_main_teleavatar_respects_num_demos(tmp_path, monkeypatch):
         out_cache=out, num_demos=2)
     seqs, _, _ = load_pi0_feat_cache(out)
     assert len(seqs) == 2
+
+
+def test_shards_partition_episodes_without_overlap(tmp_path, monkeypatch):
+    """4 分片跨步切 10 集 → 各分片不重叠,并集=全部。"""
+    from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+    _patch_lerobot(monkeypatch, n_eps=10, T=4)
+    counts = []
+    for i in range(4):
+        out = str(tmp_path / f"shard{i}.npz")
+        build_main_teleavatar(
+            _StubClient(), lerobot_root="/x", repo_id="block_success",
+            prompt="build block", pooling="mean", serve_ckpt_id="kai0-block",
+            out_cache=out, num_shards=4, shard_index=i)
+        seqs, _, _ = load_pi0_feat_cache(out)
+        counts.append(len(seqs))
+    # eps[0::4]=0,4,8→3; [1::4]=1,5,9→3; [2::4]=2,6→2; [3::4]=3,7→2
+    assert counts == [3, 3, 2, 2]
+    assert sum(counts) == 10          # 并集=全部 10 集
+
+
+def test_shard_index_out_of_range_raises(tmp_path, monkeypatch):
+    _patch_lerobot(monkeypatch, n_eps=8, T=4)
+    with pytest.raises(AssertionError):
+        build_main_teleavatar(
+            _StubClient(), lerobot_root="/x", repo_id="block_success",
+            prompt="p", pooling="mean", serve_ckpt_id="k",
+            out_cache=str(tmp_path / "x.npz"), num_shards=4, shard_index=4)
+
+
+def test_cli_exposes_shard_args():
+    args = build_parser().parse_args([
+        "--host", "h", "--port", "9000", "--data_source", "teleavatar",
+        "--repo_id", "block_success", "--lerobot_root", "/x",
+        "--serve_ckpt_id", "k", "--out_cache", "/o",
+        "--num_shards", "4", "--shard_index", "2"])
+    assert args.num_shards == 4 and args.shard_index == 2
