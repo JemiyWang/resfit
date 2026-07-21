@@ -189,7 +189,14 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
         open_lerobot, lerobot_episode_count, lerobot_episode_frames = _ol, _lc, _lf
 
     lerobot_keys = list(TELEAVATAR_CAM_MAP.keys())
-    ds = open_lerobot(repo_id, lerobot_root)
+    # ★ root 必须指向数据集目录本身(含 meta/),否则 LeRobotDatasetMetadata 本地读失败会
+    #   回退联网查 hub → 对纯本地数据集(如 block_success)报 404。--lerobot_root 是父目录、
+    #   --repo_id 是子目录名,此处 join;若已传完整路径(join 后不存在)则回退用 lerobot_root。
+    import os as _os
+    dataset_root = _os.path.join(lerobot_root, repo_id)
+    if not _os.path.isdir(_os.path.join(dataset_root, "meta")):
+        dataset_root = lerobot_root
+    ds = open_lerobot(repo_id, dataset_root)
     n = lerobot_episode_count(ds)
     if num_demos is not None:
         n = min(n, num_demos)
