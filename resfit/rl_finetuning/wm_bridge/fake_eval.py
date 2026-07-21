@@ -10,20 +10,35 @@
 """
 from __future__ import annotations
 
+import json
 import os
+
+import numpy as np
 
 from resfit.rl_finetuning.utils.checkpoint import save_checkpoint
 
 
-def make_imagination_evaluator(output_dir: str, config):
+def make_imagination_evaluator(output_dir: str, config, *, adv_scorer=None,
+                               eval_env=None, n_eval_episodes=10):
+    log_path = os.path.join(output_dir, "imagined_adv_eval.jsonl")
+
     def run_dexmg_evaluation(*, env=None, agent=None, num_episodes=None,
                              device=None, global_step=0, **kwargs):
         os.makedirs(output_dir, exist_ok=True)
         save_checkpoint(agent, os.path.join(output_dir, "imagination_last.pt"),
-                        global_step=global_step, config=config,
-                        success_rate=0.0)
-        print(f"[imagination-eval] saved imagination_last.pt "
-              f"@ env_steps={global_step} (想象空间不产出成功率指标)", flush=True)
+                        global_step=global_step, config=config, success_rate=0.0)
+        # 选项2:优势估计器 proxy 值 logging(只存原始值,不判成败)
+        if adv_scorer is not None and eval_env is not None:
+            with open(log_path, "a") as f:
+                for ep in range(n_eval_episodes):
+                    frames = eval_env.rollout_frames(agent)      # 冻结策略 rollout 一集
+                    vals = np.asarray(adv_scorer.score_frames(frames), np.float32)
+                    f.write(json.dumps({
+                        "env_step": int(global_step), "episode_idx": ep,
+                        "adv_final": float(vals[-1]), "adv_max": float(vals.max()),
+                        "adv_mean": float(vals.mean()),
+                        "adv_traj": [round(float(v), 5) for v in vals],
+                    }) + "\n")
         return {"eval/success_rate": 0.0}
 
     return run_dexmg_evaluation
