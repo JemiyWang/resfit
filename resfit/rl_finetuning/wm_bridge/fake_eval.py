@@ -25,7 +25,13 @@ def make_imagination_evaluator(output_dir: str, config, *, adv_scorer=None,
     def run_dexmg_evaluation(*, env=None, agent=None, num_episodes=None,
                              device=None, global_step=0, **kwargs):
         os.makedirs(output_dir, exist_ok=True)
+        # imagination_last.pt:滚动最新(断点/取最新用,覆盖)。
         save_checkpoint(agent, os.path.join(output_dir, "imagination_last.pt"),
+                        global_step=global_step, config=config, success_rate=0.0)
+        # imagination_step_{step}.pt:按步持久归档,不覆盖 —— 供后续实机逐 checkpoint 调试。
+        # eval 每 --eval_every_env_steps 触发一次,设 50000 即每 50k 步一个存档。
+        save_checkpoint(agent,
+                        os.path.join(output_dir, f"imagination_step_{int(global_step):07d}.pt"),
                         global_step=global_step, config=config, success_rate=0.0)
         # 选项2:优势估计器 proxy 值 logging(只存原始值,不判成败)
         if adv_scorer is not None and eval_env is not None:

@@ -37,7 +37,7 @@ class _ActionSpace:
 class ImaginationVecEnv:
     def __init__(self, *, wm, base, scorer, sampler, normalizer,
                  gamma: float = 0.995, max_segments: int = 2,
-                 num_denois_steps: int = 10):
+                 num_denois_steps: int = 10, device: str = "cpu"):
         self.wm = wm
         self.base = base
         self.scorer = scorer
@@ -46,6 +46,7 @@ class ImaginationVecEnv:
         self.gamma = float(gamma)
         self.max_segments = int(max_segments)
         self.num_denois_steps = int(num_denois_steps)
+        self.device = device        # obs 张量须与 QAgent encoder 同设备(trainer 传 cuda)
 
         self.num_envs = 1
         self.action_space = _ActionSpace(ACTION_DIM)
@@ -62,10 +63,12 @@ class ImaginationVecEnv:
     # ---------- obs 构造 ----------
 
     def _build_obs(self, images: dict) -> dict:
-        obs = dict(images)
+        # 图像/state 张量搬到 device(与 QAgent encoder 同设备);旁路键(native_frames/token)留 CPU
+        obs = {k: (v.to(self.device) if isinstance(v, torch.Tensor) else v)
+               for k, v in images.items()}
         obs["observation.state"] = torch.from_numpy(
-            self._tracker.proprio).unsqueeze(0)
-        obs["_wm_native_frames"] = self._window[:, :, -1].copy()   # (V,C,H,W) 末帧
+            self._tracker.proprio).unsqueeze(0).to(self.device)
+        obs["_wm_native_frames"] = self._window[:, :, -1].copy()   # (V,C,H,W) 末帧(numpy,给base_bridge)
         obs["_wm_window_token"] = self._token
         return obs
 

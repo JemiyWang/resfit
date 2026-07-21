@@ -50,14 +50,17 @@ class Kai0ImaginationBase:
         #   而 build_teleavatar_serve_obs 的 _to_hwc_uint8 按 [0,1] 处理 float → 先转 [0,1]。
         from resfit.rl_finetuning.chunk_residual.build_pi0_feat_cache_via_serve import (
             build_teleavatar_serve_obs)
-        native = np.asarray(raw_obs["_wm_native_frames"], dtype=np.float32)
+        def _np(x):                                        # obs.state 可能是 cuda tensor
+            if isinstance(x, torch.Tensor):
+                return x.detach().cpu().numpy()
+            return np.asarray(x)
+        native = _np(raw_obs["_wm_native_frames"]).astype(np.float32)
         assert native.shape[0] == len(CAMERA_KEYS), \
             f"原生帧视角数须 {len(CAMERA_KEYS)},got {native.shape[0]}"
         imgs01 = (native + 1.0) * 0.5                       # [-1,1] → [0,1]
         images = {CAMERA_KEYS[i].split(".")[-1]: imgs01[i]
                   for i in range(len(CAMERA_KEYS))}
-        state = np.asarray(raw_obs["observation.state"],
-                           dtype=np.float32).reshape(-1)[:self.action_dim]
+        state = _np(raw_obs["observation.state"]).astype(np.float32).reshape(-1)[:self.action_dim]
         return build_teleavatar_serve_obs(images, state, self.prompt)
 
     def query(self, raw_obs):
@@ -89,3 +92,24 @@ class Kai0ImaginationBase:
             f"想象路只支持 chunk_length={CHUNK_LENGTH},got {chunk_length}"
         actions, _ = self.query(raw_obs)
         return torch.from_numpy(actions).unsqueeze(0)
+
+    def select_action(self, raw_obs) -> torch.Tensor:
+        """queue 模式(chunk_length=1)用:从缓存的 50 动作里按窗口逐个分发。
+
+        trainer 的 pi05 基座路强制 queue+chunk_length1(真 pi05 是 step 级);本 shim 用内部
+        分发游标模拟:同一窗口(_wm_window_token 不变)内,第 i 次 select_action 返回第 i 个动作,
+        50 个动作源自该窗口的 1 次 kai0 调用(query 缓存);窗口推进(点火后)则重查、重置游标。
+        返回 (1, action_dim) 物理动作,供 wrapper 的 action_scaler.scale。
+        """
+        actions, _ = self.query(raw_obs)                   # 同窗口缓存,1 次 kai0/窗口
+        token = raw_obs.get("_wm_window_token")
+        if token != getattr(self, "_dispense_token", object()):
+            self._dispense_token = token
+            self._dispense_idx = 0
+        i = min(self._dispense_idx, CHUNK_LENGTH - 1)      # 越界兜底(不应发生)
+        self._dispense_idx += 1
+        # ★ 与 obs 同设备:真实 ACT 基座 .to(device) 后返回 cuda,action_scaler.scale 及下游
+        #   agent.act 全在 device 上;本 shim 从 raw_obs 自身推设备(fake base 不经 .to())。
+        st = raw_obs.get("observation.state")
+        device = st.device if isinstance(st, torch.Tensor) else "cpu"
+        return torch.from_numpy(actions[i]).unsqueeze(0).to(device)   # (1, action_dim)
