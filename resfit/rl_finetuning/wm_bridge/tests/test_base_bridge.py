@@ -78,3 +78,18 @@ def test_wrong_chunk_length_raises():
     b = Kai0ImaginationBase(_StubClient(), prompt="build block")
     with pytest.raises(AssertionError):
         b.get_action_chunk(_obs(0), 25)
+
+
+def test_serve_obs_is_nested_teleavatar_schema():
+    """★ S1 验证过的 block kai0 嵌套 schema:{"state","images":{裸cam},"prompt"},
+    图 [-1,1]→[0,1]→224 CHW。锁死,防回退到早先猜的扁平 schema。"""
+    import numpy as np
+    b = Kai0ImaginationBase(_StubClient(), prompt="build block")
+    raw = {"_wm_native_frames": np.zeros((3, 3, 192, 256), np.float32),
+           "observation.state": np.arange(16, dtype=np.float32)}
+    obs = b._serve_obs(raw)
+    assert set(obs.keys()) == {"state", "images", "prompt"}
+    assert set(obs["images"].keys()) == {"top_head", "hand_left", "hand_right"}
+    assert obs["images"]["top_head"].shape == (3, 224, 224)   # CHW 224
+    assert obs["prompt"] == "build block"
+    np.testing.assert_allclose(obs["state"], np.arange(16))

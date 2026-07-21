@@ -43,15 +43,22 @@ class Kai0ImaginationBase:
         return None
 
     def _serve_obs(self, raw_obs) -> dict:
+        # ★ 复用建缓存时已验证的 block kai0 嵌套 schema(build_teleavatar_serve_obs):
+        #   {"state", "images":{裸cam键: CHW uint8@224}, "prompt"}。与 pi05_block_awbc
+        #   serve 实测匹配(建 ψ 缓存跑通)。base_bridge 早先自拼的扁平 schema 是猜的,已废弃。
+        # ★ 值域:_wm_native_frames 是 [-1,1](imagination_env 统一,reset窗与WM输出同),
+        #   而 build_teleavatar_serve_obs 的 _to_hwc_uint8 按 [0,1] 处理 float → 先转 [0,1]。
+        from resfit.rl_finetuning.chunk_residual.build_pi0_feat_cache_via_serve import (
+            build_teleavatar_serve_obs)
         native = np.asarray(raw_obs["_wm_native_frames"], dtype=np.float32)
         assert native.shape[0] == len(CAMERA_KEYS), \
             f"原生帧视角数须 {len(CAMERA_KEYS)},got {native.shape[0]}"
+        imgs01 = (native + 1.0) * 0.5                       # [-1,1] → [0,1]
+        images = {CAMERA_KEYS[i].split(".")[-1]: imgs01[i]
+                  for i in range(len(CAMERA_KEYS))}
         state = np.asarray(raw_obs["observation.state"],
                            dtype=np.float32).reshape(-1)[:self.action_dim]
-        obs = {"prompt": self.prompt, "observation/state": state}
-        for i, key in enumerate(CAMERA_KEYS):
-            obs[f"observation/{key.split('.')[-1]}"] = native[i]
-        return obs
+        return build_teleavatar_serve_obs(images, state, self.prompt)
 
     def query(self, raw_obs):
         """→ (actions_physical (50,16), psi)。同一窗口 token 只打一次 serve。"""
