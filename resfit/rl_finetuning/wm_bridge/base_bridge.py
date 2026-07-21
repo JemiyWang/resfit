@@ -1,0 +1,84 @@
+"""kai0 serve 的想象空间 shim。
+
+替换 resfit.lerobot.policies.pi05.load_pi05_base_policy 的返回物(不是替换
+build_base_policy —— 后者在 trainer 自身,runpy 以 __main__ 跑会造新模块对象,patch 不到)。
+
+★ 按窗口 token 缓存。同一个观测窗口会被请求两次:
+   ① ImaginationVecEnv 自己要 ψ 算 reward
+   ② wrapper 在 chunk_env_wrapper.py:219 调 _base_chunk_flat 要基座动作
+   两次针对同一窗口,缓存后每 chunk 只需 1 次 serve 调用 —— ψ 完全是基座调用的副产物。
+
+★ 用原生分辨率帧,不用 84×84。实机部署时 kai0 吃原生帧,想象空间须与部署一致;
+   喂降采样帧会人为削弱基座,反而抬高残差的相对增益,是论文的效度威胁。
+"""
+from __future__ import annotations
+
+import numpy as np
+import torch
+
+from resfit.rl_finetuning.wm_bridge.wm_driver import (
+    ACTION_DIM, CAMERA_KEYS, CHUNK_LENGTH,
+)
+
+
+class _BaseConfig:
+    """鸭子类型 lerobot policy config:trainer 只用 .image_features 的 keys()。"""
+
+    def __init__(self, image_keys):
+        self.image_features = {k: None for k in image_keys}
+
+
+class Kai0ImaginationBase:
+    def __init__(self, client, *, prompt: str, action_dim: int = ACTION_DIM):
+        self.client = client
+        self.prompt = prompt
+        self.action_dim = action_dim
+        self.config = _BaseConfig(CAMERA_KEYS)
+        self.call_count = 0
+        self._cache_token = None
+        self._cache = None
+
+    def reset(self):
+        """想象段之间不需要清缓存(token 单调递增,天然失效)。"""
+        return None
+
+    def _serve_obs(self, raw_obs) -> dict:
+        native = np.asarray(raw_obs["_wm_native_frames"], dtype=np.float32)
+        assert native.shape[0] == len(CAMERA_KEYS), \
+            f"原生帧视角数须 {len(CAMERA_KEYS)},got {native.shape[0]}"
+        state = np.asarray(raw_obs["observation.state"],
+                           dtype=np.float32).reshape(-1)[:self.action_dim]
+        obs = {"prompt": self.prompt, "observation/state": state}
+        for i, key in enumerate(CAMERA_KEYS):
+            obs[f"observation/{key.split('.')[-1]}"] = native[i]
+        return obs
+
+    def query(self, raw_obs):
+        """→ (actions_physical (50,16), psi)。同一窗口 token 只打一次 serve。"""
+        token = raw_obs.get("_wm_window_token")
+        assert token is not None, "raw_obs 缺 _wm_window_token(ImaginationVecEnv 须填)"
+        if token == self._cache_token and self._cache is not None:
+            return self._cache
+
+        result = self.client.infer(self._serve_obs(raw_obs))
+        self.call_count += 1
+
+        psi = result.get("prefix_feat")
+        if psi is None:
+            raise RuntimeError(
+                "kai0 serve 未透出 prefix_feat —— Kai0HiqlScorer 无法工作。"
+                "serve 须以透出 prefix_feat 的方式启动。")
+
+        actions = np.asarray(result["actions"], dtype=np.float32)
+        assert actions.shape == (CHUNK_LENGTH, self.action_dim), \
+            f"serve 返回动作须 ({CHUNK_LENGTH},{self.action_dim}),got {actions.shape}"
+
+        self._cache_token = token
+        self._cache = (actions, np.asarray(psi, dtype=np.float32).reshape(-1))
+        return self._cache
+
+    def get_action_chunk(self, raw_obs, chunk_length: int) -> torch.Tensor:
+        assert chunk_length == CHUNK_LENGTH, \
+            f"想象路只支持 chunk_length={CHUNK_LENGTH},got {chunk_length}"
+        actions, _ = self.query(raw_obs)
+        return torch.from_numpy(actions).unsqueeze(0)
