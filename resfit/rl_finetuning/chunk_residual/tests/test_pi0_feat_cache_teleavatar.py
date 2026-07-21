@@ -80,25 +80,20 @@ class _StubClient:
 
 
 def _patch_lerobot(monkeypatch, n_eps, T):
-    import torch
+    import numpy as np
     from resfit.rl_finetuning.chunk_residual import build_pi0_feat_cache_via_serve as B
 
-    def fake_open(repo_id, root):
-        return {"repo": repo_id}
+    def fake_list(root):
+        return list(range(n_eps))
 
-    def fake_count(ds):
-        return n_eps
-
-    def fake_frames(ds, ep, image_keys, proprio_key="observation.state", **kw):
+    def fake_read(root, ep, cameras, proprio_key="observation.state", **kw):
         return {
-            "images": {k: torch.zeros(T, 3, 40, 60) for k in image_keys},
-            "state": torch.arange(T * 16, dtype=torch.float32).reshape(T, 16),
-            "actions": torch.zeros(T, 16),
+            "images": {k: np.zeros((T, 3, 40, 60), np.uint8) for k in cameras},
+            "state": np.arange(T * 16, dtype=np.float32).reshape(T, 16),
         }
 
-    monkeypatch.setattr(B, "open_lerobot", fake_open, raising=False)
-    monkeypatch.setattr(B, "lerobot_episode_count", fake_count, raising=False)
-    monkeypatch.setattr(B, "lerobot_episode_frames", fake_frames, raising=False)
+    monkeypatch.setattr(B, "list_teleavatar_episodes", fake_list, raising=False)
+    monkeypatch.setattr(B, "read_teleavatar_episode_batched", fake_read, raising=False)
 
 
 def test_build_main_teleavatar_end_to_end(tmp_path, monkeypatch):

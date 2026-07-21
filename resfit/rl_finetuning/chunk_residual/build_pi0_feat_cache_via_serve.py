@@ -147,9 +147,8 @@ TELEAVATAR_CAM_MAP = {
 }
 
 # monkeypatch 锚点:测试对本模块属性打桩;函数内引用这些名字须走模块级(见 build_main_teleavatar)。
-open_lerobot = None
-lerobot_episode_count = None
-lerobot_episode_frames = None
+list_teleavatar_episodes = None
+read_teleavatar_episode_batched = None
 
 
 def build_teleavatar_serve_obs(images, state, prompt, *, size=224):
@@ -182,27 +181,27 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
 
     与 libero 路同构,差别仅在 obs schema(嵌套三相机)与 cam 键映射。
     """
-    global open_lerobot, lerobot_episode_count, lerobot_episode_frames
-    if open_lerobot is None:            # 真实运行时懒加载;测试已 monkeypatch 则跳过
-        from resfit.rl_finetuning.chunk_residual.lerobot_demo_source import (
-            open_lerobot as _ol, lerobot_episode_count as _lc, lerobot_episode_frames as _lf)
-        open_lerobot, lerobot_episode_count, lerobot_episode_frames = _ol, _lc, _lf
+    global list_teleavatar_episodes, read_teleavatar_episode_batched
+    if list_teleavatar_episodes is None:    # 真实运行时懒加载;测试已 monkeypatch 则跳过
+        from resfit.rl_finetuning.chunk_residual.teleavatar_batch_source import (
+            list_teleavatar_episodes as _le, read_teleavatar_episode_batched as _re)
+        list_teleavatar_episodes, read_teleavatar_episode_batched = _le, _re
 
-    lerobot_keys = list(TELEAVATAR_CAM_MAP.keys())
-    # ★ root 必须指向数据集目录本身(含 meta/),否则 LeRobotDatasetMetadata 本地读失败会
-    #   回退联网查 hub → 对纯本地数据集(如 block_success)报 404。--lerobot_root 是父目录、
-    #   --repo_id 是子目录名,此处 join;若已传完整路径(join 后不存在)则回退用 lerobot_root。
     import os as _os
+    lerobot_keys = list(TELEAVATAR_CAM_MAP.keys())
+    # root 指向数据集目录本身(含 data/、videos/)。--lerobot_root 是父目录、--repo_id 是子目录名;
+    # 若已传完整路径(join 后无 data/)则回退用 lerobot_root。
     dataset_root = _os.path.join(lerobot_root, repo_id)
-    if not _os.path.isdir(_os.path.join(dataset_root, "meta")):
+    if not _os.path.isdir(_os.path.join(dataset_root, "data")):
         dataset_root = lerobot_root
-    ds = open_lerobot(repo_id, dataset_root)
-    n = lerobot_episode_count(ds)
+    eps = list_teleavatar_episodes(dataset_root)
     if num_demos is not None:
-        n = min(n, num_demos)
+        eps = eps[:num_demos]
+    assert eps, f"没从 {dataset_root} 读到任何 episode"
     raw_feats, proprios = [], []
-    for ep in range(n):
-        fr = lerobot_episode_frames(ds, ep, lerobot_keys, proprio_key)
+    # ★ 整段 torchcodec 批量解码(read_teleavatar_episode_batched),~17x 快于逐帧 ds[i]。
+    for ep in eps:
+        fr = read_teleavatar_episode_batched(dataset_root, ep, lerobot_keys, proprio_key)
         T = fr["state"].shape[0]
         assert T > 0, f"episode {ep} has 0 frames"
         feats = []
