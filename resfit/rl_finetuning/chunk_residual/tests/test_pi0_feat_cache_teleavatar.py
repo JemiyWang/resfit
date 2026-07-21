@@ -146,6 +146,20 @@ def test_shards_partition_episodes_without_overlap(tmp_path, monkeypatch):
     assert sum(counts) == 10          # 并集=全部 10 集
 
 
+def test_num_demos_applied_after_shard_not_before(tmp_path, monkeypatch):
+    """★ 先分片再截 num_demos:每分片都非空。反序会让高 index 分片拿空集(SMOKE bug)。"""
+    from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import load_pi0_feat_cache
+    _patch_lerobot(monkeypatch, n_eps=20, T=4)
+    for i in range(4):
+        out = str(tmp_path / f"s{i}.npz")
+        build_main_teleavatar(
+            _StubClient(), lerobot_root="/x", repo_id="block_success",
+            prompt="p", pooling="mean", serve_ckpt_id="k",
+            out_cache=out, num_shards=4, shard_index=i, num_demos=2)
+        seqs, _, _ = load_pi0_feat_cache(out)
+        assert len(seqs) == 2, f"shard {i} 应有 2 集(先分片再截),got {len(seqs)}"
+
+
 def test_shard_index_out_of_range_raises(tmp_path, monkeypatch):
     _patch_lerobot(monkeypatch, n_eps=8, T=4)
     with pytest.raises(AssertionError):

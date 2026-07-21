@@ -196,12 +196,13 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
     if not _os.path.isdir(_os.path.join(dataset_root, "data")):
         dataset_root = lerobot_root
     eps = list_teleavatar_episodes(dataset_root)
-    if num_demos is not None:
-        eps = eps[:num_demos]
-    # 分片(4 卡并行):跨步取 eps[shard::num_shards],各分片均衡且不重叠。
+    # ★ 先分片再截 num_demos:反过来的话(先截前N再分片)会让高 index 分片拿到空集。
+    #   分片(多卡并行):跨步取 eps[shard::num_shards],各分片均衡且不重叠。
     assert 0 <= shard_index < num_shards, f"shard_index {shard_index} 须在 [0,{num_shards})"
     if num_shards > 1:
         eps = eps[shard_index::num_shards]
+    if num_demos is not None:            # 每分片各取前 num_demos(冒烟用)
+        eps = eps[:num_demos]
     assert eps, f"没从 {dataset_root} 读到任何 episode(shard {shard_index}/{num_shards})"
     raw_feats, proprios = [], []
     # ★ 整段 torchcodec 批量解码(read_teleavatar_episode_batched),~17x 快于逐帧 ds[i]。
