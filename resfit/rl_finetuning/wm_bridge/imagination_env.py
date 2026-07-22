@@ -59,6 +59,7 @@ class ImaginationVecEnv:
         self._seg_step = 0
         self._token = 0
         self._obs_cache = None
+        self._pred_frames = None      # 非 None 时收集每 chunk 的 WM 预测帧(adv rollout 用)
 
     # ---------- obs 构造 ----------
 
@@ -128,6 +129,10 @@ class ImaginationVecEnv:
             video = video[0]
         pred = split_predicted_frames(video.float())   # (V,C,25,H,W)
 
+        if self._pred_frames is not None:              # adv rollout:收 WM 预测帧供逐帧打分
+            pf = pred.detach().cpu().numpy() if isinstance(pred, torch.Tensor) else np.asarray(pred)
+            self._pred_frames.append(pf.astype(np.float32))   # (V,C,25,H,W) ∈ [-1,1]
+
         self._tracker.advance(actions)
         self._window = build_obs_window(
             pred, range(WM_TOKEN_STEPS - N_PREVIOUS, WM_TOKEN_STEPS)).numpy()
@@ -151,6 +156,46 @@ class ImaginationVecEnv:
                 torch.tensor([terminated], dtype=torch.bool),
                 torch.tensor([truncated], dtype=torch.bool),
                 {})
+
+    # ---------- adv rollout 支持(eval 逐帧打分,spec §6.7) ----------
+
+    def start_pred_collection(self):
+        self._pred_frames = []
+
+    def collect_pred_frames(self) -> np.ndarray:
+        """→ (T,V,C,H,W) ∈ [-1,1],T=本次 rollout 已点火 chunk 数×25;关闭收集。"""
+        chunks = self._pred_frames or []
+        self._pred_frames = None
+        if not chunks:
+            return np.zeros((0,), dtype=np.float32)
+        arr = np.concatenate(chunks, axis=2)            # (V,C,ΣT,H,W)
+        return np.transpose(arr, (2, 0, 1, 3, 4)).astype(np.float32)  # (T,V,C,H,W)
+
+    def snapshot_state(self) -> dict:
+        """快照可变状态(含 base 缓存)。eval rollout 会 reset/step 本 env(与训练共享同一实例),
+        rollout 前 snapshot、后 restore,防污染训练轨迹。"""
+        import copy as _copy
+        b = self.base
+        return {
+            "_window": None if self._window is None else self._window.copy(),
+            "_caption": self._caption,
+            "_tracker": _copy.deepcopy(self._tracker),
+            "_phi_prev": self._phi_prev,
+            "_act_buf": list(self._act_buf),
+            "_seg_step": self._seg_step,
+            "_token": self._token,
+            "_obs_cache": self._obs_cache,
+            "_pred_frames": self._pred_frames,
+            "base": {k: getattr(b, k, None) for k in
+                     ("_cache_token", "_cache", "_dispense_token", "_dispense_idx")},
+        }
+
+    def restore_state(self, snap: dict):
+        for k in ("_window", "_caption", "_tracker", "_phi_prev", "_act_buf",
+                  "_seg_step", "_token", "_obs_cache", "_pred_frames"):
+            setattr(self, k, snap[k])
+        for k, v in snap["base"].items():
+            setattr(self.base, k, v)
 
     def render(self):
         raise NotImplementedError("想象空间不支持 render")

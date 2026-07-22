@@ -32,6 +32,13 @@ def parse_bridge_args(argv):
     p.add_argument("--num_denois_steps", type=int, default=10)
     p.add_argument("--action_norm_json", default=None, help="block 动作 min/max JSON;缺省 ±1")
     p.add_argument("--allow_dummy_scorer", action="store_true")
+    # 优势估计器 proxy 监控(spec §6.7):给了 --adv_host 才开;每 eval rollout N 集逐帧打分写 jsonl
+    p.add_argument("--adv_host", default=None,
+                   help="优势估计器 serve host(adv_serve.py);给了才开 adv proxy 监控")
+    p.add_argument("--adv_port", type=int, default=8002)
+    p.add_argument("--adv_prompt", default="build block")
+    p.add_argument("--n_eval_episodes", type=int, default=10,
+                   help="每 eval 点 adv rollout 集数(spec §6.7 默认 10)")
     bridge_args, rest = p.parse_known_args(argv)
     return bridge_args, rest
 
@@ -59,6 +66,13 @@ def build_imagination_factories(bridge_args) -> dict:
     if not bridge_args.allow_dummy_scorer:
         contract.check_psi_samesource(scorer, bridge_args.pi0_serve_ckpt_id)
     normalizer = _normalizer(bridge_args.action_norm_json)
+
+    # 优势估计器打分器(adv proxy 监控):给了 --adv_host 才建;否则 eval 只存 checkpoint。
+    adv_scorer = None
+    if bridge_args.adv_host:
+        from resfit.rl_finetuning.wm_bridge.adv_client import AdvServeClient
+        adv_scorer = AdvServeClient(host=bridge_args.adv_host, port=bridge_args.adv_port,
+                                    prompt=bridge_args.adv_prompt)
 
     state = {"base": None, "env": None, "output_dir": None, "config": None}
 
@@ -89,7 +103,9 @@ def build_imagination_factories(bridge_args) -> dict:
 
     def fake_run_dexmg_evaluation(**kw):
         out_dir = kw.get("output_dir") or state["output_dir"] or "outputs_imagination"
-        return make_imagination_evaluator(out_dir, state["config"])(**kw)
+        return make_imagination_evaluator(
+            out_dir, state["config"], adv_scorer=adv_scorer,
+            n_eval_episodes=bridge_args.n_eval_episodes)(**kw)
 
     return {
         "create_vectorized_env": fake_create_vectorized_env,
