@@ -36,7 +36,9 @@ def _rollout_pred_frames(env, agent, max_segments):
         with torch.no_grad(), utils.eval_mode(agent):
             done = False
             while not done and guard < cap:
-                action = agent.act(obs, eval_mode=True)
+                # cpu=False:留 cuda(与训练路 :1194 一致);默认 cpu=True 会让 residual 回 CPU,
+                # 与 wrapper 的 base_flat(cuda)相加时设备不一致(chunk_env_wrapper:167)。
+                action = agent.act(obs, eval_mode=True, cpu=False)
                 obs, _, term, trunc, _ = env.step(action)
                 done = bool((term | trunc).any())
                 guard += 1
