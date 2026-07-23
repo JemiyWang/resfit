@@ -1,8 +1,8 @@
-"""Long-horizon anti-collapse (seed-level): SHORE-RL (ours, staged_joint) vs two
-baselines -- flat Residual RL (base recipe, as005) and IQL (full-policy off-policy).
+"""Long-horizon anti-collapse (seed-level): SHORE-RL (ours, staged_joint) vs
+Residual RL, DSRL, IQL, and IBRL.
 1x5 panels: Pouring | LiftTray | ThreePiece | Threading | CanSort(short-horizon ref).
-Shared y-axis, one shared legend. mean +/-1 s.e.m. band over seeds, faint per-seed
-traces. Self-contained: pulls fresh from wandb.
+Shared y-axis and legend; each method uses a mean +/-1 s.e.m. band over seeds.
+Self-contained: pulls fresh from wandb.
 
 'ours' = same config across tasks (subgoal+BC0.1+staged reward+online joint, as0.05).
 'base' = flat residual (no subgoal/BC/potential). NOT hyperparameter-matched across
@@ -205,8 +205,7 @@ leg = fig.legend([handles[k] for k in order], [STY[k]["label"] for k in order],
                  bbox_to_anchor=(0.5, -0.05), columnspacing=1.8, handlelength=2.4)
 fig.tight_layout(rect=[0, 0.07, 1, 1], w_pad=1.4)
 out_pdf = args.output
-out_png = "/tmp/fig_long_horizon_anti_collapse_multiseed_curves.png"
-fig.savefig(out_pdf, bbox_inches="tight"); fig.savefig(out_png, dpi=150, bbox_inches="tight")
+fig.savefig(out_pdf, bbox_inches="tight")
 print("wrote", out_pdf)
 
 # ---- report stats ----
