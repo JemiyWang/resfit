@@ -85,12 +85,30 @@ def to_uint8(obs: dict, image_keys):
             obs[k] = (v.clamp(0, 1) * 255).round().to(torch.uint8)
 
 
+def resolve_replay_transition(
+        control_next_obs: dict, terminated: torch.Tensor,
+        truncated: torch.Tensor, info: dict) -> tuple[dict, torch.Tensor]:
+    """Choose replay successor/terminal independently from control autoreset."""
+    if not bool(info.get("bootstrap_on_truncation", False)):
+        return control_next_obs, terminated | truncated
+    if bool(terminated.any()):
+        raise RuntimeError(
+            "bootstrap_on_truncation cannot be combined with terminated=True")
+    if not bool(truncated.any()):
+        raise RuntimeError(
+            "bootstrap_on_truncation requires truncated=True")
+    if "final_observation" not in info:
+        raise RuntimeError(
+            "bootstrap_on_truncation requires final_observation")
+    return info["final_observation"], terminated
+
+
 def add_chunk_transition(*, obs, next_obs, combined_action, reward, done, info,
                          image_keys, lowdim_keys, online_rb):
-    """单环境;构造与 train_residual_td3._add_transitions_to_buffer 同构的 TensorDict。
+    """Store the already-resolved replay transition for a single environment.
 
-    注:done 的 transition 直接用返回的 next_obs(已 augment);其 Q 被 done 掩掉,
-    内容不影响 target,故不特殊处理 final_obs(wrapper 也不再透出)。
+    The caller must pass replay next_obs/replay done, which may differ from the
+    control observation and episode boundary returned by a SAME_STEP autoreset.
     """
     keys = set(image_keys) | set(lowdim_keys)
     curr = {k: obs[k][0].detach().cpu() for k in keys}
@@ -1205,37 +1223,53 @@ def main():
                 finetuner.on_step(subgoal.encode_state(obs, rel_raw=cur_rel, prefix_feat=_pf))
         with torch.no_grad(), utils.eval_mode(agent):
             action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,L*D] 残差 chunk
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        control_next_obs, reward, terminated, truncated, info = env.step(action)
         if args.subgoal_conditioned:
             next_rel = info.get("rel_piece")
-            next_obs["observation.subgoal"] = compute_online_subgoal(subgoal, next_obs, base_policy, next_rel).to(
-                next_obs["observation.state"].device)
-        done = terminated | truncated
+            control_next_obs["observation.subgoal"] = compute_online_subgoal(
+                subgoal, control_next_obs, base_policy, next_rel).to(
+                    control_next_obs["observation.state"].device)
+
+        episode_done = terminated | truncated
+        replay_next_obs, replay_done = resolve_replay_transition(
+            control_next_obs, terminated, truncated, info)
+
         if gc_potential is not None:
             _pf = base_policy.last_prefix_feat() if subgoal.state_mode == "pi0_feat" else None
             _s_start = subgoal.encode_state(obs, rel_raw=cur_rel, prefix_feat=_pf)
-            _s_end = subgoal.encode_state(next_obs, rel_raw=next_rel, prefix_feat=_pf)
+            _s_end = subgoal.encode_state(
+                control_next_obs, rel_raw=next_rel, prefix_feat=_pf)
             _z_start = obs["observation.subgoal"]
             from resfit.rl_finetuning.chunk_residual.hiql_potential import gc_subgoal_shaping
-            _shape = gc_subgoal_shaping(gc_potential, _s_start, _s_end, _z_start,
-                                        bonus=args.stage_reward_bonus, gamma=args.gamma,
-                                        done=bool(done.any()))
+            _shape = gc_subgoal_shaping(
+                gc_potential, _s_start, _s_end, _z_start,
+                bonus=args.stage_reward_bonus, gamma=args.gamma,
+                done=bool(episode_done.any()))
             reward = reward + _shape
-        add_chunk_transition(obs=obs, next_obs=next_obs, combined_action=info["scaled_action"],
-                             reward=reward, done=done, info=info, image_keys=image_keys,
-                             lowdim_keys=lowdim_keys, online_rb=online_rb)
+
+        add_chunk_transition(
+            obs=obs,
+            next_obs=replay_next_obs,
+            combined_action=info["scaled_action"],
+            reward=reward,
+            done=replay_done,
+            info=info,
+            image_keys=image_keys,
+            lowdim_keys=lowdim_keys,
+            online_rb=online_rb,
+        )
         if harvester is not None:
             harvester.add(make_bc_entry(obs, info["scaled_action"], image_keys, lowdim_keys),
                           info.get("max_stage_in_chunk", 0))
-            if bool(done.any()):
+            if bool(episode_done.any()):
                 for e in harvester.flush():
                     # extend(非 add):e 是 batch=[1] 的条目,extend 存成 [feat] 元素 → sample 出 [N,feat]
                     # (2D),与从 memmap extend 进来的 offline_rb 同构。relabel_rb 无 MultiStepTransform
                     # 收维(online_rb 有),若用 add 会留下前导 [1] 维 → 与 offline 混采 concat 报 3-vs-2。
                     relabel_rb.extend(e)
-        if finetuner is not None and bool(done.any()):
+        if finetuner is not None and bool(episode_done.any()):
             finetuner.on_episode_end()
-        obs = next_obs
+        obs = control_next_obs
         if args.subgoal_conditioned:
             cur_rel = next_rel
         env_steps += args.chunk_length
