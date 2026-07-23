@@ -54,3 +54,15 @@ def test_num_demos_limits_sorted_prefix(tmp_path):
     _write_episode_parquet(tmp_path, episode_id=0, num_frames=51)
     _write_episode_parquet(tmp_path, episode_id=1, num_frames=101)
     assert count_block_chunk_transitions(str(tmp_path), num_demos=1) == 1
+
+
+def test_catalog_sorts_numeric_episode_ids_across_chunk_boundary(tmp_path):
+    _write_episode_parquet(tmp_path, episode_id=1_000_000, num_frames=51)
+    _write_episode_parquet(tmp_path, episode_id=999_000, num_frames=51)
+
+    episodes = catalog_episodes(str(tmp_path))
+
+    assert [episode.episode_id for episode in episodes] == [999_000, 1_000_000]
+    assert [episode.episode_id for episode in catalog_episodes(str(tmp_path), 1)] == [
+        999_000
+    ]

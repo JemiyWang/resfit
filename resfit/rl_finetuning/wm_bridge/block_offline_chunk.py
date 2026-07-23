@@ -71,7 +71,10 @@ def catalog_episodes(
     paths = sorted(
         glob.glob(
             os.path.join(dataset_root, "data", "chunk-*", "episode_*.parquet")
-        )
+        ),
+        key=lambda path: int(
+            os.path.basename(path).removeprefix("episode_").removesuffix(".parquet")
+        ),
     )
     if num_demos is not None:
         paths = paths[:num_demos]
