@@ -59,6 +59,16 @@ def test_get_action_chunk_shares_cache_with_query():
     assert c.n == 1                        # ★ query 与 wrapper 的取动作共用同一次调用
 
 
+def test_get_action_chunk_follows_observation_device():
+    """base_action 会直接拼进 GPU obs，不能把 numpy serve 结果留在 CPU。"""
+    b = Kai0ImaginationBase(_StubClient(), prompt="build block")
+    b._cache_token = 9
+    b._cache = (np.zeros((50, 16), np.float32), np.zeros(8, np.float32))
+    obs = {"_wm_window_token": 9,
+           "observation.state": torch.empty(1, 16, device="meta")}
+    assert b.get_action_chunk(obs, 50).device.type == "meta"
+
+
 def test_missing_prefix_feat_raises():
     class _NoFeat(_StubClient):
         def infer(self, obs):

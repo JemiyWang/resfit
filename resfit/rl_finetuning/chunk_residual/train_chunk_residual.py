@@ -164,9 +164,8 @@ def build_base_policy(args, device: str, wt_type: str = "best", wt_version: str 
 
     - act (默认,行为不变):ACT(PyTorch lerobot)。args.base_wandb_id 若是本地目录则直接 load
       (自动取其 policy/ 子目录或直接 policy 目录),否则按 wandb artifact 拉。
-    - pi05:pi0/pi05(openpi,JAX)。经 openpi-client websocket 连 serve 进程,用
-      Pi05PolicyAdapter 包成 step 级基座(select_action / reset / config.image_features),
-      内部自带 action queue(execute_horizon)。仅 queue 模式(chunk_length==1)用。
+    - pi05:pi0/pi05(openpi,JAX)。常规 loader 返回带 action queue 的 step 级 adapter；
+      wm_bridge 会在导入处替换 loader，返回额外实现 get_action_chunk 的想象专用 adapter。
     """
     if getattr(args, "base_policy_type", "act") == "pi05":
         from resfit.rl_finetuning.config.residual_td3 import BasePolicyConfig
@@ -384,6 +383,8 @@ def _libero_offline_signature(args, image_keys, offline_cap, image_size):
 
 def _validate_offline_base_mode(args):
     """base_policy 模式需 queue(chunk_length==1 且 base_action_mode=="queue");gt 模式跳过。"""
+    if args.offline_fraction <= 0:
+        return
     if args.offline_base_mode != "base_policy":
         return
     assert args.base_action_mode == "queue" and args.chunk_length == 1, \
@@ -393,6 +394,22 @@ def _validate_offline_base_mode(args):
     if args.base_policy_type == "pi05":
         print("[offline-base] WARN: pi05 base 走 websocket 逐帧推理(~23.8 万次),"
               "首次建 buffer 很慢;--offline_buffer_cache 缓存后秒读")
+
+
+def _validate_base_action_interface(args, base_policy):
+    """按动作来源能力校验，而不是把所有 pi05 都误判成 step-only。"""
+    if args.base_action_mode == "queue":
+        assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
+        assert callable(getattr(base_policy, "select_action", None)), \
+            "queue 基座必须实现 select_action(raw_obs)"
+        return
+
+    # ACT 可由 chunk_act_base.get_action_chunk 走原模型；pi05 则必须由适配器显式
+    # 暴露完整动作块。wm_bridge.Kai0ImaginationBase 正是这一接口。
+    if args.base_policy_type == "pi05":
+        assert callable(getattr(base_policy, "get_action_chunk", None)), \
+            ("pi05 + replan 需要基座实现 get_action_chunk(raw_obs, chunk_length);"
+             "普通 step-only pi05 adapter 不支持，wm_bridge adapter 支持")
 
 
 def _offline_cache_valid(cache_dir, sig):
@@ -786,13 +803,9 @@ def main():
             meta.stats["observation.state"], device=args.device)
 
     # --- 基座 + env ---
-    if args.base_policy_type == "pi05":
-        assert args.base_action_mode == "queue", \
-            "pi05/pi0 基座是 step 级(select_action),只支持 --base_action_mode queue(且 --chunk_length 1)"
-    if args.base_action_mode == "queue":
-        assert args.chunk_length == 1, "--base_action_mode queue 仅支持 --chunk_length 1"
     _validate_offline_base_mode(args)
     base_policy = build_base_policy(args, args.device)
+    _validate_base_action_interface(args, base_policy)
     image_keys = list(base_policy.config.image_features.keys())
     shaping_mode = resolve_shaping_mode(args.reward_shaping, args.staged_reward)
     num_stages = NUM_STAGES.get(args.task, 1)   # 无检测器任务退化为 1 段
@@ -955,7 +968,7 @@ def main():
             assert potential.model.state_dim == exp_v_dim, (
                 f"Φ value 输入维度 {potential.model.state_dim} != observation.state({state_dim})"
                 f"+rel({12 if env_state_mode == 'eef_piece' else 0});value.pt 的 state_mode 与 task 不匹配")
-    action_dim = env.action_dim * args.chunk_length     # = 480
+    action_dim = env.action_dim * args.chunk_length
     if args.stage_conditioned:
         assert args.actor == "raw", "stage-conditioning 第一版只支持 --actor raw（flow 注入未接 stage）"
         assert args.task in NUM_STAGES, f"--stage_conditioned 需要 {args.task} 有 stage 检测器"
@@ -1191,7 +1204,7 @@ def main():
                 _pf = base_policy.last_prefix_feat() if subgoal.state_mode == "pi0_feat" else None
                 finetuner.on_step(subgoal.encode_state(obs, rel_raw=cur_rel, prefix_feat=_pf))
         with torch.no_grad(), utils.eval_mode(agent):
-            action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,480] 残差
+            action = agent.act(obs, eval_mode=False, stddev=args.stddev, cpu=False)  # [1,L*D] 残差 chunk
         next_obs, reward, terminated, truncated, info = env.step(action)
         if args.subgoal_conditioned:
             next_rel = info.get("rel_piece")

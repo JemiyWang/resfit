@@ -187,6 +187,7 @@ from resfit.rl_finetuning.chunk_residual.train_chunk_residual import _validate_o
 
 def test_base_policy_mode_requires_queue():
     a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--offline_fraction", "0.5",
                    "--base_action_mode", "replan", "--chunk_length", "2"])
     with pytest.raises(AssertionError):
         _validate_offline_base_mode(a)
@@ -194,6 +195,7 @@ def test_base_policy_mode_requires_queue():
 
 def test_base_policy_mode_requires_queue_wrong_mode_only():
     a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--offline_fraction", "0.5",
                    "--base_action_mode", "replan", "--chunk_length", "1"])
     with pytest.raises(AssertionError):
         _validate_offline_base_mode(a)
@@ -201,6 +203,7 @@ def test_base_policy_mode_requires_queue_wrong_mode_only():
 
 def test_base_policy_mode_ok_with_queue():
     a = _sig_args(["--offline_base_mode", "base_policy",
+                   "--offline_fraction", "0.5",
                    "--base_action_mode", "queue", "--chunk_length", "1"])
     _validate_offline_base_mode(a)        # 不抛
 
@@ -228,8 +231,8 @@ def test_validate_default_combo_passes():
 
 
 def test_validate_chunk_length_rollback_alone_fails():
-    """单独回退 --chunk_length 20(base_policy 默认仍在)→ assert fail-fast。"""
-    args = build_parser().parse_args(["--chunk_length", "20"])
+    """启用 offline buffer 时，单独改 chunk_length 仍应 fail-fast。"""
+    args = build_parser().parse_args(["--chunk_length", "20", "--offline_fraction", "0.5"])
     with pytest.raises(AssertionError):
         _validate_offline_base_mode(args)
 
@@ -238,3 +241,14 @@ def test_validate_chunk_length_with_gt_rollback_passes():
     """同时回退 --chunk_length 20 --offline_base_mode gt → gt 跳过校验,不抛。"""
     _validate_offline_base_mode(
         build_parser().parse_args(["--chunk_length", "20", "--offline_base_mode", "gt"]))
+
+
+def test_disabled_offline_buffer_does_not_block_chunk_replan():
+    """纯在线想象训练不使用 offline_base_mode，不应被它的 step-level 约束拦截。"""
+    args = build_parser().parse_args([
+        "--offline_fraction", "0",
+        "--offline_base_mode", "base_policy",
+        "--base_action_mode", "replan",
+        "--chunk_length", "50",
+    ])
+    _validate_offline_base_mode(args)

@@ -8,8 +8,9 @@ from resfit.rl_finetuning.wm_bridge.scorers import DummyScorer
 
 
 def _args(**kw):
-    d = {"reward_shaping": "none", "potential_source": None,
-         "chunk_length": 50, "base_action_mode": "replan"}
+    d = {"reward_shaping": "none", "potential_source": "stage",
+         "chunk_length": 50, "base_action_mode": "replan",
+         "n_step": 1, "gamma": 0.995}
     d.update(kw)
     return types.SimpleNamespace(**d)
 
@@ -32,7 +33,7 @@ def test_reward_shaping_must_be_none():
         contract.check_runtime_args(_args(reward_shaping="staged"))
 
 
-def test_potential_source_must_be_unset():
+def test_external_potential_source_is_rejected():
     with pytest.raises(ContractError, match="potential_source"):
         contract.check_runtime_args(_args(potential_source="hiql"))
 
@@ -42,8 +43,37 @@ def test_chunk_length_must_be_fifty():
         contract.check_runtime_args(_args(chunk_length=1))
 
 
+def test_base_action_mode_must_be_replan():
+    with pytest.raises(ContractError, match="base_action_mode"):
+        contract.check_runtime_args(_args(base_action_mode="queue"))
+
+
+def test_n_step_must_be_one_chunk():
+    with pytest.raises(ContractError, match="n_step"):
+        contract.check_runtime_args(_args(n_step=3))
+
+
+def test_trainer_gamma_must_match_imagination_gamma():
+    with pytest.raises(ContractError, match="gamma"):
+        contract.check_runtime_args(_args(gamma=0.99), imagination_gamma=0.995)
+
+
 def test_valid_args_pass():
-    contract.check_runtime_args(_args())
+    contract.check_runtime_args(_args(), imagination_gamma=0.995)
+
+
+def test_passthrough_runtime_args_parse_as_one_chunk_transition():
+    args = contract.check_passthrough_runtime_args([
+        "--reward_shaping", "none",
+        "--potential_source", "stage",
+        "--chunk_length", "50",
+        "--base_action_mode", "replan",
+        "--n_step", "1",
+        "--gamma", "0.995",
+        "--dataset", "ignored-by-contract",
+    ], imagination_gamma=0.995)
+    assert args.chunk_length == 50
+    assert args.base_action_mode == "replan"
 
 
 def test_dummy_scorer_rejected_without_flag():

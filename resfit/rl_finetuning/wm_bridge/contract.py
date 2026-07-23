@@ -5,7 +5,9 @@ monkeypatch 最大的风险是上游改了符号/签名/调用点而我们静默
 """
 from __future__ import annotations
 
+import argparse
 import inspect
+import math
 
 
 class ContractError(RuntimeError):
@@ -73,23 +75,57 @@ def check_wrapper_step_loop() -> None:
             "ImaginationVecEnv.step 的入参约定已失效")
 
 
-def check_runtime_args(args) -> None:
-    """防 double-shaping:wrapper 会在我们的 PBRS reward 之上再叠一层自己的 shaping。"""
+def check_runtime_args(args, imagination_gamma=None) -> None:
+    """校验“一次 actor 决策 = 一次 WM 推进 = 一条 replay transition”。"""
     shaping = getattr(args, "reward_shaping", None)
     if shaping != "none":
         raise ContractError(
             f"想象路必须 --reward_shaping none(当前 {shaping!r})—— "
             "否则 chunk_env_wrapper:202-213 会在 PBRS reward 上再叠一层 = double-shaping")
 
-    if getattr(args, "potential_source", None) is not None:
+    potential_source = getattr(args, "potential_source", None)
+    if potential_source not in (None, "stage"):
         raise ContractError(
-            "想象路不可传 --potential_source —— Φ 由 wm_bridge 自己算,"
-            "wrapper 的 potential 分支必须走 shaping_reward(mode=none) 的零路径")
+            f"想象路 --potential_source 只能是 stage/不传(当前 {potential_source!r}) —— "
+            "Φ 由 wm_bridge 自己算,wrapper 必须走 reward_shaping=none 的零路径")
 
     cl = getattr(args, "chunk_length", None)
     if cl != 50:
         raise ContractError(
             f"想象路必须 --chunk_length 50(当前 {cl!r})—— WM 一次吃 25 token = 50 个动作")
+
+    base_mode = getattr(args, "base_action_mode", None)
+    if base_mode != "replan":
+        raise ContractError(
+            f"想象路必须 --base_action_mode replan(当前 {base_mode!r})—— "
+            "actor 要一次修正完整 50 步动作块，不能逐步 queue")
+
+    n_step = getattr(args, "n_step", None)
+    if n_step != 1:
+        raise ContractError(
+            f"想象路必须 --n_step 1(当前 {n_step!r})—— "
+            "每次 WM 推进本身就是一条 chunk transition")
+
+    trainer_gamma = getattr(args, "gamma", None)
+    if imagination_gamma is not None and not math.isclose(
+            float(trainer_gamma), float(imagination_gamma), rel_tol=0.0, abs_tol=1e-12):
+        raise ContractError(
+            f"trainer --gamma={trainer_gamma} 必须等于 "
+            f"--imagination_gamma={imagination_gamma}，否则 PBRS reward 与 TD target 折扣不一致")
+
+
+def check_passthrough_runtime_args(argv, imagination_gamma):
+    """只解析 trainer 中影响 WM/chunk 时序的参数，其余参数原样透传。"""
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--reward_shaping", default=None)
+    p.add_argument("--potential_source", default="stage")
+    p.add_argument("--chunk_length", type=int, default=1)
+    p.add_argument("--base_action_mode", default="queue")
+    p.add_argument("--n_step", type=int, default=3)
+    p.add_argument("--gamma", type=float, default=0.99)
+    args, _ = p.parse_known_args(argv)
+    check_runtime_args(args, imagination_gamma=imagination_gamma)
+    return args
 
 
 def check_scorer(scorer, allow_dummy: bool) -> None:

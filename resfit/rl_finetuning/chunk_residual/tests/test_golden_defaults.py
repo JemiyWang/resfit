@@ -1,5 +1,12 @@
 """train_chunk_residual 金标准默认值断言(2026-06-10)。"""
-from resfit.rl_finetuning.chunk_residual.train_chunk_residual import build_parser
+import types
+
+import pytest
+
+from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+    _validate_base_action_interface,
+    build_parser,
+)
 
 
 def test_value_defaults_aligned_to_golden():
@@ -22,3 +29,17 @@ def test_stage_balanced_default_on():
     assert build_parser().parse_args([]).stage_balanced is True
     assert build_parser().parse_args(["--no_stage_balanced"]).stage_balanced is False
     assert build_parser().parse_args(["--stage_balanced"]).stage_balanced is True
+
+
+def test_pi05_replan_accepts_chunk_capable_bridge():
+    args = types.SimpleNamespace(
+        base_policy_type="pi05", base_action_mode="replan", chunk_length=50)
+    base = types.SimpleNamespace(get_action_chunk=lambda obs, length: None)
+    _validate_base_action_interface(args, base)
+
+
+def test_pi05_replan_rejects_step_only_adapter():
+    args = types.SimpleNamespace(
+        base_policy_type="pi05", base_action_mode="replan", chunk_length=50)
+    with pytest.raises(AssertionError, match="get_action_chunk"):
+        _validate_base_action_interface(args, types.SimpleNamespace())

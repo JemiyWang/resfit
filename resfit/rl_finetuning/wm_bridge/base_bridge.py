@@ -91,13 +91,15 @@ class Kai0ImaginationBase:
         assert chunk_length == CHUNK_LENGTH, \
             f"想象路只支持 chunk_length={CHUNK_LENGTH},got {chunk_length}"
         actions, _ = self.query(raw_obs)
-        return torch.from_numpy(actions).unsqueeze(0)
+        state = raw_obs.get("observation.state")
+        device = state.device if isinstance(state, torch.Tensor) else "cpu"
+        return torch.from_numpy(actions).unsqueeze(0).to(device)
 
     def select_action(self, raw_obs) -> torch.Tensor:
-        """queue 模式(chunk_length=1)用:从缓存的 50 动作里按窗口逐个分发。
+        """兼容 queue 模式(chunk_length=1):从缓存的 50 动作里按窗口逐个分发。
 
-        trainer 的 pi05 基座路强制 queue+chunk_length1(真 pi05 是 step 级);本 shim 用内部
-        分发游标模拟:同一窗口(_wm_window_token 不变)内,第 i 次 select_action 返回第 i 个动作,
+        想象训练使用 get_action_chunk；保留本入口供旧配置/诊断使用。本 shim 用内部
+        分发游标模拟：同一窗口(_wm_window_token 不变)内，第 i 次调用返回第 i 个动作，
         50 个动作源自该窗口的 1 次 kai0 调用(query 缓存);窗口推进(点火后)则重查、重置游标。
         返回 (1, action_dim) 物理动作,供 wrapper 的 action_scaler.scale。
         """

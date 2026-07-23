@@ -62,11 +62,14 @@ def main(argv=None) -> None:
     from resfit.rl_finetuning.wm_bridge import contract
     contract.check_upstream_symbols()
     contract.check_agent_image_size()
+    contract.check_wrapper_step_loop()
 
     from resfit.rl_finetuning.wm_bridge.builder import (
         build_imagination_factories, parse_bridge_args,
     )
     bridge_args, passthrough = parse_bridge_args(argv)
+    contract.check_passthrough_runtime_args(
+        passthrough, imagination_gamma=bridge_args.imagination_gamma)
     factories = build_imagination_factories(bridge_args)
 
     install_fakes(factories)
