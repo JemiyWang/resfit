@@ -18,3 +18,5 @@ resfit/out/
 # 运行时产物 / 编辑备份(不入库)
 *.pid
 *.bak_*
+# Local Git worktrees
+.worktrees/
