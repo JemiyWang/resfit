@@ -117,6 +117,46 @@ class ChunkResidualEnvWrapper:
         aug["observation.stage_id"] = torch.full((b, 1), float(self._stage_now))  # 瞬时(解耦)
         return aug
 
+    def _augment_bootstrap_final_observation(
+            self, info: dict, terminated: torch.Tensor,
+            truncated: torch.Tensor) -> dict:
+        info = dict(info)
+        if not bool(info.get("bootstrap_on_truncation", False)):
+            return info
+        if bool(terminated.any()):
+            raise RuntimeError(
+                "bootstrap_on_truncation cannot be combined with terminated=True")
+        if not bool(truncated.any()):
+            raise RuntimeError(
+                "bootstrap_on_truncation requires truncated=True")
+        if "final_observation" not in info:
+            raise RuntimeError(
+                "bootstrap_on_truncation requires final_observation")
+        if "_wm_final_base_chunk" not in info:
+            raise RuntimeError(
+                "bootstrap_on_truncation requires _wm_final_base_chunk")
+
+        raw_final_obs = info["final_observation"]
+        final_state = raw_final_obs["observation.state"]
+        final_base_chunk = torch.as_tensor(
+            info["_wm_final_base_chunk"],
+            dtype=torch.float32,
+            device=final_state.device,
+        )
+        if final_base_chunk.ndim == 2:
+            final_base_chunk = final_base_chunk.unsqueeze(0)
+        expected = (self.num_envs, self.chunk_length, self.action_dim)
+        if tuple(final_base_chunk.shape) != expected:
+            raise RuntimeError(
+                f"_wm_final_base_chunk must have shape {expected}, "
+                f"got {tuple(final_base_chunk.shape)}")
+
+        final_base_flat = self.action_scaler.scale(final_base_chunk).reshape(
+            self.num_envs, self.flat_dim)
+        info["final_observation"] = self._augment(
+            raw_final_obs, final_base_flat)
+        return info
+
     @staticmethod
     def _extract_rel(info):
         """从(批后)info 取本 env(env 0)的 raw rel_piece;无则 None。
@@ -157,9 +197,9 @@ class ChunkResidualEnvWrapper:
     def step(self, residual_flat: torch.Tensor):
         """执行一段 chunk(开环逐步),返回 chunk 级 transition。
 
-        注意:对于 done 的 transition,返回的 next_obs 是 autoreset 后新 episode 的
-        (已 augment)起始观测;其 Q 值会被 done 掩掉,内容不影响 target。因此本 wrapper
-        不透出底层 env 的 final_obs(那是未 augment 的原始 numpy,直接入 buffer 会踩坑)。
+        普通 done 仍返回 autoreset 后的 augmented observation。带
+        bootstrap_on_truncation 标记的 imagination 边界还会在 info 中保留独立的、
+        完整 augmented final_observation，供 replay 从生成终点 bootstrap。
         """
         if self._last_base_flat is None:
             raise RuntimeError("Call reset() before step()")
@@ -212,6 +252,9 @@ class ChunkResidualEnvWrapper:
                 phi_start, phi_next, bonus=self.stage_reward_bonus,
                 gamma=self.gamma, done=chunk_done)
 
+        info = self._augment_bootstrap_final_observation(
+            last_info, terminated, truncated)
+
         if bool((terminated | truncated).any()):
             self.base_policy.reset()
             self._stage = 0                              # autoreset 后新 episode 归零
@@ -225,7 +268,6 @@ class ChunkResidualEnvWrapper:
         # rel_piece 与返回的(reset)obs 同步 → 下个 chunk 起点 Φ 一致。
         self._start_phi_state, self._start_rel_piece = self._phi_input(
             raw_obs, aug_obs=aug_obs, info=last_info)
-        info = dict(last_info)
         info["scaled_action"] = combined_flat
         info["max_stage_in_chunk"] = max_in_chunk        # 给 stage-balanced replay
         return aug_obs, total_reward, terminated, truncated, info

@@ -2,6 +2,7 @@ from collections import deque
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
 
 from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualEnvWrapper
@@ -440,3 +441,123 @@ def test_actfeat_potential_uses_feature_encoder_not_lowdim_state():
     assert torch.allclose(pot.inputs[0], torch.tensor([[1.0, 99.0]]))
     assert torch.allclose(pot.inputs[1], torch.tensor([[2.0, 99.0]]))
     assert reward.item() == 0.0
+
+
+class _BootstrapTruncationEnv:
+    def __init__(self):
+        self.action_space = gym.spaces.Box(
+            low=-1, high=1, shape=(D,), dtype=np.float32)
+
+    @staticmethod
+    def _obs(value):
+        return {
+            "observation.state": torch.full((1, 3), float(value)),
+            "observation.images.cam": torch.full(
+                (1, 3, 4, 4), float(value)),
+        }
+
+    def reset(self, **kwargs):
+        return self._obs(0), {}
+
+    def step(self, action):
+        info = {
+            "final_observation": self._obs(10),
+            "_wm_final_base_chunk": np.full((1, D), 0.25, np.float32),
+            "bootstrap_on_truncation": True,
+        }
+        return (
+            self._obs(20),
+            torch.tensor([1.0]),
+            torch.tensor([False]),
+            torch.tensor([True]),
+            info,
+        )
+
+
+class _CountingBase(_FakeBase):
+    def __init__(self):
+        self.chunk_calls = 0
+
+    def get_action_chunk(self, raw_obs, chunk_length):
+        self.chunk_calls += 1
+        return super().get_action_chunk(raw_obs, chunk_length)
+
+
+def test_imagination_truncation_augments_s2_but_returns_augmented_reset_seed():
+    base = _CountingBase()
+    wrapper = ChunkResidualEnvWrapper(
+        _BootstrapTruncationEnv(), base, _IdentityScaler(), _IdentityStd(),
+        chunk_length=1, base_action_mode="replan",
+    )
+    wrapper.reset()
+
+    control_next_obs, _, terminated, truncated, info = wrapper.step(
+        torch.zeros(1, D))
+    replay_next_obs = info["final_observation"]
+
+    assert not terminated.item()
+    assert truncated.item()
+    assert control_next_obs["observation.state"][0, 0].item() == 20.0
+    assert replay_next_obs["observation.state"][0, 0].item() == 10.0
+    assert torch.allclose(
+        control_next_obs["observation.base_action"],
+        torch.full((1, D), 0.5),
+    )
+    assert torch.allclose(
+        replay_next_obs["observation.base_action"],
+        torch.full((1, D), 0.25),
+    )
+    assert "observation.stage_id" in replay_next_obs
+    assert base.chunk_calls == 2
+
+
+class _InvalidBootstrapEnv(_BootstrapTruncationEnv):
+    def __init__(self, info, *, terminated=False, truncated=True):
+        super().__init__()
+        self.info = info
+        self.terminated = terminated
+        self.truncated = truncated
+
+    def step(self, action):
+        return (
+            self._obs(20),
+            torch.tensor([0.0]),
+            torch.tensor([self.terminated]),
+            torch.tensor([self.truncated]),
+            dict(self.info),
+        )
+
+
+@pytest.mark.parametrize("missing_key", [
+    "final_observation",
+    "_wm_final_base_chunk",
+])
+def test_bootstrap_marker_requires_complete_endpoint_payload(missing_key):
+    info = {
+        "final_observation": _BootstrapTruncationEnv._obs(10),
+        "_wm_final_base_chunk": np.full((1, D), 0.25, np.float32),
+        "bootstrap_on_truncation": True,
+    }
+    del info[missing_key]
+    wrapper = ChunkResidualEnvWrapper(
+        _InvalidBootstrapEnv(info), _FakeBase(),
+        _IdentityScaler(), _IdentityStd(), chunk_length=1)
+    wrapper.reset()
+
+    with pytest.raises(RuntimeError, match=missing_key):
+        wrapper.step(torch.zeros(1, D))
+
+
+def test_bootstrap_marker_rejects_true_termination():
+    info = {
+        "final_observation": _BootstrapTruncationEnv._obs(10),
+        "_wm_final_base_chunk": np.full((1, D), 0.25, np.float32),
+        "bootstrap_on_truncation": True,
+    }
+    wrapper = ChunkResidualEnvWrapper(
+        _InvalidBootstrapEnv(info, terminated=True), _FakeBase(),
+        _IdentityScaler(), _IdentityStd(), chunk_length=1)
+    wrapper.reset()
+
+    with pytest.raises(RuntimeError, match="terminated"):
+        wrapper.step(torch.zeros(1, D))
