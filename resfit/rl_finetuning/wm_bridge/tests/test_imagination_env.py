@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import torch
 
+from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import ChunkResidualEnvWrapper
 from resfit.rl_finetuning.wm_bridge.imagination_env import ImaginationVecEnv
 from resfit.rl_finetuning.wm_bridge.init_states import InitStateSampler
 from resfit.rl_finetuning.wm_bridge.wm_driver import (
@@ -173,3 +174,40 @@ def test_window_token_advances_after_each_chunk():
     for _ in range(CHUNK_LENGTH):
         obs, _, _, _, _ = env.step(_act())
     assert obs["_wm_window_token"] != t0
+
+
+class _IdentityScaler:
+    def scale(self, action):
+        return action
+
+    def unscale(self, action):
+        return action
+
+
+class _IdentityStandardizer:
+    def standardize(self, state):
+        return state
+
+
+def test_chunk_wrapper_exposes_one_transition_per_wm_call():
+    """Actor 一次输出 50x16 residual，wrapper 内部攒满后才向 trainer 返回。"""
+    wm = _StubWM()
+    base = _StubBase()
+    inner = _env(wm=wm, base=base, gamma=0.995)
+    wrapped = ChunkResidualEnvWrapper(
+        inner, base, _IdentityScaler(), _IdentityStandardizer(),
+        chunk_length=CHUNK_LENGTH, base_action_mode="replan",
+        reward_shaping_mode="none", gamma=0.995,
+    )
+
+    obs, _ = wrapped.reset()
+    assert obs["observation.base_action"].shape == (1, CHUNK_LENGTH * ACTION_DIM)
+
+    next_obs, reward, terminated, truncated, info = wrapped.step(
+        torch.zeros(1, CHUNK_LENGTH * ACTION_DIM))
+
+    assert wm.n == 1
+    assert next_obs["_wm_window_token"] != obs["_wm_window_token"]
+    assert info["scaled_action"].shape == (1, CHUNK_LENGTH * ACTION_DIM)
+    assert reward.shape == (1,)
+    assert not terminated.item() and not truncated.item()
