@@ -114,14 +114,19 @@ Expected: all commands exit `0`; `aaai2027-unified-supp.pdf` is produced and `fi
 - [ ] **Step 7: Audit logs and rendered text**
 
 ```bash
-rg -n -i '(^!|undefined references|citation.*undefined|reference.*undefined|overfull)' paper/main.log paper/aaai2027-unified-supp.log
+rg -n -i '(^!|undefined references|citation.*undefined|reference.*undefined)' paper/main.log paper/aaai2027-unified-supp.log
+rg -n -i 'overfull' paper/main.log paper/aaai2027-unified-supp.log
 pdftotext -layout paper/main.pdf /tmp/shore-main.txt
 pdftotext -layout paper/aaai2027-unified-supp.pdf /tmp/shore-supp.txt
 rg -n 'Dynamics Model Validation|Supplementary Sec. C.4.4' /tmp/shore-main.txt
 rg -n 'Validating the Model Before Any Policy Training|Validation of the finetuned dynamics model' /tmp/shore-supp.txt
 ```
 
-Expected: the log scan finds no errors, undefined references/citations, or overfull boxes. The main PDF contains the compact pointer, and the supplementary PDF contains the detailed validation subsection and figure caption.
+Expected: the first log scan finds no errors or undefined references/citations. The
+overfull scan shows no new warning in the modified validation blocks; the supplement's
+pre-existing warning around source lines 352--371 may remain. The main PDF contains the
+compact pointer, and the supplementary PDF contains the detailed validation subsection
+and figure caption.
 
 - [ ] **Step 8: Review the scoped source changes**
 

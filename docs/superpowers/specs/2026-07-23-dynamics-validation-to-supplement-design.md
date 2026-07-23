@@ -38,4 +38,5 @@ panel 位于正文”改为指向本节的补充图，并在三项协议之后�
 
 完整编译正文和补充材料。正文不得再包含 `fig:wmval` 或 Figure 8 的验证图；
 补充材料必须包含 `fig:supp-wmval`，并且所有引用均已解析。检查两份日志中
-不存在 LaTeX error、undefined reference/citation 或 overfull box。
+不存在 LaTeX error 或 undefined reference/citation，且修改的验证段不得引入
+新的 overfull box。补充材料原有 352--371 行的 overfull 不属于本任务范围。
