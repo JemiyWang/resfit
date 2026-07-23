@@ -18,6 +18,17 @@ class _StubEpisode:
                 np.zeros(16, np.float32))
 
 
+class _CountingSampler:
+    def __init__(self):
+        self.n = 0
+        self._inner = InitStateSampler(
+            [_StubEpisode()], rng=np.random.default_rng(0))
+
+    def sample(self):
+        self.n += 1
+        return self._inner.sample()
+
+
 class _StubWM:
     def __init__(self):
         self.n = 0
@@ -60,7 +71,8 @@ def _env(**kw):
         wm=kw.pop("wm", _StubWM()),
         base=kw.pop("base", _StubBase()),
         scorer=kw.pop("scorer", _CountingScorer()),
-        sampler=InitStateSampler([_StubEpisode()], rng=np.random.default_rng(0)),
+        sampler=kw.pop("sampler", InitStateSampler(
+            [_StubEpisode()], rng=np.random.default_rng(0))),
         normalizer=ActionNormalizer(-np.ones(16, np.float32), np.ones(16, np.float32)),
         **kw)
 
@@ -98,16 +110,48 @@ def test_wm_fires_exactly_once_on_fiftieth_step():
     assert wm.n == 1
 
 
-def test_truncated_only_after_two_chunks():
-    env = _env()
+def test_second_chunk_truncates_and_same_step_resets_to_real_seed():
+    sampler = _CountingSampler()
+    env = _env(sampler=sampler)
+    start_obs, _ = env.reset()
+    assert sampler.n == 1
+
+    for _ in range(CHUNK_LENGTH):
+        first_obs, _, _, first_trunc, first_info = env.step(_act())
+    assert not bool(first_trunc.reshape(-1)[0])
+    assert "final_observation" not in first_info
+
+    for _ in range(CHUNK_LENGTH):
+        reset_obs, _, term, trunc, info = env.step(_act())
+
+    assert bool(trunc.reshape(-1)[0])
+    assert not bool(term.reshape(-1)[0])
+    assert sampler.n == 2
+    assert env._seg_step == 0
+    assert "final_observation" in info
+
+    final_obs = info["final_observation"]
+    assert final_obs["_wm_window_token"] == first_obs["_wm_window_token"] + 1
+    assert reset_obs["_wm_window_token"] == final_obs["_wm_window_token"] + 1
+    assert reset_obs["_wm_window_token"] != start_obs["_wm_window_token"]
+
+
+def test_four_chunks_repeat_false_true_and_resample_each_episode():
+    sampler = _CountingSampler()
+    wm = _StubWM()
+    env = _env(sampler=sampler, wm=wm)
     env.reset()
-    for _ in range(CHUNK_LENGTH):
-        _, _, _, trunc, _ = env.step(_act())
-    assert not bool(trunc.reshape(-1)[0])          # 第 1 段末不截断
-    for _ in range(CHUNK_LENGTH):
-        _, _, term, trunc, _ = env.step(_act())
-    assert bool(trunc.reshape(-1)[0])              # 第 2 段末截断
-    assert not bool(term.reshape(-1)[0])           # terminated 恒 False
+
+    truncated_flags = []
+    for _ in range(4):
+        for _ in range(CHUNK_LENGTH):
+            _, _, _, trunc, _ = env.step(_act())
+        truncated_flags.append(bool(trunc.reshape(-1)[0]))
+
+    assert truncated_flags == [False, True, False, True]
+    assert wm.n == 4
+    assert sampler.n == 3
+    assert env._seg_step == 0
 
 
 def test_pbrs_reward_is_gamma_phi_next_minus_phi_prev():
@@ -136,6 +180,10 @@ def test_phi_is_not_zeroed_at_truncation():
     assert bool(trunc.reshape(-1)[0])
     assert float(r.reshape(-1)[0]) == pytest.approx(0.9 * 3 - 2, abs=1e-6)
     assert float(r.reshape(-1)[0]) > 0             # 置零的话会是 -2
+    # 第二段端点查询得到 Phi=3；随后 autoreset 才查询新起点并得到 Phi=4。
+    # reward 必须仍是 0.9*3-2，而不是 0.9*4-2。
+    assert env._phi_prev == pytest.approx(4.0)
+    assert env._seg_step == 0
 
 
 def test_two_segment_return_telescopes():
@@ -150,6 +198,18 @@ def test_two_segment_return_telescopes():
         _, r1, _, _, _ = env.step(_act())          # Phi_2 = 3
     total = float(r0.reshape(-1)[0]) + g * float(r1.reshape(-1)[0])
     assert total == pytest.approx(g * g * 3 - 1, abs=1e-6)
+
+
+def test_pred_collection_keeps_both_chunks_across_autoreset():
+    env = _env()
+    env.reset()
+    env.start_pred_collection()
+
+    for _ in range(2 * CHUNK_LENGTH):
+        env.step(_act())
+
+    frames = env.collect_pred_frames()
+    assert frames.shape == (50, 3, 3, 192, 256)
 
 
 def test_serve_called_once_per_chunk():
@@ -211,3 +271,27 @@ def test_chunk_wrapper_exposes_one_transition_per_wm_call():
     assert info["scaled_action"].shape == (1, CHUNK_LENGTH * ACTION_DIM)
     assert reward.shape == (1,)
     assert not terminated.item() and not truncated.item()
+
+
+def test_chunk_wrapper_restarts_imagination_after_every_two_wm_calls():
+    sampler = _CountingSampler()
+    wm = _StubWM()
+    base = _StubBase()
+    inner = _env(wm=wm, base=base, sampler=sampler, gamma=0.995)
+    wrapped = ChunkResidualEnvWrapper(
+        inner, base, _IdentityScaler(), _IdentityStandardizer(),
+        chunk_length=CHUNK_LENGTH, base_action_mode="replan",
+        reward_shaping_mode="none", gamma=0.995,
+    )
+    wrapped.reset()
+
+    truncated_flags = []
+    for _ in range(4):
+        _, _, terminated, truncated, _ = wrapped.step(
+            torch.zeros(1, CHUNK_LENGTH * ACTION_DIM))
+        assert not terminated.item()
+        truncated_flags.append(truncated.item())
+
+    assert truncated_flags == [False, True, False, True]
+    assert wm.n == 4
+    assert sampler.n == 3

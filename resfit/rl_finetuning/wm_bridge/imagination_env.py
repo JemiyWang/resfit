@@ -15,6 +15,11 @@
 ★ truncated 时绝不把 Phi 置零。仓库既有 potential_shaping(chunk_env_wrapper.py:32)约定
    done 时 Phi(s')=0,那是为真终止态设计的;想象段的 truncated 是人为视界切断。照抄会让
    两段回报退化成常数 -Phi_0,学习信号全丢。见 test_phi_is_not_zeroed_at_truncation。
+
+★ max_segments 是每个真实种子允许的 WM 递归次数。达到边界时先用 imagined 终点
+   计算 PBRS,再在同一次 step 内 reset 到新的真实种子;返回 reset observation,并把
+   imagined 终点放进 info["final_observation"]。这样满足外层 wrapper 的 SAME_STEP
+   autoreset 假设,也避免 generated-to-generated 链无限增长。
 """
 from __future__ import annotations
 
@@ -138,11 +143,11 @@ class ImaginationVecEnv:
             pred, range(WM_TOKEN_STEPS - N_PREVIOUS, WM_TOKEN_STEPS)).numpy()
         self._token += 1
 
-        obs = self._obs_from_window()
-        _, psi = self.base.query(obs)
+        endpoint_obs = self._obs_from_window()
+        _, psi = self.base.query(endpoint_obs)
         phi_next = self.scorer.phi(psi, self._tracker.proprio)
 
-        # ★ PBRS 端点差。truncated 时也不置零 phi_next(见 module docstring)
+        # ★ PBRS 始终使用本 chunk 的 imagined 端点;人为截断不把 Phi(s') 置零。
         reward = self.gamma * phi_next - self._phi_prev
         self._phi_prev = phi_next
 
@@ -150,12 +155,21 @@ class ImaginationVecEnv:
         terminated = False
         truncated = self._seg_step >= self.max_segments
 
+        obs = endpoint_obs
+        info = {}
+        if truncated:
+            # SAME_STEP autoreset:外层把返回 obs 当成下一 episode 起点。
+            # endpoint_obs 已用于 reward,并保留给诊断;reset 初始化下一段的 Phi。
+            obs, reset_info = self.reset()
+            info = dict(reset_info)
+            info["final_observation"] = endpoint_obs
+
         self._obs_cache = obs
         return (obs,
                 torch.tensor([reward], dtype=torch.float32),
                 torch.tensor([terminated], dtype=torch.bool),
                 torch.tensor([truncated], dtype=torch.bool),
-                {})
+                info)
 
     # ---------- adv rollout 支持(eval 逐帧打分,spec §6.7) ----------
 
