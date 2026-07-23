@@ -57,6 +57,15 @@ class _StubBase:
         return torch.from_numpy(acts).unsqueeze(0)
 
 
+class _TaggedBase(_StubBase):
+    def query(self, raw_obs):
+        self.n += 1
+        actions = np.full(
+            (CHUNK_LENGTH, ACTION_DIM), float(self.n), dtype=np.float32)
+        psi = np.full(8, float(self.n), dtype=np.float32)
+        return actions, psi
+
+
 class _CountingScorer:
     """Φ = ψ 的第 0 维,便于精确验算 PBRS。"""
 
@@ -88,6 +97,33 @@ def test_reset_returns_required_obs_keys():
         assert obs[k].shape == (1, 3, 84, 84)
     assert obs["observation.state"].shape == (1, 16)
     assert "_wm_native_frames" in obs and "_wm_window_token" in obs
+
+
+def test_max_segments_must_be_positive():
+    with pytest.raises(ValueError, match="max_segments"):
+        _env(max_segments=0)
+
+
+def test_truncation_exports_endpoint_base_chunk_before_reset_query():
+    base = _TaggedBase()
+    env = _env(base=base, max_segments=2)
+    env.reset()                                      # query 1: initial seed
+
+    for _ in range(CHUNK_LENGTH):
+        env.step(_act())                             # query 2: s1
+    for _ in range(CHUNK_LENGTH):
+        reset_obs, _, terminated, truncated, info = env.step(_act())
+                                                     # query 3: s2; query 4: B
+
+    assert not terminated.item()
+    assert truncated.item()
+    assert info["bootstrap_on_truncation"] is True
+    assert info["final_observation"]["_wm_window_token"] < reset_obs["_wm_window_token"]
+    np.testing.assert_array_equal(
+        info["_wm_final_base_chunk"],
+        np.full((CHUNK_LENGTH, ACTION_DIM), 3.0, dtype=np.float32),
+    )
+    assert base.n == 4
 
 
 def test_first_49_steps_are_noops():
@@ -129,6 +165,8 @@ def test_second_chunk_truncates_and_same_step_resets_to_real_seed():
     assert sampler.n == 2
     assert env._seg_step == 0
     assert "final_observation" in info
+    assert info["bootstrap_on_truncation"] is True
+    assert info["_wm_final_base_chunk"].shape == (CHUNK_LENGTH, ACTION_DIM)
 
     final_obs = info["final_observation"]
     assert final_obs["_wm_window_token"] == first_obs["_wm_window_token"] + 1

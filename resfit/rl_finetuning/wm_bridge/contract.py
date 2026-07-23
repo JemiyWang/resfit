@@ -113,6 +113,11 @@ def check_runtime_args(args, imagination_gamma=None) -> None:
             f"trainer --gamma={trainer_gamma} 必须等于 "
             f"--imagination_gamma={imagination_gamma}，否则 PBRS reward 与 TD target 折扣不一致")
 
+    if bool(getattr(args, "subgoal_conditioned", False)):
+        raise ContractError(
+            "想象路暂不支持 --subgoal_conditioned：truncation bootstrap 的 "
+            "final_observation 尚无独立终点 subgoal 协议")
+
 
 def check_passthrough_runtime_args(argv, imagination_gamma):
     """只解析 trainer 中影响 WM/chunk 时序的参数，其余参数原样透传。"""
@@ -123,6 +128,7 @@ def check_passthrough_runtime_args(argv, imagination_gamma):
     p.add_argument("--base_action_mode", default="queue")
     p.add_argument("--n_step", type=int, default=3)
     p.add_argument("--gamma", type=float, default=0.99)
+    p.add_argument("--subgoal_conditioned", action="store_true")
     args, _ = p.parse_known_args(argv)
     check_runtime_args(args, imagination_gamma=imagination_gamma)
     return args

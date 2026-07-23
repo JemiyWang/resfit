@@ -17,9 +17,9 @@
    两段回报退化成常数 -Phi_0,学习信号全丢。见 test_phi_is_not_zeroed_at_truncation。
 
 ★ max_segments 是每个真实种子允许的 WM 递归次数。达到边界时先用 imagined 终点
-   计算 PBRS,再在同一次 step 内 reset 到新的真实种子;返回 reset observation,并把
-   imagined 终点放进 info["final_observation"]。这样满足外层 wrapper 的 SAME_STEP
-   autoreset 假设,也避免 generated-to-generated 链无限增长。
+计算 PBRS,再在同一次 step 内 reset 到新的真实种子;返回 reset observation,并把
+imagined 终点放进 info["final_observation"] 作为 replay bootstrap state。这样满足外层
+wrapper 的 SAME_STEP autoreset 假设,也避免 generated-to-generated 链无限增长。
 """
 from __future__ import annotations
 
@@ -50,6 +50,9 @@ class ImaginationVecEnv:
         self.normalizer = normalizer
         self.gamma = float(gamma)
         self.max_segments = int(max_segments)
+        if self.max_segments <= 0:
+            raise ValueError(
+                f"max_segments must be a positive integer, got {self.max_segments}")
         self.num_denois_steps = int(num_denois_steps)
         self.device = device        # obs 张量须与 QAgent encoder 同设备(trainer 传 cuda)
 
@@ -144,7 +147,7 @@ class ImaginationVecEnv:
         self._token += 1
 
         endpoint_obs = self._obs_from_window()
-        _, psi = self.base.query(endpoint_obs)
+        endpoint_base_chunk, psi = self.base.query(endpoint_obs)
         phi_next = self.scorer.phi(psi, self._tracker.proprio)
 
         # ★ PBRS 始终使用本 chunk 的 imagined 端点;人为截断不把 Phi(s') 置零。
@@ -160,9 +163,18 @@ class ImaginationVecEnv:
         if truncated:
             # SAME_STEP autoreset:外层把返回 obs 当成下一 episode 起点。
             # endpoint_obs 已用于 reward,并保留给诊断;reset 初始化下一段的 Phi。
+            final_base_chunk = np.asarray(
+                endpoint_base_chunk, dtype=np.float32).copy()
+            if final_base_chunk.shape != (CHUNK_LENGTH, ACTION_DIM):
+                raise ValueError(
+                    "endpoint base chunk must have shape "
+                    f"({CHUNK_LENGTH}, {ACTION_DIM}), got {final_base_chunk.shape}")
+
             obs, reset_info = self.reset()
             info = dict(reset_info)
             info["final_observation"] = endpoint_obs
+            info["_wm_final_base_chunk"] = final_base_chunk
+            info["bootstrap_on_truncation"] = True
 
         self._obs_cache = obs
         return (obs,

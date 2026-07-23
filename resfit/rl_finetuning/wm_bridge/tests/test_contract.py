@@ -10,7 +10,7 @@ from resfit.rl_finetuning.wm_bridge.scorers import DummyScorer
 def _args(**kw):
     d = {"reward_shaping": "none", "potential_source": "stage",
          "chunk_length": 50, "base_action_mode": "replan",
-         "n_step": 1, "gamma": 0.995}
+         "n_step": 1, "gamma": 0.995, "subgoal_conditioned": False}
     d.update(kw)
     return types.SimpleNamespace(**d)
 
@@ -56,6 +56,26 @@ def test_n_step_must_be_one_chunk():
 def test_trainer_gamma_must_match_imagination_gamma():
     with pytest.raises(ContractError, match="gamma"):
         contract.check_runtime_args(_args(gamma=0.99), imagination_gamma=0.995)
+
+
+def test_subgoal_conditioned_imagination_is_rejected():
+    with pytest.raises(ContractError, match="subgoal_conditioned"):
+        contract.check_runtime_args(_args(subgoal_conditioned=True))
+
+
+def test_passthrough_subgoal_conditioned_imagination_is_rejected():
+    argv = [
+        "--reward_shaping", "none",
+        "--potential_source", "stage",
+        "--chunk_length", "50",
+        "--base_action_mode", "replan",
+        "--n_step", "1",
+        "--gamma", "0.995",
+        "--subgoal_conditioned",
+    ]
+    with pytest.raises(ContractError, match="subgoal_conditioned"):
+        contract.check_passthrough_runtime_args(
+            argv, imagination_gamma=0.995)
 
 
 def test_valid_args_pass():
