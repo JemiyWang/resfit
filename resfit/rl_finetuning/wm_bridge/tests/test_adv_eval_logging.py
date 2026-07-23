@@ -18,9 +18,11 @@ class _StubAdvScorer:
 
 
 class _StubEvalEnv:
-    """reset→step×(2*chunk) 产出想象轨迹的帧;这里只需给 evaluator 帧序列。"""
-    def rollout_frames(self, agent):        # evaluator 用它拿一集的逐帧
-        return np.zeros((50, 3, 8, 8), np.float32)
+    """Minimal evaluation environment passed through to the rollout helper."""
+
+
+def _pred_frames():
+    return np.zeros((50, 3, 3, 8, 8), np.float32)
 
 
 def test_no_adv_scorer_is_bitwise_task7(tmp_path, monkeypatch):
@@ -34,10 +36,12 @@ def test_no_adv_scorer_is_bitwise_task7(tmp_path, monkeypatch):
 
 def test_logs_raw_values_per_episode(tmp_path, monkeypatch):
     monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(fake_eval, "_rollout_pred_frames",
+                        lambda env, agent, max_segments: _pred_frames())
     ev = fake_eval.make_imagination_evaluator(
         str(tmp_path), config=None,
-        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=3)
-    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=50000)
+        adv_scorer=_StubAdvScorer(), n_eval_episodes=3)
+    ev(env=_StubEvalEnv(), agent=object(), num_episodes=None, device="cpu", global_step=50000)
     rows = [json.loads(l) for l in open(tmp_path / "imagined_adv_eval.jsonl")]
     assert len(rows) == 3
     assert all(r["env_step"] == 50000 for r in rows)
@@ -52,10 +56,12 @@ def test_logs_raw_values_per_episode(tmp_path, monkeypatch):
 def test_no_success_failure_classification_in_log(tmp_path, monkeypatch):
     """★ 只存原始值,绝不写 success/failure 字段(阈值留给用户离线定)。"""
     monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(fake_eval, "_rollout_pred_frames",
+                        lambda env, agent, max_segments: _pred_frames())
     ev = fake_eval.make_imagination_evaluator(
         str(tmp_path), config=None,
-        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=1)
-    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=0)
+        adv_scorer=_StubAdvScorer(), n_eval_episodes=1)
+    ev(env=_StubEvalEnv(), agent=object(), num_episodes=None, device="cpu", global_step=0)
     row = json.loads(open(tmp_path / "imagined_adv_eval.jsonl").readline())
     assert "success" not in row and "is_success" not in row and "threshold" not in row
 
@@ -63,11 +69,13 @@ def test_no_success_failure_classification_in_log(tmp_path, monkeypatch):
 def test_appends_across_eval_points(tmp_path, monkeypatch):
     """训练中断不丢已存:每个 eval 点追加,不覆盖。"""
     monkeypatch.setattr(fake_eval, "save_checkpoint", lambda *a, **k: None)
+    monkeypatch.setattr(fake_eval, "_rollout_pred_frames",
+                        lambda env, agent, max_segments: _pred_frames())
     ev = fake_eval.make_imagination_evaluator(
         str(tmp_path), config=None,
-        adv_scorer=_StubAdvScorer(), eval_env=_StubEvalEnv(), n_eval_episodes=2)
-    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=50000)
-    ev(env=None, agent=object(), num_episodes=None, device="cpu", global_step=100000)
+        adv_scorer=_StubAdvScorer(), n_eval_episodes=2)
+    ev(env=_StubEvalEnv(), agent=object(), num_episodes=None, device="cpu", global_step=50000)
+    ev(env=_StubEvalEnv(), agent=object(), num_episodes=None, device="cpu", global_step=100000)
     rows = [json.loads(l) for l in open(tmp_path / "imagined_adv_eval.jsonl")]
     assert len(rows) == 4
     assert {r["env_step"] for r in rows} == {50000, 100000}
