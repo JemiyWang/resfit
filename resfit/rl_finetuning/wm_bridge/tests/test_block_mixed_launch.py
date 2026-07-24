@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shlex
 import types
 
 import pandas as pd
@@ -17,6 +18,60 @@ from resfit.rl_finetuning.wm_bridge.builder import (
 )
 from resfit.rl_finetuning.wm_bridge.contract import ContractError
 from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
+
+
+def _production_launch_argv():
+    tokens = shlex.split(
+        Path("launch_block_imagination.sh").read_text(),
+        comments=True,
+        posix=True,
+    )
+    module = "resfit.rl_finetuning.wm_bridge.launch_imagination"
+    start = tokens.index(module) + 1
+    end = tokens.index("2>&1", start)
+    return [token for token in tokens[start:end] if token != "\n"]
+
+
+def test_production_launch_enables_exact_mixed_configuration():
+    text = Path("launch_block_imagination.sh").read_text()
+    tokens = shlex.split(text, comments=True, posix=True)
+    required = {
+        "--offline_chunk_dataset": "${BLK}/block_success",
+        "--offline_chunk_cache_root":
+            "/mnt/mnt/data/resfit/cache/block_mixed_replay",
+        "--offline_fraction": "0.5",
+        "--batch_size": "256",
+        "--actor": "raw",
+        "--action_scale": "0.2",
+        "--min_range_per_dim": "0.1",
+        "--demo_bc_coef": "0.1",
+        "--bc_coef_final": "0.01",
+        "--critic_warmup_steps": "10000",
+        "--learning_starts": "10000",
+    }
+    for flag, value in required.items():
+        assert tokens.count(flag) == 1
+        assert tokens[tokens.index(flag) + 1] == value
+    assert tokens.count("--no_stage_balanced") == 1
+    assert "--offline_base_mode" not in tokens
+    assert "--offline_dataset_path" not in tokens
+    assert "--offline_buffer_cache" not in tokens
+    assert "OUT=/mnt/mnt/data/resfit/outputs_imagination/" \
+        "block_shore_mixed50_seed${SEED}" in tokens
+    assert tokens[tokens.index("--wandb_name") + 1] == \
+        "block_shore_mixed50_seed${SEED}"
+    init_indices = [
+        index for index, token in enumerate(tokens)
+        if token == "--init_state_dataset"
+    ]
+    assert [tokens[index + 1] for index in init_indices] == [
+        "${BLK}/block_success", "${BLK}/block_fail"]
+
+
+def test_production_batch_is_exactly_128_plus_128():
+    batch_size, fraction = 256, 0.5
+    assert int(batch_size * (1 - fraction)) == 128
+    assert int(batch_size * fraction) == 128
 
 
 class RuntimeStub:
@@ -210,6 +265,48 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(
         (dataset / "meta/episodes_stats.jsonl").resolve())
 
 
+def test_production_launch_tokens_dry_run_publish_exact_metadata(
+        tmp_path, monkeypatch):
+    dataset = _write_success_dataset(tmp_path)
+    value_ckpt = tmp_path / "value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    cache_root = tmp_path / "cache"
+    output_dir = tmp_path / "output"
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+
+    argv = _production_launch_argv()
+    for flag, value in (
+        ("--value_ckpt", value_ckpt),
+        ("--offline_chunk_dataset", dataset),
+        ("--offline_chunk_cache_root", cache_root),
+        ("--output_dir", output_dir),
+    ):
+        argv = builder._replace_option(argv, flag, value)
+
+    bridge_args, passthrough = parse_bridge_args(argv)
+    runtime, _ = prepare_offline_runtime(bridge_args, passthrough)
+    write_bridge_run_config(str(output_dir), runtime.bridge_meta)
+    published = json.loads(
+        (output_dir / "bridge_run_config.json").read_text())
+
+    assert {
+        key: published[key]
+        for key in (
+            "online_batch_size",
+            "offline_batch_size",
+            "trainer_compat_mode",
+            "actual_base_mode",
+            "offline_reward",
+        )
+    } == {
+        "online_batch_size": 128,
+        "offline_batch_size": 128,
+        "trainer_compat_mode": "gt",
+        "actual_base_mode": "kai0_chunk",
+        "offline_reward": "gamma_phi_next_minus_phi",
+    }
+
+
 def test_prepare_runtime_requires_trainer_metadata_to_resolve_to_offline_dataset(
         tmp_path, monkeypatch):
     dataset = _write_success_dataset(tmp_path / "offline")
@@ -240,7 +337,7 @@ def test_metadata_writers_publish_atomic_json(tmp_path):
     assert json.loads((cache / "bridge_meta.json").read_text()) == metadata
 
 
-def test_prepare_pure_online_is_a_noop(tmp_path):
+def test_prepare_pure_online_is_a_noop(tmp_path, monkeypatch):
     value_ckpt = tmp_path / "value.pt"
     value_ckpt.write_bytes(b"unused")
     bridge_args, _ = parse_bridge_args([
@@ -252,6 +349,28 @@ def test_prepare_pure_online_is_a_noop(tmp_path):
 
     assert runtime is None
     assert translated == passthrough
+    assert set(tmp_path.iterdir()) == {value_ckpt}
+    assert not {
+        "--offline_dataset_path",
+        "--offline_buffer_cache",
+        "--offline_base_mode",
+    }.intersection(translated)
+
+    scorer = object()
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.scorers.Kai0HiqlScorer."
+        "from_value_ckpt",
+        lambda *args, **kwargs: scorer,
+    )
+    monkeypatch.setattr(contract, "check_scorer", lambda *args: None)
+    monkeypatch.setattr(contract, "check_mixed_scorer", lambda *args, **kw: None)
+    monkeypatch.setattr(contract, "check_psi_samesource", lambda *args: None)
+    factories = builder.build_imagination_factories(bridge_args)
+    assert set(factories) == {
+        "create_vectorized_env",
+        "run_dexmg_evaluation",
+        "load_pi05_base_policy",
+    }
 
 
 def test_launcher_writes_metadata_before_installing_fakes(monkeypatch):
