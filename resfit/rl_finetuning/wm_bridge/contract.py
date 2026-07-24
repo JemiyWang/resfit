@@ -6,12 +6,185 @@ monkeypatch 最大的风险是上游改了符号/签名/调用点而我们静默
 from __future__ import annotations
 
 import argparse
+import ast
+import importlib.util
 import inspect
 import math
+import os
+from pathlib import Path
 
 
 class ContractError(RuntimeError):
     pass
+
+
+def parse_mixed_passthrough(argv):
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--offline_fraction", type=float, default=0.0)
+    p.add_argument("--offline_num_demos", type=int, default=None)
+    p.add_argument("--batch_size", type=int, default=256)
+    p.add_argument("--base_policy_type", default="act")
+    p.add_argument("--base_action_mode", default="queue")
+    p.add_argument("--chunk_length", type=int, default=1)
+    p.add_argument("--n_step", type=int, default=3)
+    p.add_argument("--gamma", type=float, default=0.99)
+    p.add_argument("--actor", default="raw")
+    p.add_argument("--action_scale", type=float, default=0.2)
+    p.add_argument("--min_range_per_dim", type=float, default=0.1)
+    p.add_argument("--relabel", action="store_true")
+    p.add_argument(
+        "--stage_balanced", dest="stage_balanced",
+        action="store_true", default=True)
+    p.add_argument(
+        "--no_stage_balanced", dest="stage_balanced", action="store_false")
+    p.add_argument("--stage_conditioned", action="store_true")
+    p.add_argument("--subgoal_conditioned", action="store_true")
+    p.add_argument("--online_finetune_value", action="store_true")
+    p.add_argument("--online_finetune_high_actor", action="store_true")
+    p.add_argument("--pi0_prompt", default="build block")
+    p.add_argument("--pi0_action_dim", type=int, default=16)
+    p.add_argument("--data_source", default="hdf5")
+    p.add_argument("--dataset", default="block_success")
+    p.add_argument("--output_dir", default="outputs_chunk")
+    args, _ = p.parse_known_args(argv)
+    return args
+
+
+def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
+    if offline_chunk_dataset is None:
+        return
+
+    source = os.path.realpath(offline_chunk_dataset)
+    expected_dataset = os.path.basename(source)
+    checks = (
+        (
+            "offline_fraction",
+            math.isclose(
+                float(getattr(trainer_args, "offline_fraction", 0.0)),
+                0.5,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ),
+            "must equal 0.5",
+        ),
+        (
+            "batch_size",
+            getattr(trainer_args, "batch_size", None) == 256,
+            "must equal 256",
+        ),
+        (
+            "base_policy_type",
+            getattr(trainer_args, "base_policy_type", None) == "pi05",
+            "must equal pi05",
+        ),
+        (
+            "base_action_mode",
+            getattr(trainer_args, "base_action_mode", None) == "replan",
+            "must equal replan",
+        ),
+        (
+            "chunk_length",
+            getattr(trainer_args, "chunk_length", None) == 50,
+            "must equal 50",
+        ),
+        (
+            "n_step",
+            getattr(trainer_args, "n_step", None) == 1,
+            "must equal 1",
+        ),
+        (
+            "actor",
+            getattr(trainer_args, "actor", None) == "raw",
+            "must equal raw",
+        ),
+        (
+            "relabel",
+            not bool(getattr(trainer_args, "relabel", False)),
+            "must be disabled",
+        ),
+        (
+            "stage_balanced",
+            not bool(getattr(trainer_args, "stage_balanced", False)),
+            "must be disabled",
+        ),
+        (
+            "stage_conditioned",
+            not bool(getattr(trainer_args, "stage_conditioned", False)),
+            "must be disabled",
+        ),
+        (
+            "subgoal_conditioned",
+            not bool(getattr(trainer_args, "subgoal_conditioned", False)),
+            "must be disabled",
+        ),
+        (
+            "online_finetune_value",
+            not bool(getattr(trainer_args, "online_finetune_value", False)),
+            "must be disabled",
+        ),
+        (
+            "online_finetune_high_actor",
+            not bool(
+                getattr(trainer_args, "online_finetune_high_actor", False)),
+            "must be disabled",
+        ),
+        (
+            "pi0_prompt",
+            getattr(trainer_args, "pi0_prompt", None) == "build block",
+            "must equal 'build block'",
+        ),
+        (
+            "pi0_action_dim",
+            getattr(trainer_args, "pi0_action_dim", None) == 16,
+            "must equal 16",
+        ),
+        (
+            "data_source",
+            getattr(trainer_args, "data_source", None) == "hdf5",
+            "must equal hdf5",
+        ),
+        (
+            "dataset",
+            getattr(trainer_args, "dataset", None) == expected_dataset,
+            f"must equal {expected_dataset!r}",
+        ),
+    )
+    for field, valid, requirement in checks:
+        if not valid:
+            value = getattr(trainer_args, field, None)
+            raise ContractError(
+                f"mixed replay {field}={value!r} {requirement}")
+
+    if os.path.basename(source) != "block_success":
+        raise ContractError(
+            "offline_chunk_dataset must resolve to block_success, "
+            f"got {source!r}")
+
+
+def check_mixed_scorer(
+    scorer,
+    enabled: bool,
+    serve_ckpt_id: str | None = None,
+) -> None:
+    if not enabled:
+        return
+    from resfit.rl_finetuning.wm_bridge.scorers import DummyScorer
+
+    if isinstance(scorer, DummyScorer):
+        raise ContractError(
+            "DummyScorer is forbidden when block mixed replay is enabled")
+
+    expected_anchor = getattr(scorer, "expected_psi_anchor", None)
+    if not expected_anchor:
+        raise ContractError(
+            "mixed replay requires a nonempty scorer expected_psi_anchor")
+    if not serve_ckpt_id:
+        raise ContractError(
+            "mixed replay requires a nonempty pi0_serve_ckpt_id")
+    if str(expected_anchor) != str(serve_ckpt_id):
+        raise ContractError(
+            "mixed replay scorer expected_psi_anchor and pi0_serve_ckpt_id "
+            f"are different: {expected_anchor!r} != {serve_ckpt_id!r}")
 
 
 def check_upstream_symbols() -> None:
@@ -73,6 +246,123 @@ def check_wrapper_step_loop() -> None:
         raise ContractError(
             "ChunkResidualEnvWrapper.step 不再以单步动作调 vec_env.step —— "
             "ImaginationVecEnv.step 的入参约定已失效")
+
+
+def _attribute_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _attribute_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def check_offline_hook_points() -> None:
+    """Statically verify the trainer's lazy block-offline injection points."""
+    module_name = (
+        "resfit.rl_finetuning.chunk_residual.train_chunk_residual")
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
+        raise ContractError(f"cannot locate trainer source for {module_name}")
+    source = Path(spec.origin).read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=spec.origin)
+    main_nodes = [
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "main"
+    ]
+    if len(main_nodes) != 1:
+        raise ContractError("train_chunk_residual.main source is missing or duplicated")
+    main_node = main_nodes[0]
+
+    module = (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay")
+    imports = [
+        node for node in ast.walk(main_node)
+        if isinstance(node, ast.ImportFrom) and node.module == module
+    ]
+    expected_names = ["build_offline_buffer", "count_offline_transitions"]
+    if len(imports) != 1 or [alias.name for alias in imports[0].names] != expected_names:
+        raise ContractError(
+            "train_chunk_residual.main must lazily import exactly "
+            "build_offline_buffer and count_offline_transitions")
+
+    calls = {
+        name: [
+            node for node in ast.walk(main_node)
+            if isinstance(node, ast.Call)
+            and _attribute_name(node.func) == name
+        ]
+        for name in expected_names
+    }
+    count_calls = calls["count_offline_transitions"]
+    count_valid = (
+        len(count_calls) == 1
+        and len(count_calls[0].args) == 1
+        and _attribute_name(count_calls[0].args[0])
+        == "args.offline_dataset_path"
+        and len(count_calls[0].keywords) == 1
+        and count_calls[0].keywords[0].arg == "num_demos"
+        and _attribute_name(count_calls[0].keywords[0].value)
+        == "args.offline_num_demos"
+    )
+    if not count_valid:
+        raise ContractError(
+            "count_offline_transitions call no longer uses "
+            "args.offline_dataset_path and args.offline_num_demos")
+
+    build_calls = calls["build_offline_buffer"]
+    expected_build_keywords = {
+        "action_scaler": "action_scaler",
+        "state_standardizer": "state_standardizer",
+        "image_keys": "image_keys",
+        "bonus": "args.stage_reward_bonus",
+        "mode": "shaping_mode",
+        "gamma": "args.gamma",
+        "num_demos": "args.offline_num_demos",
+        "stage_cache": "args.offline_stage_cache",
+        "potential": (
+            "gc_potential if args.potential_source == 'hiql_subgoal' "
+            "else potential"),
+        "subgoal": "subgoal",
+        "way_steps": "args.subgoal_way_steps",
+        "act_feat_seqs": "_offline_act_feat_seqs",
+        "data_source": "args.data_source",
+        "lerobot_repo_id": "args.dataset",
+        "lerobot_root": "args.lerobot_root",
+        "base_policy": "base_policy",
+        "base_mode": "args.offline_base_mode",
+        "base_device": "args.device",
+        "env_hint": "args.task",
+    }
+    expected_keyword_asts = {
+        name: ast.dump(
+            ast.parse(expression, mode="eval").body,
+            include_attributes=False,
+        )
+        for name, expression in expected_build_keywords.items()
+    }
+    actual_keyword_asts = {}
+    if len(build_calls) == 1:
+        actual_keyword_asts = {
+            keyword.arg: ast.dump(
+                keyword.value,
+                include_attributes=False,
+            )
+            for keyword in build_calls[0].keywords
+        }
+    build_valid = (
+        len(build_calls) == 1
+        and len(build_calls[0].args) == 2
+        and _attribute_name(build_calls[0].args[0]) == "offline_rb"
+        and _attribute_name(build_calls[0].args[1])
+        == "args.offline_dataset_path"
+        and actual_keyword_asts == expected_keyword_asts
+    )
+    if not build_valid:
+        raise ContractError(
+            "build_offline_buffer call no longer matches the exact offline "
+            "trainer hook contract")
 
 
 def check_runtime_args(args, imagination_gamma=None) -> None:

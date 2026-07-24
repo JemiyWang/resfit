@@ -1,3 +1,4 @@
+from pathlib import Path
 import types
 
 import pytest
@@ -26,6 +27,43 @@ def test_upstream_symbols_present_on_current_repo():
 def test_wrapper_still_loops_per_timestep():
     """攒批机制的前提:wrapper 必须逐时间步调 vec_env.step()。"""
     contract.check_wrapper_step_loop()         # 当前仓库应通过
+
+
+def test_offline_hook_points_still_lazy_import_and_call():
+    contract.check_offline_hook_points()
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("base_mode=args.offline_base_mode,", ""),
+        ("base_mode=args.offline_base_mode,", "compat_mode=args.offline_base_mode,"),
+        ("gamma=args.gamma,", ""),
+        ("num_demos=args.offline_num_demos,", ""),
+        ("action_scaler=action_scaler,", ""),
+        ("state_standardizer=state_standardizer,", ""),
+        ("image_keys=image_keys,", ""),
+    ],
+)
+def test_offline_hook_contract_rejects_build_keyword_drift(
+    monkeypatch,
+    old,
+    new,
+):
+    original_read_text = Path.read_text
+
+    def altered_source(path, *args, **kwargs):
+        source = original_read_text(path, *args, **kwargs)
+        start = source.index("                build_offline_buffer(\n")
+        end_marker = "                    base_device=args.device, env_hint=args.task,)"
+        end = source.index(end_marker, start) + len(end_marker)
+        build_call = source[start:end]
+        assert old in build_call
+        return source[:start] + build_call.replace(old, new, 1) + source[end:]
+
+    monkeypatch.setattr(Path, "read_text", altered_source)
+    with pytest.raises(ContractError, match="build_offline_buffer"):
+        contract.check_offline_hook_points()
 
 
 def test_reward_shaping_must_be_none():
@@ -127,3 +165,109 @@ def test_serve_sha_missing_warns_but_does_not_raise():
     sc = types.SimpleNamespace(expected_psi_anchor="aaa")
     with pytest.warns(UserWarning, match="无法验证同源"):
         contract.check_psi_samesource(sc, serve_ckpt_id=None)
+
+
+def _mixed_args(**overrides):
+    values = {
+        "offline_fraction": 0.5,
+        "batch_size": 256,
+        "base_policy_type": "pi05",
+        "base_action_mode": "replan",
+        "chunk_length": 50,
+        "n_step": 1,
+        "actor": "raw",
+        "relabel": False,
+        "stage_balanced": False,
+        "stage_conditioned": False,
+        "subgoal_conditioned": False,
+        "online_finetune_value": False,
+        "online_finetune_high_actor": False,
+        "pi0_prompt": "build block",
+        "pi0_action_dim": 16,
+        "data_source": "hdf5",
+        "dataset": "block_success",
+    }
+    values.update(overrides)
+    return types.SimpleNamespace(**values)
+
+
+def test_pure_online_does_not_require_mixed_flags():
+    contract.check_mixed_replay_args(
+        _mixed_args(offline_fraction=0.0),
+        offline_chunk_dataset=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("offline_fraction", 0.4),
+        ("batch_size", 255),
+        ("base_policy_type", "act"),
+        ("base_action_mode", "queue"),
+        ("chunk_length", 1),
+        ("n_step", 3),
+        ("actor", "flow"),
+        ("relabel", True),
+        ("stage_balanced", True),
+        ("stage_conditioned", True),
+        ("subgoal_conditioned", True),
+        ("online_finetune_value", True),
+        ("online_finetune_high_actor", True),
+        ("pi0_prompt", "assemble the three pieces"),
+        ("pi0_action_dim", 14),
+        ("data_source", "lerobot"),
+        ("dataset", "some_other_dataset"),
+    ],
+)
+def test_mixed_contract_rejects_invalid_configuration(field, value):
+    args = _mixed_args(**{field: value})
+    with pytest.raises(ContractError, match=field):
+        contract.check_mixed_replay_args(
+            args, offline_chunk_dataset="/data/block_success")
+
+
+def test_mixed_contract_rejects_non_success_source():
+    with pytest.raises(ContractError, match="block_success"):
+        contract.check_mixed_replay_args(
+            _mixed_args(), offline_chunk_dataset="/data/block_fail")
+
+
+def test_mixed_mode_rejects_dummy_scorer_even_with_debug_flag():
+    with pytest.raises(ContractError, match="DummyScorer"):
+        contract.check_mixed_scorer(DummyScorer(), enabled=True)
+
+
+@pytest.mark.parametrize(
+    ("anchor", "serve_ckpt_id", "message"),
+    [
+        (None, "kai0-a", "expected_psi_anchor"),
+        ("kai0-a", None, "pi0_serve_ckpt_id"),
+        ("kai0-a", "kai0-b", "different"),
+    ],
+)
+def test_mixed_mode_requires_strict_scorer_identity(
+    anchor,
+    serve_ckpt_id,
+    message,
+):
+    scorer = types.SimpleNamespace(expected_psi_anchor=anchor)
+    with pytest.raises(ContractError, match=message):
+        contract.check_mixed_scorer(
+            scorer,
+            enabled=True,
+            serve_ckpt_id=serve_ckpt_id,
+        )
+
+
+def test_mixed_mode_accepts_exact_scorer_identity():
+    scorer = types.SimpleNamespace(expected_psi_anchor="kai0-a")
+    contract.check_mixed_scorer(
+        scorer,
+        enabled=True,
+        serve_ckpt_id="kai0-a",
+    )
+
+
+def test_pure_online_keeps_existing_dummy_scorer_policy():
+    contract.check_mixed_scorer(DummyScorer(), enabled=False)

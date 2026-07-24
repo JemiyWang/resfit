@@ -1,6 +1,6 @@
 """零改动入口。
 
-在 sys.modules 预置 3 个假模块拦截符号,再用 runpy 以 __main__ 方式跑原 trainer。
+在 sys.modules 预置 4 个假模块拦截 5 个符号,再用 runpy 以 __main__ 方式跑原 trainer。
 WM / RL 两侧源码 0 行改动。仓库先例:run_td3_meta_only_wrapper.py。
 
 ★ 不能 patch build_base_policy —— 它定义在 train_chunk_residual.py 自身,而 runpy 以
@@ -24,6 +24,10 @@ _TARGETS = {
     "create_vectorized_env": "resfit.dexmg.environments.dexmg",
     "run_dexmg_evaluation": "resfit.rl_finetuning.utils.evaluate_dexmg",
     "load_pi05_base_policy": "resfit.lerobot.policies.pi05",
+    "count_offline_transitions": (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay"),
+    "build_offline_buffer": (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay"),
 }
 
 TRAINER = "resfit.rl_finetuning.chunk_residual.train_chunk_residual"
@@ -63,14 +67,39 @@ def main(argv=None) -> None:
     contract.check_upstream_symbols()
     contract.check_agent_image_size()
     contract.check_wrapper_step_loop()
+    contract.check_offline_hook_points()
 
     from resfit.rl_finetuning.wm_bridge.builder import (
-        build_imagination_factories, parse_bridge_args,
+        build_imagination_factories,
+        format_offline_build_stats,
+        format_offline_startup_banner,
+        parse_bridge_args,
+        prepare_offline_runtime,
+        write_bridge_cache_meta,
+        write_bridge_run_config,
     )
     bridge_args, passthrough = parse_bridge_args(argv)
     contract.check_passthrough_runtime_args(
         passthrough, imagination_gamma=bridge_args.imagination_gamma)
-    factories = build_imagination_factories(bridge_args)
+    offline_runtime, passthrough = prepare_offline_runtime(
+        bridge_args, passthrough)
+    factories = build_imagination_factories(
+        bridge_args, offline_runtime=offline_runtime)
+
+    if offline_runtime is not None:
+        parsed = contract.parse_mixed_passthrough(passthrough)
+        print(format_offline_startup_banner(offline_runtime))
+        if "build_stats" in offline_runtime.bridge_meta:
+            print(format_offline_build_stats(
+                offline_runtime.bridge_meta["build_stats"],
+                offline_runtime,
+            ))
+        write_bridge_run_config(
+            parsed.output_dir, offline_runtime.bridge_meta)
+        write_bridge_cache_meta(
+            offline_runtime.replay_cache_dir,
+            offline_runtime.bridge_meta,
+        )
 
     install_fakes(factories)
     sys.argv = [TRAINER] + passthrough
