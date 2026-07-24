@@ -29,7 +29,7 @@ HF_LEROBOT_HOME=${BLK} HF_HUB_OFFLINE=1 \
   --offline_fraction 0.5 --batch_size 256 \
   --base_policy_type pi05 --base_action_mode replan --chunk_length 50 \
   --actor raw --action_scale 0.2 --min_range_per_dim 0.1 \
-  --demo_bc_coef 0.1 --bc_coef_final 0.01 \
+  --demo_bc_coef 0.1 \
   --critic_warmup_steps 10000 --learning_starts 10000 \
   --no_stage_balanced \
   --n_step 1 --gamma 0.995 --imagination_gamma 0.995 \
