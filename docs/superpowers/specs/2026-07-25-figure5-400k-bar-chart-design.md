@@ -12,8 +12,7 @@ overwriting the current learning-curve figure.
   `320k < step <= 400k`. With the current 10k evaluation interval, this is the
   eight checkpoints from 330k through 400k.
 - Use the mean of those seed-level values as the bar height.
-- Show `±1 s.e.m.` across seed-level values when at least two seeds are
-  available. The single-seed LiftTray `w/o waypoint` bar has no error bar.
+- Show `±1 s.e.m.` across seed-level values when at least two seeds are available.
 - Do not extrapolate or substitute missing checkpoints. Fail generation if any
   selected seed lacks the complete eight-checkpoint window.
 
@@ -40,7 +39,7 @@ overwriting the current learning-curve figure.
 
 - Unit-test the fixed-window selection, per-seed aggregation, cross-seed
   mean/s.e.m., and incomplete-window rejection without contacting W&B.
-- Query the existing Figure 5 run inventory and require all 40 selected seeds
+- Query the existing Figure 5 run inventory and require all 42 selected seeds
   to contain the complete 330k--400k window.
 - Inspect the PDF metadata and embedded fonts.
 - Render and visually inspect the generated chart.

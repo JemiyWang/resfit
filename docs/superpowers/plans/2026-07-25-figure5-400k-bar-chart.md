@@ -4,7 +4,7 @@
 
 **Goal:** Generate a separate three-panel bar-chart version of Figure 5 using fixed-budget 330k--400k final-window success.
 
-**Architecture:** Add one self-contained plotting module with pure metric and plotting functions plus a W&B-backed `main()`. Unit tests exercise the metric and rendering paths with synthetic data, while the production run uses the exact 40-run inventory already selected by the current Figure 5 script.
+**Architecture:** Add one self-contained plotting module with pure metric and plotting functions plus a W&B-backed `main()`. Unit tests exercise the metric and rendering paths with synthetic data, while the production run uses the exact 42-run inventory selected by the current Figure 5 script.
 
 **Tech Stack:** Python 3.11, unittest, Matplotlib, Weights & Biases API
 
@@ -113,7 +113,7 @@ git commit -m "feat: add Figure 5 400k bar chart"
 
 **Interfaces:**
 - Consumes: the exact task/arm/run inventory from `paper/plot_ablation_curves.py` and W&B field `eval/success_rate`.
-- Produces: a validated 40-seed summary and the two figure files.
+- Produces: a validated 42-seed summary and the two figure files.
 
 - [ ] **Step 1: Add the exact production inventory and pull path**
 
@@ -130,7 +130,7 @@ Require:
 ```python
 self.assertEqual(list(PANELS), ["Pouring", "LiftTray", "ThreePiece"])
 self.assertTrue(all(set(arms) == set(LEGEND_ORDER) for arms in PANELS.values()))
-self.assertEqual(sum(len(runs) for arms in PANELS.values() for runs in arms.values()), 40)
+self.assertEqual(sum(len(runs) for arms in PANELS.values() for runs in arms.values()), 42)
 ```
 
 - [ ] **Step 3: Run the complete offline test file**
@@ -151,7 +151,7 @@ Run:
 /mnt/mnt/data/resfit/rise_venv/bin/python paper/plot_ablation_bars_400k.py
 ```
 
-Expected: all 40 seeds pass the eight-checkpoint completeness gate and the
+Expected: all 42 seeds pass the eight-checkpoint completeness gate and the
 script reports both output paths.
 
 - [ ] **Step 5: Verify the artifacts**
@@ -166,8 +166,8 @@ git diff --check
 ```
 
 Expected: one-page PDF, embedded fonts, passing tests, and no whitespace errors.
-Render the PDF to PNG and inspect the three panels, legend, clipped text, error
-bars, and the no-error-bar single-seed LiftTray column.
+Render the PDF to PNG and inspect the three panels, legend, clipped text, and
+error bars, including the updated three-seed LiftTray `w/o waypoint` column.
 
 - [ ] **Step 6: Commit the generated first version**
 

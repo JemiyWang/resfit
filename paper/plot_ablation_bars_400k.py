@@ -97,6 +97,8 @@ PANELS = {
             (CR, "dz9ubgf9"),
         ],
         "no_subgoal": [
+            (CR, "nbgai06b"),
+            (CR, "pm9ctit1"),
             (CR, "khbe8135"),
         ],
         "no_both": [
