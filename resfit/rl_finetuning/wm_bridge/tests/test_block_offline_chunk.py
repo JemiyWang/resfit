@@ -156,7 +156,9 @@ class ListReplay:
         self.items.append(item)
 
 
-def test_collect_episode_endpoints_queries_each_unique_frame_once(tmp_path):
+def test_collect_episode_endpoints_queries_each_unique_frame_once(
+    tmp_path, capsys,
+):
     slices = plan_episode_chunks(120)
     reader = FakeReader(num_frames=120)
     base = FakeBase()
@@ -166,6 +168,9 @@ def test_collect_episode_endpoints_queries_each_unique_frame_once(tmp_path):
     assert len(base.tokens) == 5
     assert record.base_actions.shape == (5, 50, 16)
     assert record.proprio.shape == (5, 16)
+    output = capsys.readouterr().out
+    assert "episode=3 frame=0" in output
+    assert "episode=3 frame=119" in output
 
 
 def test_build_transition_matches_online_schema_and_exact_pbrs(tmp_path):
@@ -194,6 +199,9 @@ def test_build_transition_matches_online_schema_and_exact_pbrs(tmp_path):
         - SumFeatureScorer.phi_for_frame(0)
     )
     assert stats.transitions == 1
+    assert stats.expert_norm_mean > 0.0
+    assert stats.base_norm_mean == 0.0
+    assert stats.residual_norm_mean > 0.0
     for key in CAMERA_KEYS:
         assert item["obs"][key].dtype == torch.uint8
         assert tuple(item["obs"][key].shape) == (3, 84, 84)

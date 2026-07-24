@@ -98,6 +98,9 @@ def collect_episode_endpoints(
     })
     bases, features, states = [], [], []
     for frame_index in indices:
+        print(
+            f"offline_endpoint_progress episode={episode_id} "
+            f"frame={frame_index}")
         state = reader.states[frame_index]
         raw_obs = {
             "_wm_native_frames": reader.native_frames(frame_index),
@@ -127,6 +130,8 @@ class BuildStats:
     reward_std: float
     potential_delta_mean: float
     potential_delta_std: float
+    expert_norm_mean: float
+    base_norm_mean: float
     residual_norm_mean: float
     expert_saturation_fraction: float
     base_saturation_fraction: float
@@ -229,6 +234,8 @@ def build_block_offline_buffer(
     transition_count = 0
     rewards = []
     potential_deltas = []
+    expert_norms = []
+    base_norms = []
     residual_norms = []
     expert_saturation = []
     base_saturation = []
@@ -254,6 +261,9 @@ def build_block_offline_buffer(
             endpoint_hits += 1
 
         for item in slices:
+            print(
+                f"offline_build_progress episode={episode.episode_id} "
+                f"frame={item.start}->{item.end}")
             base, feature, raw_state = _endpoint_at(
                 endpoint_record, item.start)
             next_base, next_feature, next_raw_state = _endpoint_at(
@@ -326,6 +336,10 @@ def build_block_offline_buffer(
             transition_count += 1
             rewards.append(float(reward_tensor.item()))
             potential_deltas.append(phi_next - phi_current)
+            expert_norms.append(float(torch.linalg.vector_norm(
+                expert_scaled).item()))
+            base_norms.append(float(torch.linalg.vector_norm(
+                base_scaled).item()))
             residual_norms.append(float(torch.linalg.vector_norm(
                 expert_scaled - base_scaled).item()))
             expert_saturation.append(
@@ -334,6 +348,8 @@ def build_block_offline_buffer(
 
     reward_mean, reward_std = _mean_std(rewards)
     delta_mean, delta_std = _mean_std(potential_deltas)
+    expert_mean, _ = _mean_std(expert_norms)
+    base_mean, _ = _mean_std(base_norms)
     residual_mean, _ = _mean_std(residual_norms)
     return BuildStats(
         episodes=len(selected),
@@ -345,6 +361,8 @@ def build_block_offline_buffer(
         reward_std=reward_std,
         potential_delta_mean=delta_mean,
         potential_delta_std=delta_std,
+        expert_norm_mean=expert_mean,
+        base_norm_mean=base_mean,
         residual_norm_mean=residual_mean,
         expert_saturation_fraction=_fraction(expert_saturation),
         base_saturation_fraction=_fraction(base_saturation),

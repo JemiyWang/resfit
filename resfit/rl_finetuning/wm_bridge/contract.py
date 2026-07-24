@@ -161,7 +161,11 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
             f"got {source!r}")
 
 
-def check_mixed_scorer(scorer, enabled: bool) -> None:
+def check_mixed_scorer(
+    scorer,
+    enabled: bool,
+    serve_ckpt_id: str | None = None,
+) -> None:
     if not enabled:
         return
     from resfit.rl_finetuning.wm_bridge.scorers import DummyScorer
@@ -169,6 +173,18 @@ def check_mixed_scorer(scorer, enabled: bool) -> None:
     if isinstance(scorer, DummyScorer):
         raise ContractError(
             "DummyScorer is forbidden when block mixed replay is enabled")
+
+    expected_anchor = getattr(scorer, "expected_psi_anchor", None)
+    if not expected_anchor:
+        raise ContractError(
+            "mixed replay requires a nonempty scorer expected_psi_anchor")
+    if not serve_ckpt_id:
+        raise ContractError(
+            "mixed replay requires a nonempty pi0_serve_ckpt_id")
+    if str(expected_anchor) != str(serve_ckpt_id):
+        raise ContractError(
+            "mixed replay scorer expected_psi_anchor and pi0_serve_ckpt_id "
+            f"are different: {expected_anchor!r} != {serve_ckpt_id!r}")
 
 
 def check_upstream_symbols() -> None:

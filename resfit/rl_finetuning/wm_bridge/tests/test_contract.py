@@ -238,5 +238,36 @@ def test_mixed_mode_rejects_dummy_scorer_even_with_debug_flag():
         contract.check_mixed_scorer(DummyScorer(), enabled=True)
 
 
+@pytest.mark.parametrize(
+    ("anchor", "serve_ckpt_id", "message"),
+    [
+        (None, "kai0-a", "expected_psi_anchor"),
+        ("kai0-a", None, "pi0_serve_ckpt_id"),
+        ("kai0-a", "kai0-b", "different"),
+    ],
+)
+def test_mixed_mode_requires_strict_scorer_identity(
+    anchor,
+    serve_ckpt_id,
+    message,
+):
+    scorer = types.SimpleNamespace(expected_psi_anchor=anchor)
+    with pytest.raises(ContractError, match=message):
+        contract.check_mixed_scorer(
+            scorer,
+            enabled=True,
+            serve_ckpt_id=serve_ckpt_id,
+        )
+
+
+def test_mixed_mode_accepts_exact_scorer_identity():
+    scorer = types.SimpleNamespace(expected_psi_anchor="kai0-a")
+    contract.check_mixed_scorer(
+        scorer,
+        enabled=True,
+        serve_ckpt_id="kai0-a",
+    )
+
+
 def test_pure_online_keeps_existing_dummy_scorer_policy():
     contract.check_mixed_scorer(DummyScorer(), enabled=False)

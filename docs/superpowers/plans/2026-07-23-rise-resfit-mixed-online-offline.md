@@ -1527,7 +1527,7 @@ HF_LEROBOT_HOME=/mnt/mnt/data/domains_rise/block HF_HUB_OFFLINE=1 \
   --pi0_serve_ckpt_id pi05_block_awbc_49999 \
   --offline_chunk_dataset /mnt/mnt/data/domains_rise/block/block_success \
   --offline_chunk_cache_root /mnt/mnt/data/resfit/cache/block_mixed_replay_smoke \
-  --offline_num_demos 2 --offline_fraction 0.5 --batch_size 2 \
+  --offline_num_demos 2 --offline_fraction 0.5 --batch_size 256 \
   --base_policy_type pi05 --base_action_mode replan --chunk_length 50 \
   --actor raw --action_scale 0.2 --min_range_per_dim 0.1 \
   --n_step 1 --gamma 0.995 --imagination_gamma 0.995 \
@@ -1546,7 +1546,7 @@ Expected startup evidence:
 offline_source=block_success
 trainer_compat_mode=gt
 actual_offline_base=kai0_chunk
-online_batch_size=1 offline_batch_size=1
+online_batch_size=128 offline_batch_size=128
 offline_reward=gamma_phi_next_minus_phi
 ```
 

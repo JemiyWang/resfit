@@ -15,7 +15,7 @@ parse_bridge_args 摘走 bridge 专属参数(--value_ckpt/--wm_host/... ),其余
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 import json
 import os
 from pathlib import Path
@@ -195,6 +195,35 @@ def _resolve_trainer_normalization_source(dataset_root):
     return trainer_root, str(stats_path.resolve())
 
 
+def _endpoint_cache_status(endpoint_store, episodes):
+    eligible = []
+    for episode in episodes:
+        slices = plan_episode_chunks(episode.num_frames)
+        if slices:
+            eligible.append((episode, slices))
+    if not eligible:
+        return "miss"
+
+    complete_hits = 0
+    for episode, slices in eligible:
+        record = endpoint_store.load_episode(episode.episode_id)
+        if record is None:
+            continue
+        required = {
+            frame_index
+            for item in slices
+            for frame_index in (item.start, item.end)
+        }
+        available = set(np.asarray(record.frame_indices).tolist())
+        if required.issubset(available):
+            complete_hits += 1
+    if complete_hits == len(eligible):
+        return "hit"
+    if complete_hits:
+        return "partial"
+    return "miss"
+
+
 def prepare_offline_runtime(bridge_args, passthrough):
     from resfit.rl_finetuning.wm_bridge import contract
 
@@ -265,6 +294,24 @@ def prepare_offline_runtime(bridge_args, passthrough):
         replay_fp,
         force_rebuild=bridge_args.offline_rebuild,
     )
+    endpoint_cache_status = _endpoint_cache_status(endpoint_store, selected)
+    replay_path = Path(replay_cache_dir)
+    replay_cache_status = (
+        "hit"
+        if (replay_path / "buffer_meta.json").is_file()
+        and (replay_path / "bridge_meta.json").is_file()
+        else "miss"
+    )
+    cached_build_stats = None
+    if replay_cache_status == "hit":
+        try:
+            cached_metadata = json.loads(
+                (replay_path / "bridge_meta.json").read_text(
+                    encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise contract.ContractError(
+                f"cannot read replay bridge metadata: {exc}") from exc
+        cached_build_stats = cached_metadata.get("build_stats")
     online_batch_size = int(
         parsed.batch_size * (1.0 - parsed.offline_fraction))
     offline_batch_size = int(
@@ -303,9 +350,15 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "offline_reward": "gamma_phi_next_minus_phi",
         "online_batch_size": online_batch_size,
         "offline_batch_size": offline_batch_size,
+        "endpoint_cache_status": endpoint_cache_status,
+        "replay_cache_status": replay_cache_status,
+        "endpoint_cache": endpoint_cache_status,
+        "replay_cache": replay_cache_status,
         "offline_rebuild": bool(bridge_args.offline_rebuild),
         "output_dir": parsed.output_dir,
     }
+    if cached_build_stats is not None:
+        metadata["build_stats"] = cached_build_stats
     runtime = OfflineRuntime(
         dataset_root=dataset_root,
         all_episodes=all_episodes,
@@ -342,14 +395,47 @@ def _check_offline_source(dataset_path, runtime):
             f"{runtime.dataset_root!r}")
 
 
-def format_offline_build_stats(stats, runtime):
+def format_offline_startup_banner(runtime):
+    meta = runtime.bridge_meta
     return (
-        f"offline_source=block_success "
-        f"offline_transitions={stats.transitions} "
-        f"trainer_compat_mode=gt actual_offline_base=kai0_chunk "
-        f"offline_reward=gamma_phi_next_minus_phi "
-        f"replay_cache={runtime.replay_cache_dir}"
+        f"offline_source={meta['offline_source']} "
+        f"offline_episodes={meta['offline_episodes']} "
+        f"offline_transitions={meta['offline_transitions']} "
+        f"batch={meta['online_batch_size']}+{meta['offline_batch_size']} "
+        f"trainer_compat_mode={meta['trainer_compat_mode']} "
+        f"actual_offline_base={meta['actual_offline_base']} "
+        f"offline_reward={meta['offline_reward']} "
+        f"endpoint_cache={meta['endpoint_cache']} "
+        f"replay_cache={meta['replay_cache']}"
     )
+
+
+def _build_stats_dict(stats):
+    if is_dataclass(stats):
+        return asdict(stats)
+    return dict(stats)
+
+
+def format_offline_build_stats(stats, runtime):
+    values = _build_stats_dict(stats)
+    fields = (
+        "episodes",
+        "skipped_short_episodes",
+        "transitions",
+        "endpoint_hits",
+        "endpoint_misses",
+        "reward_mean",
+        "reward_std",
+        "potential_delta_mean",
+        "potential_delta_std",
+        "expert_norm_mean",
+        "base_norm_mean",
+        "residual_norm_mean",
+        "expert_saturation_fraction",
+        "base_saturation_fraction",
+    )
+    details = " ".join(f"{field}={values[field]:g}" for field in fields)
+    return f"offline_build_stats {details} replay_cache={runtime.replay_cache_dir}"
 
 
 def make_offline_factories(offline_runtime, state, scorer) -> dict:
@@ -400,6 +486,15 @@ def make_offline_factories(offline_runtime, state, scorer) -> dict:
             episodes=offline_runtime.selected_episodes(num_demos),
             **kwargs,
         )
+        offline_runtime.bridge_meta["build_stats"] = _build_stats_dict(stats)
+        write_bridge_run_config(
+            offline_runtime.bridge_meta["output_dir"],
+            offline_runtime.bridge_meta,
+        )
+        write_bridge_cache_meta(
+            offline_runtime.replay_cache_dir,
+            offline_runtime.bridge_meta,
+        )
         print(format_offline_build_stats(stats, offline_runtime))
 
     return {
@@ -419,9 +514,13 @@ def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
 
     scorer = Kai0HiqlScorer.from_value_ckpt(bridge_args.value_ckpt)
     contract.check_scorer(scorer, bridge_args.allow_dummy_scorer)
+    mixed_enabled = offline_runtime is not None
     contract.check_mixed_scorer(
-        scorer, enabled=(offline_runtime is not None))
-    if not bridge_args.allow_dummy_scorer:
+        scorer,
+        enabled=mixed_enabled,
+        serve_ckpt_id=bridge_args.pi0_serve_ckpt_id,
+    )
+    if not mixed_enabled and not bridge_args.allow_dummy_scorer:
         contract.check_psi_samesource(scorer, bridge_args.pi0_serve_ckpt_id)
     normalizer = _normalizer(bridge_args.action_norm_json)
 

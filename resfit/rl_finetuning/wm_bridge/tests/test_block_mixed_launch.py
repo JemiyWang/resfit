@@ -3,6 +3,7 @@ from pathlib import Path
 import shlex
 import types
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -10,12 +11,16 @@ from resfit.rl_finetuning.wm_bridge import builder
 from resfit.rl_finetuning.wm_bridge import contract
 from resfit.rl_finetuning.wm_bridge import launch_imagination
 from resfit.rl_finetuning.wm_bridge.builder import (
+    format_offline_build_stats,
+    format_offline_startup_banner,
     make_offline_factories,
     parse_bridge_args,
     prepare_offline_runtime,
     write_bridge_cache_meta,
     write_bridge_run_config,
 )
+from resfit.rl_finetuning.wm_bridge.block_offline_cache import EndpointRecord
+from resfit.rl_finetuning.wm_bridge.block_offline_chunk import BuildStats
 from resfit.rl_finetuning.wm_bridge.contract import ContractError
 from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
 
@@ -74,6 +79,23 @@ def test_production_batch_is_exactly_128_plus_128():
     assert int(batch_size * fraction) == 128
 
 
+def test_live_smoke_plan_keeps_production_batch_contract():
+    text = Path(
+        "docs/superpowers/plans/"
+        "2026-07-23-rise-resfit-mixed-online-offline.md"
+    ).read_text()
+    section = text.split(
+        "**Step 6: Run opt-in two-episode live cache smoke**", 1
+    )[1].split("**Step 7: Inspect production dry-run metadata**", 1)[0]
+    assert (
+        "--offline_num_demos 2 --offline_fraction 0.5 --batch_size 256"
+        in section
+    )
+    assert "online_batch_size=128 offline_batch_size=128" in section
+    assert "--batch_size 2 \\" not in section
+    assert "online_batch_size=1 offline_batch_size=1" not in section
+
+
 class RuntimeStub:
     dataset_root = "/data/block_success"
     endpoint_store = object()
@@ -85,6 +107,25 @@ class RuntimeStub:
             types.SimpleNamespace(num_frames=101),
         )
         return episodes if num_demos is None else episodes[:num_demos]
+
+
+def _complete_build_stats():
+    return BuildStats(
+        episodes=2,
+        skipped_short_episodes=0,
+        transitions=3,
+        endpoint_hits=1,
+        endpoint_misses=1,
+        reward_mean=1.25,
+        reward_std=0.5,
+        potential_delta_mean=2.0,
+        potential_delta_std=0.25,
+        expert_norm_mean=11.0,
+        base_norm_mean=7.0,
+        residual_norm_mean=4.0,
+        expert_saturation_fraction=0.1,
+        base_saturation_fraction=0.2,
+    )
 
 
 def _write_success_dataset(parent):
@@ -139,15 +180,19 @@ def test_parse_bridge_offline_args_are_removed_from_passthrough():
     assert rest == ["--batch_size", "256"]
 
 
-def test_offline_factories_count_and_forward_shared_objects(monkeypatch):
+def test_offline_factories_count_and_forward_shared_objects(
+    tmp_path, monkeypatch,
+):
     runtime = RuntimeStub()
+    runtime.replay_cache_dir = str(tmp_path / "cache")
+    runtime.bridge_meta = {"output_dir": str(tmp_path / "output")}
     shared_base, shared_scorer = object(), object()
     state = {"base": shared_base}
     captured = {}
 
     def fake_build(rb, path, **kwargs):
         captured.update(kwargs)
-        return types.SimpleNamespace(transitions=3)
+        return _complete_build_stats()
 
     monkeypatch.setattr(builder, "build_block_offline_buffer", fake_build)
     factories = make_offline_factories(runtime, state, shared_scorer)
@@ -192,6 +237,44 @@ def test_offline_factory_requires_explicit_gt_compatibility_mode(monkeypatch):
     with pytest.raises(ContractError, match="base_mode"):
         factories["build_offline_buffer"](
             object(), RuntimeStub.dataset_root, gamma=0.995)
+
+
+def test_first_build_prints_and_atomically_persists_complete_stats(
+    tmp_path, monkeypatch, capsys,
+):
+    runtime = RuntimeStub()
+    runtime.replay_cache_dir = str(tmp_path / "cache-generation")
+    runtime.bridge_meta = {
+        "output_dir": str(tmp_path / "output"),
+        "offline_source": "block_success",
+    }
+    stats = _complete_build_stats()
+    monkeypatch.setattr(
+        builder, "build_block_offline_buffer", lambda *a, **k: stats)
+    factories = make_offline_factories(
+        runtime, {"base": object()}, object())
+
+    factories["build_offline_buffer"](
+        object(), runtime.dataset_root, num_demos=2, base_mode="gt")
+
+    output = capsys.readouterr().out
+    for token in (
+        "reward_mean=1.25", "reward_std=0.5",
+        "potential_delta_mean=2", "potential_delta_std=0.25",
+        "expert_norm_mean=11", "base_norm_mean=7",
+        "residual_norm_mean=4", "expert_saturation_fraction=0.1",
+        "base_saturation_fraction=0.2", "endpoint_hits=1",
+        "endpoint_misses=1",
+    ):
+        assert token in output
+    expected = runtime.bridge_meta["build_stats"]
+    assert json.loads(
+        (tmp_path / "output/bridge_run_config.json").read_text()
+    )["build_stats"] == expected
+    assert json.loads(
+        (tmp_path / "cache-generation/bridge_meta.json").read_text()
+    )["build_stats"] == expected
+    assert not list(tmp_path.rglob("*.tmp"))
 
 
 def test_replace_option_rejects_bare_authoritative_flag():
@@ -263,6 +346,75 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(
     assert meta["normalization_dataset_root"] == str(dataset.resolve())
     assert meta["normalization_stats_path"] == str(
         (dataset / "meta/episodes_stats.jsonl").resolve())
+    assert meta["endpoint_cache_status"] == "miss"
+    assert meta["replay_cache_status"] == "miss"
+
+
+def test_cache_hit_preserves_stats_and_banner_is_authoritative(
+    tmp_path, monkeypatch,
+):
+    dataset = _write_success_dataset(tmp_path)
+    short_parquet = dataset / "data/chunk-000/episode_000001.parquet"
+    pd.DataFrame({"frame_index": range(50)}).to_parquet(short_parquet)
+    for key in CAMERA_KEYS:
+        video = dataset / f"videos/chunk-000/{key}/episode_000001.mp4"
+        video.write_bytes(f"short-{key}".encode())
+    value_ckpt = tmp_path / "value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    bridge_args, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_block_awbc_49999",
+    ])
+    passthrough = builder._replace_option(
+        _mixed_passthrough(tmp_path / "output"),
+        "--offline_num_demos",
+        2,
+    )
+    first, _ = prepare_offline_runtime(bridge_args, passthrough)
+    record = EndpointRecord(
+        frame_indices=np.array([0], dtype="int64"),
+        base_actions=np.zeros((1, 50, 16), dtype="float32"),
+        prefix_features=np.zeros((1, 2), dtype="float32"),
+        proprio=np.zeros((1, 16), dtype="float32"),
+    )
+    first.endpoint_store.save_episode(0, record)
+    stats = _complete_build_stats()
+    cached_meta = dict(first.bridge_meta, build_stats=stats.__dict__)
+    write_bridge_cache_meta(first.replay_cache_dir, cached_meta)
+    Path(first.replay_cache_dir, "buffer_meta.json").write_text("{}")
+
+    incomplete, _ = prepare_offline_runtime(bridge_args, passthrough)
+
+    assert incomplete.bridge_meta["endpoint_cache_status"] == "miss"
+    complete_record = EndpointRecord(
+        frame_indices=np.array([0, 50], dtype="int64"),
+        base_actions=np.zeros((2, 50, 16), dtype="float32"),
+        prefix_features=np.zeros((2, 2), dtype="float32"),
+        proprio=np.zeros((2, 16), dtype="float32"),
+    )
+    first.endpoint_store.save_episode(0, complete_record)
+    cached, _ = prepare_offline_runtime(bridge_args, passthrough)
+
+    assert cached.replay_cache_dir == first.replay_cache_dir
+    assert cached.bridge_meta["replay_cache_status"] == "hit"
+    assert cached.bridge_meta["endpoint_cache_status"] == "hit"
+    assert cached.bridge_meta["replay_cache"] == "hit"
+    assert cached.bridge_meta["endpoint_cache"] == "hit"
+    assert cached.bridge_meta["build_stats"] == stats.__dict__
+    banner = format_offline_startup_banner(cached)
+    for token in (
+        "offline_source=block_success", "offline_episodes=2",
+        "offline_transitions=1", "batch=128+128",
+        "trainer_compat_mode=gt", "actual_offline_base=kai0_chunk",
+        "offline_reward=gamma_phi_next_minus_phi",
+        "endpoint_cache=hit", "replay_cache=hit",
+    ):
+        assert token in banner
+    assert "reward_mean=1.25" in format_offline_build_stats(
+        cached.bridge_meta["build_stats"], cached)
 
 
 def test_production_launch_tokens_dry_run_publish_exact_metadata(
@@ -377,7 +529,21 @@ def test_launcher_writes_metadata_before_installing_fakes(monkeypatch):
     events = []
     bridge_args = types.SimpleNamespace(imagination_gamma=0.995)
     runtime = types.SimpleNamespace(
-        bridge_meta={"actual_base_mode": "kai0_chunk"},
+        bridge_meta={
+            "offline_source": "block_success",
+            "offline_episodes": 2,
+            "offline_transitions": 3,
+            "online_batch_size": 128,
+            "offline_batch_size": 128,
+            "trainer_compat_mode": "gt",
+            "actual_base_mode": "kai0_chunk",
+            "actual_offline_base": "kai0_chunk",
+            "offline_reward": "gamma_phi_next_minus_phi",
+            "endpoint_cache_status": "miss",
+            "replay_cache_status": "miss",
+            "endpoint_cache": "miss",
+            "replay_cache": "miss",
+        },
         replay_cache_dir="/cache/generation",
     )
     monkeypatch.setattr(contract, "check_upstream_symbols", lambda: None)

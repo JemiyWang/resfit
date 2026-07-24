@@ -71,6 +71,8 @@ def main(argv=None) -> None:
 
     from resfit.rl_finetuning.wm_bridge.builder import (
         build_imagination_factories,
+        format_offline_build_stats,
+        format_offline_startup_banner,
         parse_bridge_args,
         prepare_offline_runtime,
         write_bridge_cache_meta,
@@ -86,6 +88,12 @@ def main(argv=None) -> None:
 
     if offline_runtime is not None:
         parsed = contract.parse_mixed_passthrough(passthrough)
+        print(format_offline_startup_banner(offline_runtime))
+        if "build_stats" in offline_runtime.bridge_meta:
+            print(format_offline_build_stats(
+                offline_runtime.bridge_meta["build_stats"],
+                offline_runtime,
+            ))
         write_bridge_run_config(
             parsed.output_dir, offline_runtime.bridge_meta)
         write_bridge_cache_meta(
