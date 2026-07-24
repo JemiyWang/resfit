@@ -7,6 +7,7 @@ from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
     concat_mixed_batch,
 )
 from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
+    BlockEpisodeReader,
     EpisodeRef,
     build_block_offline_buffer,
     catalog_episodes,
@@ -91,14 +92,22 @@ def synthetic_episode(root, num_frames=51, episode_id=0):
 
 
 class FakeReader:
+    instances = []
+
     def __init__(self, episode=None, num_frames=None):
+        type(self).instances.append(self)
         n = num_frames if num_frames is not None else episode.num_frames
+        self.prepared = []
+        self.decoder_backend = "fake"
         self.actions = np.stack([
             np.full(16, i, dtype=np.float32) for i in range(n)
         ])
         self.states = np.stack([
             np.full(16, i, dtype=np.float32) for i in range(n)
         ])
+
+    def prepare_native_frames(self, frame_indices):
+        self.prepared.append(tuple(frame_indices))
 
     def native_frames(self, frame_index):
         return np.zeros(
@@ -155,6 +164,76 @@ class ListReplay:
 
     def add(self, item):
         self.items.append(item)
+
+
+def _write_block_reader_parquet(path, num_frames):
+    pd.DataFrame({
+        "action": [np.full(16, index, np.float32)
+                   for index in range(num_frames)],
+        "observation.state": [np.full(18, index, np.float32)
+                              for index in range(num_frames)],
+    }).to_parquet(path)
+
+
+def test_block_reader_prepares_sparse_frames_once(tmp_path):
+    episode = synthetic_episode(tmp_path, num_frames=51)
+    _write_block_reader_parquet(episode.parquet_path, 51)
+    calls = []
+
+    def fake_loader(root, episode_id, cameras, frame_indices):
+        calls.append((root, episode_id, tuple(cameras), tuple(frame_indices)))
+        return {
+            camera: torch.stack([
+                torch.full((3, 2, 2), index, dtype=torch.uint8)
+                for index in frame_indices
+            ])
+            for camera in cameras
+        }
+
+    reader = BlockEpisodeReader(episode, frame_loader=fake_loader)
+    reader.prepare_native_frames([0, 50])
+
+    first = reader.native_frames(0)
+    second = reader.native_frames(0)
+    assert len(calls) == 1
+    assert first is second
+    assert first.shape == (len(CAMERA_KEYS), 3, 2, 2)
+    assert first.dtype == np.float32
+    assert np.all(first == -1.0)
+    assert np.allclose(reader.native_frames(50), 50 / 127.5 - 1.0)
+
+
+def test_block_reader_rejects_unprepared_frame(tmp_path):
+    episode = synthetic_episode(tmp_path, num_frames=51)
+    _write_block_reader_parquet(episode.parquet_path, 51)
+    reader = BlockEpisodeReader(
+        episode, frame_loader=lambda *args: {})
+    with pytest.raises(RuntimeError, match="not prepared"):
+        reader.native_frames(0)
+
+
+def test_build_prepares_union_once_and_profiles_episode(tmp_path, capsys):
+    FakeReader.instances = []
+    build_block_offline_buffer(
+        ListReplay(),
+        str(tmp_path),
+        action_scaler=IdentityActionScaler(),
+        state_standardizer=IdentityStateStandardizer(),
+        image_keys=list(CAMERA_KEYS),
+        gamma=0.5,
+        num_demos=None,
+        base_policy=FakeBase(),
+        scorer=SumFeatureScorer(),
+        endpoint_store=MemoryEndpointStore(),
+        episodes=(synthetic_episode(tmp_path, num_frames=120),),
+        reader_factory=FakeReader,
+    )
+
+    assert FakeReader.instances[0].prepared == [(0, 50, 69, 100, 119)]
+    output = capsys.readouterr().out
+    assert "offline_episode_profile episode=0" in output
+    assert "decoder_backend=fake" in output
+    assert "transitions=3" in output
 
 
 def test_collect_episode_endpoints_queries_each_unique_frame_once(
