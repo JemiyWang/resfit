@@ -1,11 +1,17 @@
+import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
+    EpisodeRef,
+    build_block_offline_buffer,
     catalog_episodes,
+    collect_episode_endpoints,
     count_block_chunk_transitions,
     plan_episode_chunks,
 )
+from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
 
 
 @pytest.mark.parametrize(
@@ -66,3 +72,171 @@ def test_catalog_sorts_numeric_episode_ids_across_chunk_boundary(tmp_path):
     assert [episode.episode_id for episode in catalog_episodes(str(tmp_path), 1)] == [
         999_000
     ]
+
+
+def synthetic_episode(root, num_frames=51, episode_id=0):
+    return EpisodeRef(
+        root=str(root),
+        episode_id=episode_id,
+        parquet_path=str(root / f"episode_{episode_id:06d}.parquet"),
+        video_paths={
+            key: str(root / f"{episode_id}-{key}.mp4") for key in CAMERA_KEYS
+        },
+        num_frames=num_frames,
+    )
+
+
+class FakeReader:
+    def __init__(self, episode=None, num_frames=None):
+        n = num_frames if num_frames is not None else episode.num_frames
+        self.actions = np.stack([
+            np.full(16, i, dtype=np.float32) for i in range(n)
+        ])
+        self.states = np.stack([
+            np.full(16, i, dtype=np.float32) for i in range(n)
+        ])
+
+    def native_frames(self, frame_index):
+        return np.zeros(
+            (len(CAMERA_KEYS), 3, 192, 256), dtype=np.float32)
+
+
+class FakeBase:
+    def __init__(self):
+        self.tokens = []
+
+    def query(self, obs):
+        token = obs["_wm_window_token"]
+        self.tokens.append(token)
+        value = float(token.rsplit(":", 1)[-1])
+        return (
+            np.full((50, 16), value, np.float32),
+            np.array([value, value + 1], np.float32),
+        )
+
+
+class MemoryEndpointStore:
+    def __init__(self):
+        self.records = {}
+
+    def load_episode(self, episode_id):
+        return self.records.get(episode_id)
+
+    def save_episode(self, episode_id, record):
+        self.records[episode_id] = record
+
+
+class IdentityActionScaler:
+    def scale(self, value):
+        return value.float()
+
+
+class IdentityStateStandardizer:
+    def standardize(self, value):
+        return value.float()
+
+
+class SumFeatureScorer:
+    def phi(self, feature, proprio):
+        return float(np.asarray(feature, dtype=np.float32).sum())
+
+    @staticmethod
+    def phi_for_frame(frame_index):
+        return 2.0 * frame_index + 1.0
+
+
+class ListReplay:
+    def __init__(self):
+        self.items = []
+
+    def add(self, item):
+        self.items.append(item)
+
+
+def test_collect_episode_endpoints_queries_each_unique_frame_once(tmp_path):
+    slices = plan_episode_chunks(120)
+    reader = FakeReader(num_frames=120)
+    base = FakeBase()
+    record = collect_episode_endpoints(
+        reader, episode_id=3, slices=slices, base_policy=base)
+    assert record.frame_indices.tolist() == [0, 50, 69, 100, 119]
+    assert len(base.tokens) == 5
+    assert record.base_actions.shape == (5, 50, 16)
+    assert record.proprio.shape == (5, 16)
+
+
+def test_build_transition_matches_online_schema_and_exact_pbrs(tmp_path):
+    rb = ListReplay()
+    stats = build_block_offline_buffer(
+        rb,
+        str(tmp_path),
+        action_scaler=IdentityActionScaler(),
+        state_standardizer=IdentityStateStandardizer(),
+        image_keys=list(CAMERA_KEYS),
+        gamma=0.5,
+        num_demos=None,
+        base_policy=FakeBase(),
+        scorer=SumFeatureScorer(),
+        endpoint_store=MemoryEndpointStore(),
+        episodes=(synthetic_episode(tmp_path, num_frames=51),),
+        reader_factory=FakeReader,
+    )
+    item = rb.items[0][0]
+    assert tuple(item["action"].shape) == (800,)
+    assert tuple(item["obs"]["observation.base_action"].shape) == (800,)
+    assert tuple(item["next"]["obs"]["observation.base_action"].shape) == (800,)
+    assert item["next"]["done"].item() is True
+    assert item["next"]["reward"].item() == pytest.approx(
+        0.5 * SumFeatureScorer.phi_for_frame(50)
+        - SumFeatureScorer.phi_for_frame(0)
+    )
+    assert stats.transitions == 1
+    for key in CAMERA_KEYS:
+        assert item["obs"][key].dtype == torch.uint8
+        assert tuple(item["obs"][key].shape) == (3, 84, 84)
+        assert item["next"]["obs"][key].dtype == torch.uint8
+    assert tuple(item["obs"]["observation.state"].shape) == (16,)
+    assert tuple(item["next"]["obs"]["observation.state"].shape) == (16,)
+    assert item["obs"]["observation.stage_id"].item() == 0.0
+    assert item["next"]["obs"]["observation.stage_id"].item() == 0.0
+    assert item["max_stage"].item() == 0.0
+    assert item["_priority"].item() == 10.0
+
+
+def _run_fake_build(tmp_path, num_frames, store, base):
+    rb = ListReplay()
+    build_block_offline_buffer(
+        rb,
+        str(tmp_path),
+        action_scaler=IdentityActionScaler(),
+        state_standardizer=IdentityStateStandardizer(),
+        image_keys=list(CAMERA_KEYS),
+        gamma=0.5,
+        num_demos=None,
+        base_policy=base,
+        scorer=SumFeatureScorer(),
+        endpoint_store=store,
+        episodes=(synthetic_episode(tmp_path, num_frames=num_frames),),
+        reader_factory=FakeReader,
+    )
+    return rb
+
+
+def test_second_build_reuses_endpoint_cache_without_base_queries(tmp_path):
+    store = MemoryEndpointStore()
+    _run_fake_build(tmp_path, 120, store, FakeBase())
+    second_base = FakeBase()
+    _run_fake_build(tmp_path, 120, store, second_base)
+    assert second_base.tokens == []
+
+
+def test_unaligned_terminal_order_done_and_residual_target(tmp_path):
+    rb = _run_fake_build(tmp_path, 120, MemoryEndpointStore(), FakeBase())
+    starts = [int(batch[0]["action"][0].item()) for batch in rb.items]
+    dones = [bool(batch[0]["next"]["done"].item()) for batch in rb.items]
+    assert starts == [0, 50, 69]
+    assert dones == [False, False, True]
+    terminal = rb.items[-1][0]
+    residual = terminal["action"] - terminal["obs"]["observation.base_action"]
+    expected = torch.arange(50, dtype=torch.float32).repeat_interleave(16)
+    torch.testing.assert_close(residual, expected)
