@@ -192,6 +192,11 @@ def test_block_reader_prepares_sparse_frames_once(tmp_path):
 
     reader = BlockEpisodeReader(episode, frame_loader=fake_loader)
     reader.prepare_native_frames([0, 50])
+    cached = tuple(reader._native_frame_cache.values())
+    assert all(value.dtype == np.uint8 for value in cached)
+    assert sum(value.nbytes for value in cached) == (
+        2 * len(CAMERA_KEYS) * 3 * 2 * 2
+    )
 
     first = reader.native_frames(0)
     second = reader.native_frames(0)
@@ -201,6 +206,41 @@ def test_block_reader_prepares_sparse_frames_once(tmp_path):
     assert first.dtype == np.float32
     assert np.all(first == -1.0)
     assert np.allclose(reader.native_frames(50), 50 / 127.5 - 1.0)
+
+
+def test_block_reader_bounds_normalized_frame_lru(tmp_path):
+    episode = synthetic_episode(tmp_path, num_frames=51)
+    _write_block_reader_parquet(episode.parquet_path, 51)
+
+    def fake_loader(root, episode_id, cameras, frame_indices):
+        return {
+            camera: torch.stack([
+                torch.full((3, 2, 2), index, dtype=torch.uint8)
+                for index in frame_indices
+            ])
+            for camera in cameras
+        }
+
+    reader = BlockEpisodeReader(episode, frame_loader=fake_loader)
+    reader.prepare_native_frames([0, 1, 2])
+
+    zero = reader.native_frames(0)
+    assert reader.native_frames(0) is zero
+    one = reader.native_frames(1)
+    assert list(reader._normalized_frame_cache) == [0, 1]
+
+    assert reader.native_frames(0) is zero
+    two = reader.native_frames(2)
+    assert list(reader._normalized_frame_cache) == [0, 2]
+    assert len(reader._normalized_frame_cache) == 2
+
+    reloaded_one = reader.native_frames(1)
+    assert reloaded_one is not one
+    assert list(reader._normalized_frame_cache) == [2, 1]
+    assert np.all(zero == -1.0)
+    assert np.allclose(one, 1 / 127.5 - 1.0)
+    assert np.allclose(two, 2 / 127.5 - 1.0)
+    assert np.allclose(reloaded_one, 1 / 127.5 - 1.0)
 
 
 def test_block_reader_rejects_unprepared_frame(tmp_path):

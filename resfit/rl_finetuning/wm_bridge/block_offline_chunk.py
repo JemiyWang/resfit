@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import glob
 import os
@@ -45,7 +46,7 @@ class EpisodeRef:
 
 
 class BlockEpisodeReader:
-    decoder_backend = "torchcodec_sparse"
+    decoder_backend = "opencv_sequential_sparse"
 
     def __init__(self, episode: EpisodeRef, *, frame_loader=None):
         self.episode = episode
@@ -57,12 +58,10 @@ class BlockEpisodeReader:
         self.states = np.stack(
             frame["observation.state"].to_numpy()).astype(np.float32)[:, :16]
         if frame_loader is None:
-            from resfit.rl_finetuning.chunk_residual.teleavatar_batch_source import (
-                read_teleavatar_episode_frames,
-            )
-            frame_loader = read_teleavatar_episode_frames
+            frame_loader = read_teleavatar_episode_frames_opencv_sequential
         self._frame_loader = frame_loader
         self._native_frame_cache = None
+        self._normalized_frame_cache = OrderedDict()
 
     def prepare_native_frames(self, frame_indices) -> None:
         indices = tuple(frame_indices)
@@ -72,21 +71,23 @@ class BlockEpisodeReader:
             list(CAMERA_KEYS),
             list(indices),
         )
-        arrays = []
+        camera_arrays = []
         for camera in CAMERA_KEYS:
             value = decoded[camera]
             if isinstance(value, torch.Tensor):
                 value = value.detach().cpu().numpy()
-            arrays.append(np.asarray(value, dtype=np.uint8))
-        stacked = np.stack(arrays, axis=1)
-        if stacked.shape[0] != len(indices):
-            raise ValueError(
-                f"decoded frame count {stacked.shape[0]} != {len(indices)}")
-        normalized = stacked.astype(np.float32) / 127.5 - 1.0
+            array = np.asarray(value, dtype=np.uint8)
+            if array.shape[0] != len(indices):
+                raise ValueError(
+                    f"decoded frame count {array.shape[0]} != {len(indices)}")
+            camera_arrays.append(array)
         self._native_frame_cache = {
-            frame_index: normalized[position]
+            frame_index: np.stack([
+                array[position] for array in camera_arrays
+            ])
             for position, frame_index in enumerate(indices)
         }
+        self._normalized_frame_cache.clear()
 
     def native_frames(self, frame_index: int) -> np.ndarray:
         if (
@@ -96,7 +97,17 @@ class BlockEpisodeReader:
             raise RuntimeError(
                 f"native frame {frame_index} was not prepared for "
                 f"episode {self.episode.episode_id}")
-        return self._native_frame_cache[frame_index]
+        if frame_index in self._normalized_frame_cache:
+            normalized = self._normalized_frame_cache[frame_index]
+            self._normalized_frame_cache.move_to_end(frame_index)
+            return normalized
+        normalized = self._native_frame_cache[frame_index].astype(np.float32)
+        normalized /= 127.5
+        normalized -= 1.0
+        self._normalized_frame_cache[frame_index] = normalized
+        if len(self._normalized_frame_cache) > 2:
+            self._normalized_frame_cache.popitem(last=False)
+        return normalized
 
 
 def read_rgb_frame_opencv(path: str, frame_index: int) -> np.ndarray:
@@ -112,6 +123,71 @@ def read_rgb_frame_opencv(path: str, frame_index: int) -> np.ndarray:
         raise RuntimeError(f"failed to read {path} at frame {frame_index}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return np.transpose(rgb, (2, 0, 1)).copy()
+
+
+def _read_rgb_frames_opencv_sequential(path, frame_indices):
+    capture = cv2.VideoCapture(path)
+    frames = []
+    targets = iter(frame_indices)
+    target = next(targets)
+    frame_index = 0
+    try:
+        while frame_index <= frame_indices[-1]:
+            if not capture.grab():
+                raise RuntimeError(
+                    f"failed to grab {path} at frame {frame_index}")
+            if frame_index == target:
+                ok, bgr = capture.retrieve()
+                if not ok or bgr is None:
+                    raise RuntimeError(
+                        f"failed to retrieve {path} at frame {frame_index}")
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                frames.append(np.transpose(rgb, (2, 0, 1)).copy())
+                try:
+                    target = next(targets)
+                except StopIteration:
+                    break
+            frame_index += 1
+    finally:
+        capture.release()
+    return np.stack(frames)
+
+
+def read_teleavatar_episode_frames_opencv_sequential(
+    root,
+    episode_id,
+    cameras,
+    frame_indices,
+):
+    indices = tuple(frame_indices)
+    if not indices:
+        raise ValueError("frame_indices must be non-empty")
+    if any(
+        isinstance(index, bool)
+        or not isinstance(index, (int, np.integer))
+        for index in indices
+    ):
+        raise ValueError("frame_indices must contain integers")
+    indices = tuple(int(index) for index in indices)
+    if any(index < 0 for index in indices):
+        raise ValueError("frame_indices must be non-negative")
+    if indices != tuple(sorted(set(indices))):
+        raise ValueError(
+            "frame_indices must be sorted unique")
+    chunk_id = episode_id // _EPISODES_PER_CHUNK
+    video_paths = {
+        camera: os.path.join(
+            root,
+            f"videos/chunk-{chunk_id:03d}/{camera}/"
+            f"episode_{episode_id:06d}.mp4",
+        )
+        for camera in cameras
+    }
+    return {
+        camera: torch.from_numpy(_read_rgb_frames_opencv_sequential(
+            video_paths[camera], indices))
+        for camera in cameras
+    }
 
 
 def _finite_array(value, shape, name):
