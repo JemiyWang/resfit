@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import tempfile
 from typing import Sequence
 import uuid
 
@@ -53,6 +54,8 @@ def _file_identity(path: str, hash_content: bool) -> dict:
 
 
 def dataset_manifest(episodes: Sequence[EpisodeRef]) -> dict:
+    if not episodes:
+        raise ValueError("dataset manifest requires at least one episode")
     return {
         "root": os.path.realpath(episodes[0].root),
         "episodes": [
@@ -125,6 +128,8 @@ def _validate_record(record: EndpointRecord) -> None:
     n = len(record.frame_indices)
     valid = (
         record.frame_indices.ndim == 1
+        and np.issubdtype(record.frame_indices.dtype, np.integer)
+        and np.all(np.isfinite(record.frame_indices))
         and record.base_actions.shape == (n, 50, 16)
         and record.prefix_features.ndim == 2
         and record.prefix_features.shape[0] == n
@@ -174,18 +179,29 @@ class EndpointStore:
     ) -> None:
         _validate_record(record)
         final_path = self._path(episode_id)
-        temp_path = final_path.with_suffix(".npz.tmp")
-        with temp_path.open("wb") as stream:
-            np.savez_compressed(
-                stream,
-                frame_indices=record.frame_indices,
-                base_actions=record.base_actions,
-                prefix_features=record.prefix_features,
-                proprio=record.proprio,
-            )
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, final_path)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=self.directory,
+                prefix=f"{final_path.stem}.",
+                suffix=".npz.tmp",
+                delete=False,
+            ) as stream:
+                temp_path = Path(stream.name)
+                np.savez_compressed(
+                    stream,
+                    frame_indices=record.frame_indices,
+                    base_actions=record.base_actions,
+                    prefix_features=record.prefix_features,
+                    proprio=record.proprio,
+                )
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, final_path)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
 
 def resolve_replay_generation(
