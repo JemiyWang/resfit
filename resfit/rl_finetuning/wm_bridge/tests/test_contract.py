@@ -127,3 +127,70 @@ def test_serve_sha_missing_warns_but_does_not_raise():
     sc = types.SimpleNamespace(expected_psi_anchor="aaa")
     with pytest.warns(UserWarning, match="无法验证同源"):
         contract.check_psi_samesource(sc, serve_ckpt_id=None)
+
+
+def _mixed_args(**overrides):
+    values = {
+        "offline_fraction": 0.5,
+        "batch_size": 256,
+        "base_policy_type": "pi05",
+        "base_action_mode": "replan",
+        "chunk_length": 50,
+        "n_step": 1,
+        "actor": "raw",
+        "relabel": False,
+        "stage_balanced": False,
+        "stage_conditioned": False,
+        "subgoal_conditioned": False,
+        "online_finetune_value": False,
+        "online_finetune_high_actor": False,
+    }
+    values.update(overrides)
+    return types.SimpleNamespace(**values)
+
+
+def test_pure_online_does_not_require_mixed_flags():
+    contract.check_mixed_replay_args(
+        _mixed_args(offline_fraction=0.0),
+        offline_chunk_dataset=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("offline_fraction", 0.4),
+        ("batch_size", 255),
+        ("base_policy_type", "act"),
+        ("base_action_mode", "queue"),
+        ("chunk_length", 1),
+        ("n_step", 3),
+        ("actor", "flow"),
+        ("relabel", True),
+        ("stage_balanced", True),
+        ("stage_conditioned", True),
+        ("subgoal_conditioned", True),
+        ("online_finetune_value", True),
+        ("online_finetune_high_actor", True),
+    ],
+)
+def test_mixed_contract_rejects_invalid_configuration(field, value):
+    args = _mixed_args(**{field: value})
+    with pytest.raises(ContractError, match=field):
+        contract.check_mixed_replay_args(
+            args, offline_chunk_dataset="/data/block_success")
+
+
+def test_mixed_contract_rejects_non_success_source():
+    with pytest.raises(ContractError, match="block_success"):
+        contract.check_mixed_replay_args(
+            _mixed_args(), offline_chunk_dataset="/data/block_fail")
+
+
+def test_mixed_mode_rejects_dummy_scorer_even_with_debug_flag():
+    with pytest.raises(ContractError, match="DummyScorer"):
+        contract.check_mixed_scorer(DummyScorer(), enabled=True)
+
+
+def test_pure_online_keeps_existing_dummy_scorer_policy():
+    contract.check_mixed_scorer(DummyScorer(), enabled=False)

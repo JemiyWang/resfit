@@ -65,12 +65,28 @@ def main(argv=None) -> None:
     contract.check_wrapper_step_loop()
 
     from resfit.rl_finetuning.wm_bridge.builder import (
-        build_imagination_factories, parse_bridge_args,
+        build_imagination_factories,
+        parse_bridge_args,
+        prepare_offline_runtime,
+        write_bridge_cache_meta,
+        write_bridge_run_config,
     )
     bridge_args, passthrough = parse_bridge_args(argv)
     contract.check_passthrough_runtime_args(
         passthrough, imagination_gamma=bridge_args.imagination_gamma)
-    factories = build_imagination_factories(bridge_args)
+    offline_runtime, passthrough = prepare_offline_runtime(
+        bridge_args, passthrough)
+    factories = build_imagination_factories(
+        bridge_args, offline_runtime=offline_runtime)
+
+    if offline_runtime is not None:
+        parsed = contract.parse_mixed_passthrough(passthrough)
+        write_bridge_run_config(
+            parsed.output_dir, offline_runtime.bridge_meta)
+        write_bridge_cache_meta(
+            offline_runtime.replay_cache_dir,
+            offline_runtime.bridge_meta,
+        )
 
     install_fakes(factories)
     sys.argv = [TRAINER] + passthrough

@@ -8,10 +8,140 @@ from __future__ import annotations
 import argparse
 import inspect
 import math
+import os
 
 
 class ContractError(RuntimeError):
     pass
+
+
+def parse_mixed_passthrough(argv):
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--offline_fraction", type=float, default=0.0)
+    p.add_argument("--offline_num_demos", type=int, default=None)
+    p.add_argument("--batch_size", type=int, default=256)
+    p.add_argument("--base_policy_type", default="act")
+    p.add_argument("--base_action_mode", default="queue")
+    p.add_argument("--chunk_length", type=int, default=1)
+    p.add_argument("--n_step", type=int, default=3)
+    p.add_argument("--gamma", type=float, default=0.99)
+    p.add_argument("--actor", default="raw")
+    p.add_argument("--action_scale", type=float, default=0.2)
+    p.add_argument("--min_range_per_dim", type=float, default=0.1)
+    p.add_argument("--relabel", action="store_true")
+    p.add_argument(
+        "--stage_balanced", dest="stage_balanced",
+        action="store_true", default=True)
+    p.add_argument(
+        "--no_stage_balanced", dest="stage_balanced", action="store_false")
+    p.add_argument("--stage_conditioned", action="store_true")
+    p.add_argument("--subgoal_conditioned", action="store_true")
+    p.add_argument("--online_finetune_value", action="store_true")
+    p.add_argument("--online_finetune_high_actor", action="store_true")
+    p.add_argument("--pi0_prompt", default="build block")
+    p.add_argument("--output_dir", default="outputs_chunk")
+    args, _ = p.parse_known_args(argv)
+    return args
+
+
+def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
+    if offline_chunk_dataset is None:
+        return
+
+    checks = (
+        (
+            "offline_fraction",
+            math.isclose(
+                float(getattr(trainer_args, "offline_fraction", 0.0)),
+                0.5,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ),
+            "must equal 0.5",
+        ),
+        (
+            "batch_size",
+            getattr(trainer_args, "batch_size", None) == 256,
+            "must equal 256",
+        ),
+        (
+            "base_policy_type",
+            getattr(trainer_args, "base_policy_type", None) == "pi05",
+            "must equal pi05",
+        ),
+        (
+            "base_action_mode",
+            getattr(trainer_args, "base_action_mode", None) == "replan",
+            "must equal replan",
+        ),
+        (
+            "chunk_length",
+            getattr(trainer_args, "chunk_length", None) == 50,
+            "must equal 50",
+        ),
+        (
+            "n_step",
+            getattr(trainer_args, "n_step", None) == 1,
+            "must equal 1",
+        ),
+        (
+            "actor",
+            getattr(trainer_args, "actor", None) == "raw",
+            "must equal raw",
+        ),
+        (
+            "relabel",
+            not bool(getattr(trainer_args, "relabel", False)),
+            "must be disabled",
+        ),
+        (
+            "stage_balanced",
+            not bool(getattr(trainer_args, "stage_balanced", False)),
+            "must be disabled",
+        ),
+        (
+            "stage_conditioned",
+            not bool(getattr(trainer_args, "stage_conditioned", False)),
+            "must be disabled",
+        ),
+        (
+            "subgoal_conditioned",
+            not bool(getattr(trainer_args, "subgoal_conditioned", False)),
+            "must be disabled",
+        ),
+        (
+            "online_finetune_value",
+            not bool(getattr(trainer_args, "online_finetune_value", False)),
+            "must be disabled",
+        ),
+        (
+            "online_finetune_high_actor",
+            not bool(
+                getattr(trainer_args, "online_finetune_high_actor", False)),
+            "must be disabled",
+        ),
+    )
+    for field, valid, requirement in checks:
+        if not valid:
+            value = getattr(trainer_args, field, None)
+            raise ContractError(
+                f"mixed replay {field}={value!r} {requirement}")
+
+    source = os.path.realpath(offline_chunk_dataset)
+    if os.path.basename(source) != "block_success":
+        raise ContractError(
+            "offline_chunk_dataset must resolve to block_success, "
+            f"got {source!r}")
+
+
+def check_mixed_scorer(scorer, enabled: bool) -> None:
+    if not enabled:
+        return
+    from resfit.rl_finetuning.wm_bridge.scorers import DummyScorer
+
+    if isinstance(scorer, DummyScorer):
+        raise ContractError(
+            "DummyScorer is forbidden when block mixed replay is enabled")
 
 
 def check_upstream_symbols() -> None:

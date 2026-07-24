@@ -14,8 +14,28 @@ parse_bridge_args 摘走 bridge 专属参数(--value_ckpt/--wm_host/... ),其余
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import tempfile
 
 import numpy as np
+
+from resfit.rl_finetuning.wm_bridge.block_offline_cache import (
+    EndpointStore,
+    dataset_manifest,
+    endpoint_fingerprint,
+    file_sha256,
+    replay_fingerprint,
+    resolve_replay_generation,
+)
+from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
+    EpisodeRef,
+    catalog_episodes,
+    plan_episode_chunks,
+)
+from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
 
 
 def parse_bridge_args(argv):
@@ -32,6 +52,9 @@ def parse_bridge_args(argv):
     p.add_argument("--num_denois_steps", type=int, default=10)
     p.add_argument("--action_norm_json", default=None, help="block 动作 min/max JSON;缺省 ±1")
     p.add_argument("--allow_dummy_scorer", action="store_true")
+    p.add_argument("--offline_chunk_dataset", default=None)
+    p.add_argument("--offline_chunk_cache_root", default=None)
+    p.add_argument("--offline_rebuild", action="store_true")
     # 优势估计器 proxy 监控(spec §6.7):给了 --adv_host 才开;每 eval rollout N 集逐帧打分写 jsonl
     p.add_argument("--adv_host", default=None,
                    help="优势估计器 serve host(adv_serve.py);给了才开 adv proxy 监控")
@@ -43,6 +66,199 @@ def parse_bridge_args(argv):
     return bridge_args, rest
 
 
+@dataclass(frozen=True)
+class OfflineRuntime:
+    dataset_root: str
+    all_episodes: tuple[EpisodeRef, ...]
+    num_demos: int | None
+    endpoint_fingerprint: str
+    replay_fingerprint: str
+    endpoint_store: EndpointStore
+    replay_cache_dir: str
+    bridge_meta: dict
+
+    def selected_episodes(
+        self,
+        override: int | None = None,
+    ) -> tuple[EpisodeRef, ...]:
+        limit = self.num_demos if override is None else override
+        if limit is not None and limit < 0:
+            raise ValueError("num_demos must be non-negative")
+        return self.all_episodes if limit is None else self.all_episodes[:limit]
+
+
+def _replace_option(argv, name, value):
+    from resfit.rl_finetuning.wm_bridge.contract import ContractError
+
+    output, index = [], 0
+    while index < len(argv):
+        token = argv[index]
+        if token == name:
+            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+                raise ContractError(f"{name} requires exactly one value")
+            index += 2
+            continue
+        if token.startswith(name + "="):
+            index += 1
+            continue
+        output.append(token)
+        index += 1
+    output.extend([name, str(value)])
+    return output
+
+
+def _write_json_atomic(directory, filename, metadata):
+    target_dir = Path(directory)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    final_path = target_dir / filename
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target_dir,
+            prefix=f".{filename}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temp_path = Path(stream.name)
+            json.dump(metadata, stream, indent=2, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, final_path)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+def write_bridge_run_config(output_dir, metadata):
+    _write_json_atomic(output_dir, "bridge_run_config.json", metadata)
+
+
+def write_bridge_cache_meta(replay_cache_dir, metadata):
+    _write_json_atomic(replay_cache_dir, "bridge_meta.json", metadata)
+
+
+def prepare_offline_runtime(bridge_args, passthrough):
+    from resfit.rl_finetuning.wm_bridge import contract
+
+    if bridge_args.offline_chunk_dataset is None:
+        return None, list(passthrough)
+    parsed = contract.parse_mixed_passthrough(passthrough)
+    contract.check_mixed_replay_args(
+        parsed, bridge_args.offline_chunk_dataset)
+
+    if not bridge_args.offline_chunk_cache_root:
+        raise contract.ContractError(
+            "offline_chunk_cache_root is required for block mixed replay")
+    if not bridge_args.pi0_serve_ckpt_id:
+        raise contract.ContractError(
+            "pi0_serve_ckpt_id is required for endpoint fingerprinting")
+    if parsed.offline_num_demos is not None and parsed.offline_num_demos <= 0:
+        raise contract.ContractError("offline_num_demos must be positive")
+
+    dataset_root = os.path.realpath(bridge_args.offline_chunk_dataset)
+    cache_root = os.path.realpath(bridge_args.offline_chunk_cache_root)
+    all_episodes = catalog_episodes(dataset_root)
+    selected = (
+        all_episodes
+        if parsed.offline_num_demos is None
+        else all_episodes[:parsed.offline_num_demos]
+    )
+    if not selected:
+        raise contract.ContractError("offline_num_demos selected no episodes")
+
+    manifest = dataset_manifest(all_episodes)
+    value_sha256 = file_sha256(bridge_args.value_ckpt)
+    stats_path = os.path.join(dataset_root, "meta", "stats.json")
+    stats_sha256 = file_sha256(stats_path)
+    endpoint_fp = endpoint_fingerprint(
+        manifest=manifest,
+        pi0_serve_ckpt_id=bridge_args.pi0_serve_ckpt_id,
+        prompt=parsed.pi0_prompt,
+        camera_keys=CAMERA_KEYS,
+        chunk_length=50,
+        stride=50,
+    )
+    replay_fp = replay_fingerprint(
+        endpoint_fp=endpoint_fp,
+        value_sha256=value_sha256,
+        gamma=parsed.gamma,
+        num_demos=len(selected),
+        stats_sha256=stats_sha256,
+        action_scale=parsed.action_scale,
+        min_range_per_dim=parsed.min_range_per_dim,
+        image_size=84,
+        image_keys=CAMERA_KEYS,
+        n_step=parsed.n_step,
+    )
+    endpoint_store = EndpointStore(
+        cache_root,
+        endpoint_fp,
+        force_rebuild=bridge_args.offline_rebuild,
+    )
+    replay_cache_dir = resolve_replay_generation(
+        cache_root,
+        replay_fp,
+        force_rebuild=bridge_args.offline_rebuild,
+    )
+    online_batch_size = int(
+        parsed.batch_size * (1.0 - parsed.offline_fraction))
+    offline_batch_size = int(
+        parsed.batch_size * parsed.offline_fraction)
+    metadata = {
+        "schema": 1,
+        "offline_source": "block_success",
+        "dataset_root": dataset_root,
+        "offline_episodes": len(selected),
+        "offline_transitions": sum(
+            len(plan_episode_chunks(episode.num_frames))
+            for episode in selected
+        ),
+        "endpoint_fingerprint": endpoint_fp,
+        "replay_fingerprint": replay_fp,
+        "endpoint_cache_dir": str(endpoint_store.directory),
+        "replay_cache_dir": replay_cache_dir,
+        "value_sha256": value_sha256,
+        "stats_sha256": stats_sha256,
+        "gamma": float(parsed.gamma),
+        "num_demos": len(selected),
+        "action_scale": float(parsed.action_scale),
+        "min_range_per_dim": float(parsed.min_range_per_dim),
+        "chunk_length": 50,
+        "n_step": int(parsed.n_step),
+        "image_size": 84,
+        "image_keys": list(CAMERA_KEYS),
+        "pi0_prompt": parsed.pi0_prompt,
+        "pi0_serve_ckpt_id": bridge_args.pi0_serve_ckpt_id,
+        "trainer_compat_mode": "gt",
+        "actual_base_mode": "kai0_chunk",
+        "actual_offline_base": "kai0_chunk",
+        "offline_reward": "gamma_phi_next_minus_phi",
+        "online_batch_size": online_batch_size,
+        "offline_batch_size": offline_batch_size,
+        "offline_rebuild": bool(bridge_args.offline_rebuild),
+        "output_dir": parsed.output_dir,
+    }
+    runtime = OfflineRuntime(
+        dataset_root=dataset_root,
+        all_episodes=all_episodes,
+        num_demos=parsed.offline_num_demos,
+        endpoint_fingerprint=endpoint_fp,
+        replay_fingerprint=replay_fp,
+        endpoint_store=endpoint_store,
+        replay_cache_dir=replay_cache_dir,
+        bridge_meta=metadata,
+    )
+    translated = list(passthrough)
+    translated = _replace_option(
+        translated, "--offline_dataset_path", dataset_root)
+    translated = _replace_option(
+        translated, "--offline_buffer_cache", replay_cache_dir)
+    translated = _replace_option(translated, "--offline_base_mode", "gt")
+    return runtime, translated
+
+
 def _normalizer(path):
     from resfit.rl_finetuning.wm_bridge.wm_driver import ACTION_DIM, ActionNormalizer
     if path is None:
@@ -52,7 +268,7 @@ def _normalizer(path):
     return ActionNormalizer(np.asarray(d["min"], np.float32), np.asarray(d["max"], np.float32))
 
 
-def build_imagination_factories(bridge_args) -> dict:
+def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
     from resfit.rl_finetuning.wm_bridge import contract
     from resfit.rl_finetuning.wm_bridge.base_bridge import Kai0ImaginationBase
     from resfit.rl_finetuning.wm_bridge.fake_eval import make_imagination_evaluator
@@ -63,6 +279,8 @@ def build_imagination_factories(bridge_args) -> dict:
 
     scorer = Kai0HiqlScorer.from_value_ckpt(bridge_args.value_ckpt)
     contract.check_scorer(scorer, bridge_args.allow_dummy_scorer)
+    contract.check_mixed_scorer(
+        scorer, enabled=(offline_runtime is not None))
     if not bridge_args.allow_dummy_scorer:
         contract.check_psi_samesource(scorer, bridge_args.pi0_serve_ckpt_id)
     normalizer = _normalizer(bridge_args.action_norm_json)
