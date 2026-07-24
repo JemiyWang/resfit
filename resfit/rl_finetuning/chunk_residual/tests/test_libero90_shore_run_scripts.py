@@ -5,6 +5,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[4]
 RUNNER = ROOT / "run_libero90_shore_task.sh"
+LAUNCHER = ROOT / "launch_libero90_shore_4gpu.sh"
 
 
 def run(*args):
@@ -44,4 +45,31 @@ def test_wrong_gpu_mapping_fails():
 
 def test_unknown_mode_fails():
     p = run("unknown", 57, 2)
+    assert p.returncode != 0
+
+
+def test_launcher_dry_run_contains_all_task_gpu_pairs():
+    p = subprocess.run(
+        ["bash", str(LAUNCHER)],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "1", "PHASE": "all"},
+        text=True,
+        capture_output=True,
+    )
+    assert p.returncode == 0, p.stderr
+    for task_id, gpu_id in [(57, 2), (60, 3), (63, 4), (64, 5)]:
+        assert f"cache {task_id} {gpu_id}" in p.stdout
+        assert f"hierarchy {task_id} {gpu_id}" in p.stdout
+        assert f"train {task_id} {gpu_id}" in p.stdout
+    assert "pi0_serve/serve_with_feat.py" in p.stdout
+
+
+def test_launcher_rejects_unknown_phase():
+    p = subprocess.run(
+        ["bash", str(LAUNCHER)],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "1", "PHASE": "bad"},
+        text=True,
+        capture_output=True,
+    )
     assert p.returncode != 0
