@@ -32,12 +32,32 @@ from resfit.rl_finetuning.wm_bridge.block_offline_cache import (
     resolve_replay_generation,
 )
 from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
+    ENDPOINT_CACHE_READ_ERRORS,
     EpisodeRef,
     build_block_offline_buffer,
     catalog_episodes,
+    endpoint_record_covers_slices,
     plan_episode_chunks,
 )
 from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
+
+
+_BUILD_STATS_FIELDS = (
+    "episodes",
+    "skipped_short_episodes",
+    "transitions",
+    "endpoint_hits",
+    "endpoint_misses",
+    "reward_mean",
+    "reward_std",
+    "potential_delta_mean",
+    "potential_delta_std",
+    "expert_norm_mean",
+    "base_norm_mean",
+    "residual_norm_mean",
+    "expert_saturation_fraction",
+    "base_saturation_fraction",
+)
 
 
 def parse_bridge_args(argv):
@@ -206,22 +226,39 @@ def _endpoint_cache_status(endpoint_store, episodes):
 
     complete_hits = 0
     for episode, slices in eligible:
-        record = endpoint_store.load_episode(episode.episode_id)
+        try:
+            record = endpoint_store.load_episode(episode.episode_id)
+        except ENDPOINT_CACHE_READ_ERRORS:
+            record = None
         if record is None:
             continue
-        required = {
-            frame_index
-            for item in slices
-            for frame_index in (item.start, item.end)
-        }
-        available = set(np.asarray(record.frame_indices).tolist())
-        if required.issubset(available):
+        if endpoint_record_covers_slices(record, slices):
             complete_hits += 1
     if complete_hits == len(eligible):
         return "hit"
     if complete_hits:
         return "partial"
     return "miss"
+
+
+def _read_complete_build_stats(replay_path):
+    try:
+        metadata = json.loads(
+            (Path(replay_path) / "bridge_meta.json").read_text(
+                encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    stats = metadata.get("build_stats")
+    if not isinstance(stats, dict) or not set(_BUILD_STATS_FIELDS).issubset(stats):
+        return None
+    if not all(
+        isinstance(stats[field], (int, float))
+        and not isinstance(stats[field], bool)
+        and np.isfinite(float(stats[field]))
+        for field in _BUILD_STATS_FIELDS
+    ):
+        return None
+    return stats
 
 
 def prepare_offline_runtime(bridge_args, passthrough):
@@ -284,6 +321,40 @@ def prepare_offline_runtime(bridge_args, passthrough):
         image_keys=CAMERA_KEYS,
         n_step=parsed.n_step,
     )
+    offline_transitions = sum(
+        len(plan_episode_chunks(episode.num_frames))
+        for episode in selected
+    )
+    from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
+        resolve_shaping_mode,
+    )
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        _offline_buffer_signature,
+        _offline_cache_valid,
+        build_parser,
+    )
+
+    signature_argv = _replace_option(
+        translated, "--offline_dataset_path", dataset_root)
+    signature_argv = _replace_option(
+        signature_argv, "--offline_base_mode", "gt")
+    signature_args = build_parser().parse_args(signature_argv)
+    trainer_cache_signature = _offline_buffer_signature(
+        signature_args,
+        CAMERA_KEYS,
+        offline_transitions,
+        resolve_shaping_mode(
+            signature_args.reward_shaping,
+            signature_args.staged_reward,
+        ),
+    )
+
+    def replay_generation_valid(path):
+        return (
+            _offline_cache_valid(str(path), trainer_cache_signature)
+            and _read_complete_build_stats(path) is not None
+        )
+
     endpoint_store = EndpointStore(
         cache_root,
         endpoint_fp,
@@ -293,25 +364,16 @@ def prepare_offline_runtime(bridge_args, passthrough):
         cache_root,
         replay_fp,
         force_rebuild=bridge_args.offline_rebuild,
+        is_valid=replay_generation_valid,
     )
     endpoint_cache_status = _endpoint_cache_status(endpoint_store, selected)
     replay_path = Path(replay_cache_dir)
-    replay_cache_status = (
-        "hit"
-        if (replay_path / "buffer_meta.json").is_file()
-        and (replay_path / "bridge_meta.json").is_file()
-        else "miss"
+    cached_build_stats = (
+        _read_complete_build_stats(replay_path)
+        if replay_generation_valid(replay_path)
+        else None
     )
-    cached_build_stats = None
-    if replay_cache_status == "hit":
-        try:
-            cached_metadata = json.loads(
-                (replay_path / "bridge_meta.json").read_text(
-                    encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise contract.ContractError(
-                f"cannot read replay bridge metadata: {exc}") from exc
-        cached_build_stats = cached_metadata.get("build_stats")
+    replay_cache_status = "hit" if cached_build_stats is not None else "miss"
     online_batch_size = int(
         parsed.batch_size * (1.0 - parsed.offline_fraction))
     offline_batch_size = int(
@@ -321,10 +383,7 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "offline_source": "block_success",
         "dataset_root": dataset_root,
         "offline_episodes": len(selected),
-        "offline_transitions": sum(
-            len(plan_episode_chunks(episode.num_frames))
-            for episode in selected
-        ),
+        "offline_transitions": offline_transitions,
         "endpoint_fingerprint": endpoint_fp,
         "replay_fingerprint": replay_fp,
         "endpoint_cache_dir": str(endpoint_store.directory),
@@ -344,6 +403,7 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "pi0_prompt": parsed.pi0_prompt,
         "pi0_action_dim": int(parsed.pi0_action_dim),
         "pi0_serve_ckpt_id": bridge_args.pi0_serve_ckpt_id,
+        "trainer_cache_signature": trainer_cache_signature,
         "trainer_compat_mode": "gt",
         "actual_base_mode": "kai0_chunk",
         "actual_offline_base": "kai0_chunk",
@@ -402,6 +462,8 @@ def format_offline_startup_banner(runtime):
         f"offline_episodes={meta['offline_episodes']} "
         f"offline_transitions={meta['offline_transitions']} "
         f"batch={meta['online_batch_size']}+{meta['offline_batch_size']} "
+        f"online_batch_size={meta['online_batch_size']} "
+        f"offline_batch_size={meta['offline_batch_size']} "
         f"trainer_compat_mode={meta['trainer_compat_mode']} "
         f"actual_offline_base={meta['actual_offline_base']} "
         f"offline_reward={meta['offline_reward']} "
@@ -418,23 +480,8 @@ def _build_stats_dict(stats):
 
 def format_offline_build_stats(stats, runtime):
     values = _build_stats_dict(stats)
-    fields = (
-        "episodes",
-        "skipped_short_episodes",
-        "transitions",
-        "endpoint_hits",
-        "endpoint_misses",
-        "reward_mean",
-        "reward_std",
-        "potential_delta_mean",
-        "potential_delta_std",
-        "expert_norm_mean",
-        "base_norm_mean",
-        "residual_norm_mean",
-        "expert_saturation_fraction",
-        "base_saturation_fraction",
-    )
-    details = " ".join(f"{field}={values[field]:g}" for field in fields)
+    details = " ".join(
+        f"{field}={values[field]:g}" for field in _BUILD_STATS_FIELDS)
     return f"offline_build_stats {details} replay_cache={runtime.replay_cache_dir}"
 
 

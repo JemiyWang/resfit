@@ -208,14 +208,20 @@ def resolve_replay_generation(
     cache_root: str,
     replay_fp: str,
     force_rebuild: bool,
+    is_valid=None,
 ) -> str:
     parent = Path(cache_root) / "replay" / replay_fp
     parent.mkdir(parents=True, exist_ok=True)
-    complete = sorted(
+    candidates = sorted(
         path
         for path in parent.glob("gen-*")
         if (path / "buffer_meta.json").is_file()
         and (path / "bridge_meta.json").is_file()
+    )
+    complete = (
+        [path for path in candidates if is_valid(path)]
+        if is_valid is not None
+        else candidates
     )
     if complete and not force_rebuild:
         return str(complete[-1])

@@ -14,6 +14,7 @@ from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
     count_block_chunk_transitions,
     plan_episode_chunks,
 )
+from resfit.rl_finetuning.wm_bridge.block_offline_cache import EndpointRecord
 from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
 
 
@@ -241,6 +242,67 @@ def test_second_build_reuses_endpoint_cache_without_base_queries(tmp_path):
     second_base = FakeBase()
     _run_fake_build(tmp_path, 120, store, second_base)
     assert second_base.tokens == []
+
+
+@pytest.mark.parametrize("indices", ([0], [0, 0, 50]))
+def test_build_rebuilds_incomplete_or_duplicate_endpoint_cache(
+    tmp_path, indices,
+):
+    store = MemoryEndpointStore()
+    n = len(indices)
+    store.records[0] = EndpointRecord(
+        frame_indices=np.asarray(indices, dtype=np.int64),
+        base_actions=np.zeros((n, 50, 16), dtype=np.float32),
+        prefix_features=np.zeros((n, 2), dtype=np.float32),
+        proprio=np.zeros((n, 16), dtype=np.float32),
+    )
+    base = FakeBase()
+
+    stats = build_block_offline_buffer(
+        ListReplay(),
+        str(tmp_path),
+        action_scaler=IdentityActionScaler(),
+        state_standardizer=IdentityStateStandardizer(),
+        image_keys=list(CAMERA_KEYS),
+        gamma=0.5,
+        num_demos=None,
+        base_policy=base,
+        scorer=SumFeatureScorer(),
+        endpoint_store=store,
+        episodes=(synthetic_episode(tmp_path, num_frames=51),),
+        reader_factory=FakeReader,
+    )
+
+    assert stats.transitions == 1
+    assert stats.endpoint_hits == 0
+    assert stats.endpoint_misses == 1
+    assert base.tokens == ["offline:0:0", "offline:0:50"]
+
+
+def test_build_rebuilds_damaged_endpoint_cache(tmp_path):
+    class DamagedStore(MemoryEndpointStore):
+        def load_episode(self, episode_id):
+            raise ValueError("damaged endpoint cache")
+
+    base = FakeBase()
+    stats = build_block_offline_buffer(
+        ListReplay(),
+        str(tmp_path),
+        action_scaler=IdentityActionScaler(),
+        state_standardizer=IdentityStateStandardizer(),
+        image_keys=list(CAMERA_KEYS),
+        gamma=0.5,
+        num_demos=None,
+        base_policy=base,
+        scorer=SumFeatureScorer(),
+        endpoint_store=DamagedStore(),
+        episodes=(synthetic_episode(tmp_path, num_frames=51),),
+        reader_factory=FakeReader,
+    )
+
+    assert stats.transitions == 1
+    assert stats.endpoint_hits == 0
+    assert stats.endpoint_misses == 1
 
 
 def test_unaligned_terminal_order_done_and_residual_target(tmp_path):

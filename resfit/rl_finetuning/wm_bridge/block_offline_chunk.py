@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import glob
 import os
+import zipfile
 
 import cv2
 import numpy as np
@@ -17,6 +18,13 @@ from resfit.rl_finetuning.wm_bridge.wm_driver import (
 )
 
 _EPISODES_PER_CHUNK = 1000
+ENDPOINT_CACHE_READ_ERRORS = (
+    OSError,
+    ValueError,
+    KeyError,
+    EOFError,
+    zipfile.BadZipFile,
+)
 
 
 @dataclass(frozen=True)
@@ -161,6 +169,18 @@ def _endpoint_at(record, frame_index):
     )
 
 
+def endpoint_record_covers_slices(record, slices):
+    indices = np.asarray(record.frame_indices)
+    if indices.ndim != 1 or len(np.unique(indices)) != len(indices):
+        return False
+    required = {
+        frame_index
+        for item in slices
+        for frame_index in (item.start, item.end)
+    }
+    return required.issubset(set(indices.tolist()))
+
+
 def _finite_tensor(value, shape, name):
     tensor = torch.as_tensor(value).detach().float().cpu()
     if tuple(tensor.shape) != tuple(shape) or not bool(
@@ -247,7 +267,20 @@ def build_block_offline_buffer(
             continue
 
         reader = reader_factory(episode=episode)
-        endpoint_record = endpoint_store.load_episode(episode.episode_id)
+        try:
+            endpoint_record = endpoint_store.load_episode(episode.episode_id)
+        except ENDPOINT_CACHE_READ_ERRORS as exc:
+            print(
+                f"offline_endpoint_cache_invalid episode={episode.episode_id} "
+                f"error={exc}")
+            endpoint_record = None
+        if endpoint_record is not None and not endpoint_record_covers_slices(
+            endpoint_record, slices
+        ):
+            print(
+                f"offline_endpoint_cache_invalid episode={episode.episode_id} "
+                "error=missing_or_duplicate_required_endpoints")
+            endpoint_record = None
         if endpoint_record is None:
             endpoint_misses += 1
             endpoint_record = collect_episode_endpoints(

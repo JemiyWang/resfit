@@ -350,6 +350,39 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(
     assert meta["replay_cache_status"] == "miss"
 
 
+def test_trainer_signature_uses_actual_trainer_parser_defaults(
+    tmp_path, monkeypatch,
+):
+    from resfit.rl_finetuning.chunk_residual import train_chunk_residual
+
+    dataset = _write_success_dataset(tmp_path)
+    value_ckpt = tmp_path / "value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    real_build_parser = train_chunk_residual.build_parser
+
+    def drifted_build_parser():
+        parser = real_build_parser()
+        parser.set_defaults(stage_reward_bonus=7.0)
+        return parser
+
+    monkeypatch.setattr(
+        train_chunk_residual, "build_parser", drifted_build_parser)
+    bridge_args, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_block_awbc_49999",
+    ])
+
+    runtime, _ = prepare_offline_runtime(
+        bridge_args, _mixed_passthrough(tmp_path / "output"))
+
+    assert runtime.bridge_meta["trainer_cache_signature"][
+        "stage_reward_bonus"
+    ] == 7.0
+
+
 def test_cache_hit_preserves_stats_and_banner_is_authoritative(
     tmp_path, monkeypatch,
 ):
@@ -384,7 +417,11 @@ def test_cache_hit_preserves_stats_and_banner_is_authoritative(
     stats = _complete_build_stats()
     cached_meta = dict(first.bridge_meta, build_stats=stats.__dict__)
     write_bridge_cache_meta(first.replay_cache_dir, cached_meta)
-    Path(first.replay_cache_dir, "buffer_meta.json").write_text("{}")
+    Path(first.replay_cache_dir, "buffer_meta.json").write_text(json.dumps({
+        "signature": first.bridge_meta["trainer_cache_signature"],
+        "n_transitions": 1,
+    }))
+    Path(first.replay_cache_dir, "storage").mkdir()
 
     incomplete, _ = prepare_offline_runtime(bridge_args, passthrough)
 
@@ -408,6 +445,7 @@ def test_cache_hit_preserves_stats_and_banner_is_authoritative(
     for token in (
         "offline_source=block_success", "offline_episodes=2",
         "offline_transitions=1", "batch=128+128",
+        "online_batch_size=128", "offline_batch_size=128",
         "trainer_compat_mode=gt", "actual_offline_base=kai0_chunk",
         "offline_reward=gamma_phi_next_minus_phi",
         "endpoint_cache=hit", "replay_cache=hit",
@@ -415,6 +453,58 @@ def test_cache_hit_preserves_stats_and_banner_is_authoritative(
         assert token in banner
     assert "reward_mean=1.25" in format_offline_build_stats(
         cached.bridge_meta["build_stats"], cached)
+
+
+@pytest.mark.parametrize(
+    ("has_storage", "stats_kind", "matching_signature", "expected_hit"),
+    [
+        (False, "complete", True, False),
+        (True, "missing", True, False),
+        (True, "malformed", True, False),
+        (True, "complete", False, False),
+        (True, "complete", True, True),
+    ],
+)
+def test_replay_hit_matches_trainer_and_requires_build_stats(
+    tmp_path,
+    monkeypatch,
+    has_storage,
+    stats_kind,
+    matching_signature,
+    expected_hit,
+):
+    dataset = _write_success_dataset(tmp_path)
+    value_ckpt = tmp_path / "value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    bridge_args, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_block_awbc_49999",
+    ])
+    passthrough = _mixed_passthrough(tmp_path / "output")
+    first, _ = prepare_offline_runtime(bridge_args, passthrough)
+    signature = first.bridge_meta["trainer_cache_signature"]
+    if not matching_signature:
+        signature = dict(signature, gamma=0.0)
+    Path(first.replay_cache_dir, "buffer_meta.json").write_text(
+        json.dumps({"signature": signature, "n_transitions": 1}))
+    if has_storage:
+        Path(first.replay_cache_dir, "storage").mkdir()
+    metadata = dict(first.bridge_meta)
+    if stats_kind != "missing":
+        metadata["build_stats"] = _complete_build_stats().__dict__
+    if stats_kind == "malformed":
+        metadata["build_stats"]["reward_mean"] = "not-a-number"
+    write_bridge_cache_meta(first.replay_cache_dir, metadata)
+
+    resolved, _ = prepare_offline_runtime(bridge_args, passthrough)
+
+    assert (resolved.replay_cache_dir == first.replay_cache_dir) is expected_hit
+    assert resolved.bridge_meta["replay_cache"] == (
+        "hit" if expected_hit else "miss")
+    assert ("build_stats" in resolved.bridge_meta) is expected_hit
 
 
 def test_production_launch_tokens_dry_run_publish_exact_metadata(
@@ -432,11 +522,12 @@ def test_production_launch_tokens_dry_run_publish_exact_metadata(
         ("--offline_chunk_dataset", dataset),
         ("--offline_chunk_cache_root", cache_root),
         ("--output_dir", output_dir),
+        ("--seed", 0),
     ):
         argv = builder._replace_option(argv, flag, value)
 
     bridge_args, passthrough = parse_bridge_args(argv)
-    runtime, _ = prepare_offline_runtime(bridge_args, passthrough)
+    runtime, translated = prepare_offline_runtime(bridge_args, passthrough)
     write_bridge_run_config(str(output_dir), runtime.bridge_meta)
     published = json.loads(
         (output_dir / "bridge_run_config.json").read_text())
@@ -457,6 +548,40 @@ def test_production_launch_tokens_dry_run_publish_exact_metadata(
         "actual_base_mode": "kai0_chunk",
         "offline_reward": "gamma_phi_next_minus_phi",
     }
+    assert published["trainer_cache_signature"] == {
+        "dataset": "block_success",
+        "offline_dataset_path": str(dataset.resolve()),
+        "num_demos": None,
+        "offline_cap": 1,
+        "action_scale": 0.2,
+        "min_range_per_dim": 0.1,
+        "reward_shaping": "none",
+        "stage_reward_bonus": 1.0,
+        "gamma": 0.995,
+        "n_step": 1,
+        "image_keys": sorted(CAMERA_KEYS),
+        "task": "TwoArmBoxCleanup",
+        "stage_cache": None,
+    }
+    from resfit.rl_finetuning.chunk_residual.chunk_env_wrapper import (
+        resolve_shaping_mode,
+    )
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        _offline_buffer_signature,
+        build_parser,
+    )
+
+    trainer_args = build_parser().parse_args(translated)
+    trainer_signature = _offline_buffer_signature(
+        trainer_args,
+        CAMERA_KEYS,
+        runtime.bridge_meta["offline_transitions"],
+        resolve_shaping_mode(
+            trainer_args.reward_shaping,
+            trainer_args.staged_reward,
+        ),
+    )
+    assert published["trainer_cache_signature"] == trainer_signature
 
 
 def test_prepare_runtime_requires_trainer_metadata_to_resolve_to_offline_dataset(
