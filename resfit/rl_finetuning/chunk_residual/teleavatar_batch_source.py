@@ -12,6 +12,7 @@ import glob
 import os
 
 import numpy as np
+import torch
 
 CHUNKS_SIZE = 1000   # block info.json 的 chunks_size;跨此值进下一个 chunk 目录
 
@@ -28,6 +29,59 @@ def teleavatar_parquet_path(root, ep, chunks_size: int = CHUNKS_SIZE) -> str:
 def teleavatar_video_path(root, ep, cam, chunks_size: int = CHUNKS_SIZE) -> str:
     return os.path.join(
         root, f"videos/chunk-{_chunk(ep, chunks_size):03d}/{cam}/episode_{ep:06d}.mp4")
+
+
+def _make_video_decoder(path):
+    from torchcodec.decoders import VideoDecoder
+    return VideoDecoder(path)
+
+
+def _validated_sparse_indices(frame_indices):
+    indices = list(frame_indices)
+    if not indices:
+        raise ValueError("frame_indices must be non-empty")
+    if any(isinstance(index, bool) or not isinstance(index, (int, np.integer))
+           for index in indices):
+        raise ValueError("frame_indices must contain integers")
+    indices = [int(index) for index in indices]
+    if any(index < 0 for index in indices):
+        raise ValueError("frame_indices must be non-negative")
+    if indices != sorted(set(indices)):
+        raise ValueError("frame_indices must be sorted unique")
+    return indices
+
+
+def read_teleavatar_episode_frames(
+    root,
+    ep,
+    cameras,
+    frame_indices,
+    chunks_size: int = CHUNKS_SIZE,
+):
+    """Batch-decode selected CHW RGB uint8 frames once per camera."""
+    indices = _validated_sparse_indices(frame_indices)
+    images = {}
+    for camera in cameras:
+        path = teleavatar_video_path(
+            root, ep, camera, chunks_size=chunks_size)
+        decoder = _make_video_decoder(path)
+        num_frames = int(decoder.metadata.num_frames)
+        if indices[-1] >= num_frames:
+            raise IndexError(
+                f"frame index {indices[-1]} out of range for "
+                f"episode={ep} camera={camera} num_frames={num_frames}")
+        data = decoder.get_frames_at(indices).data
+        if (
+            data.dtype != torch.uint8
+            or data.ndim != 4
+            or data.shape[0] != len(indices)
+            or data.shape[1] != 3
+        ):
+            raise ValueError(
+                f"invalid decoded frames for episode={ep} camera={camera}: "
+                f"shape={tuple(data.shape)} dtype={data.dtype}")
+        images[camera] = data
+    return images
 
 
 def list_teleavatar_episodes(root) -> list:

@@ -3,9 +3,13 @@
 路径解析是纯逻辑,合成测。批量解码需真 mp4,用本机 block_fail 数据,缺则 skip。
 """
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
+
+import resfit.rl_finetuning.chunk_residual.teleavatar_batch_source as source
 
 from resfit.rl_finetuning.chunk_residual.teleavatar_batch_source import (
     list_teleavatar_episodes, teleavatar_parquet_path, teleavatar_video_path,
@@ -73,3 +77,53 @@ def test_batched_read_is_much_faster_than_perframe():
     out = read_teleavatar_episode_batched(BLOCK_FAIL, ep, cams)
     per = (time.time() - t) / out["state"].shape[0]
     assert per < 0.05, f"{per*1000:.0f} ms/帧,批量解码应 <50ms"
+
+
+class _FakeDecoder:
+    calls = []
+
+    def __init__(self, path):
+        self.path = path
+        self.metadata = SimpleNamespace(num_frames=121)
+
+    def get_frames_at(self, indices):
+        type(self).calls.append((self.path, tuple(indices)))
+        data = torch.stack([
+            torch.full((3, 2, 2), index, dtype=torch.uint8)
+            for index in indices
+        ])
+        return SimpleNamespace(data=data)
+
+
+def test_sparse_read_batches_once_per_camera(monkeypatch):
+    _FakeDecoder.calls = []
+    monkeypatch.setattr(source, "_make_video_decoder", _FakeDecoder)
+    cameras = ["cam_a", "cam_b", "cam_c"]
+
+    images = source.read_teleavatar_episode_frames(
+        "/dataset", 7, cameras, [0, 50, 69, 100, 120])
+
+    assert set(images) == set(cameras)
+    assert len(_FakeDecoder.calls) == 3
+    assert all(call[1] == (0, 50, 69, 100, 120)
+               for call in _FakeDecoder.calls)
+    assert all(tuple(value.shape) == (5, 3, 2, 2)
+               for value in images.values())
+    assert all(value.dtype == torch.uint8 for value in images.values())
+
+
+@pytest.mark.parametrize(
+    "indices, message",
+    [
+        ([], "non-empty"),
+        ([0, 0], "sorted unique"),
+        ([50, 0], "sorted unique"),
+        ([-1, 0], "non-negative"),
+        ([0, 121], "out of range"),
+    ],
+)
+def test_sparse_read_rejects_invalid_indices(monkeypatch, indices, message):
+    monkeypatch.setattr(source, "_make_video_decoder", _FakeDecoder)
+    with pytest.raises((ValueError, IndexError), match=message):
+        source.read_teleavatar_episode_frames(
+            "/dataset", 0, ["cam"], indices)

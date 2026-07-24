@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import glob
 import os
+import time
 import zipfile
 
 import cv2
@@ -44,7 +46,9 @@ class EpisodeRef:
 
 
 class BlockEpisodeReader:
-    def __init__(self, episode: EpisodeRef):
+    decoder_backend = "opencv_sequential_sparse"
+
+    def __init__(self, episode: EpisodeRef, *, frame_loader=None):
         self.episode = episode
         frame = pd.read_parquet(
             episode.parquet_path,
@@ -53,16 +57,60 @@ class BlockEpisodeReader:
         self.actions = np.stack(frame["action"].to_numpy()).astype(np.float32)
         self.states = np.stack(
             frame["observation.state"].to_numpy()).astype(np.float32)[:, :16]
+        if frame_loader is None:
+            frame_loader = read_teleavatar_episode_frames_opencv_sequential
+        self._frame_loader = frame_loader
+        self._native_frame_cache = None
+        self._normalized_frame_cache = OrderedDict()
+
+    def prepare_native_frames(self, frame_indices) -> None:
+        indices = tuple(frame_indices)
+        decoded = self._frame_loader(
+            self.episode.root,
+            self.episode.episode_id,
+            list(CAMERA_KEYS),
+            list(indices),
+        )
+        camera_arrays = []
+        for camera in CAMERA_KEYS:
+            value = decoded[camera]
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu().numpy()
+            array = np.asarray(value, dtype=np.uint8)
+            if array.shape[0] != len(indices):
+                raise ValueError(
+                    f"decoded frame count {array.shape[0]} != {len(indices)}")
+            camera_arrays.append(array)
+        self._native_frame_cache = {
+            frame_index: np.stack([
+                array[position] for array in camera_arrays
+            ])
+            for position, frame_index in enumerate(indices)
+        }
+        self._normalized_frame_cache.clear()
 
     def native_frames(self, frame_index: int) -> np.ndarray:
-        views = [
-            _read_rgb_frame(self.episode.video_paths[key], frame_index)
-            for key in CAMERA_KEYS
-        ]
-        return np.stack(views).astype(np.float32) / 127.5 - 1.0
+        if (
+            self._native_frame_cache is None
+            or frame_index not in self._native_frame_cache
+        ):
+            raise RuntimeError(
+                f"native frame {frame_index} was not prepared for "
+                f"episode {self.episode.episode_id}")
+        if frame_index in self._normalized_frame_cache:
+            normalized = self._normalized_frame_cache[frame_index]
+            self._normalized_frame_cache.move_to_end(frame_index)
+            return normalized
+        normalized = self._native_frame_cache[frame_index].astype(np.float32)
+        normalized /= 127.5
+        normalized -= 1.0
+        self._normalized_frame_cache[frame_index] = normalized
+        if len(self._normalized_frame_cache) > 2:
+            self._normalized_frame_cache.popitem(last=False)
+        return normalized
 
 
-def _read_rgb_frame(path: str, frame_index: int) -> np.ndarray:
+def read_rgb_frame_opencv(path: str, frame_index: int) -> np.ndarray:
     capture = cv2.VideoCapture(path)
     ok = False
     bgr = None
@@ -75,6 +123,71 @@ def _read_rgb_frame(path: str, frame_index: int) -> np.ndarray:
         raise RuntimeError(f"failed to read {path} at frame {frame_index}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return np.transpose(rgb, (2, 0, 1)).copy()
+
+
+def _read_rgb_frames_opencv_sequential(path, frame_indices):
+    capture = cv2.VideoCapture(path)
+    frames = []
+    targets = iter(frame_indices)
+    target = next(targets)
+    frame_index = 0
+    try:
+        while frame_index <= frame_indices[-1]:
+            if not capture.grab():
+                raise RuntimeError(
+                    f"failed to grab {path} at frame {frame_index}")
+            if frame_index == target:
+                ok, bgr = capture.retrieve()
+                if not ok or bgr is None:
+                    raise RuntimeError(
+                        f"failed to retrieve {path} at frame {frame_index}")
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                frames.append(np.transpose(rgb, (2, 0, 1)).copy())
+                try:
+                    target = next(targets)
+                except StopIteration:
+                    break
+            frame_index += 1
+    finally:
+        capture.release()
+    return np.stack(frames)
+
+
+def read_teleavatar_episode_frames_opencv_sequential(
+    root,
+    episode_id,
+    cameras,
+    frame_indices,
+):
+    indices = tuple(frame_indices)
+    if not indices:
+        raise ValueError("frame_indices must be non-empty")
+    if any(
+        isinstance(index, bool)
+        or not isinstance(index, (int, np.integer))
+        for index in indices
+    ):
+        raise ValueError("frame_indices must contain integers")
+    indices = tuple(int(index) for index in indices)
+    if any(index < 0 for index in indices):
+        raise ValueError("frame_indices must be non-negative")
+    if indices != tuple(sorted(set(indices))):
+        raise ValueError(
+            "frame_indices must be sorted unique")
+    chunk_id = episode_id // _EPISODES_PER_CHUNK
+    video_paths = {
+        camera: os.path.join(
+            root,
+            f"videos/chunk-{chunk_id:03d}/{camera}/"
+            f"episode_{episode_id:06d}.mp4",
+        )
+        for camera in cameras
+    }
+    return {
+        camera: torch.from_numpy(_read_rgb_frames_opencv_sequential(
+            video_paths[camera], indices))
+        for camera in cameras
+    }
 
 
 def _finite_array(value, shape, name):
@@ -266,7 +379,18 @@ def build_block_offline_buffer(
             skipped += 1
             continue
 
+        required_indices = sorted({
+            frame_index
+            for item in slices
+            for frame_index in (item.start, item.end)
+        })
         reader = reader_factory(episode=episode)
+
+        decode_started = time.perf_counter()
+        reader.prepare_native_frames(required_indices)
+        decode_seconds = time.perf_counter() - decode_started
+
+        endpoint_started = time.perf_counter()
         try:
             endpoint_record = endpoint_store.load_episode(episode.episode_id)
         except ENDPOINT_CACHE_READ_ERRORS as exc:
@@ -281,6 +405,7 @@ def build_block_offline_buffer(
                 f"offline_endpoint_cache_invalid episode={episode.episode_id} "
                 "error=missing_or_duplicate_required_endpoints")
             endpoint_record = None
+        endpoint_record_was_cached = endpoint_record is not None
         if endpoint_record is None:
             endpoint_misses += 1
             endpoint_record = collect_episode_endpoints(
@@ -292,6 +417,9 @@ def build_block_offline_buffer(
             endpoint_store.save_episode(episode.episode_id, endpoint_record)
         else:
             endpoint_hits += 1
+
+        endpoint_seconds = time.perf_counter() - endpoint_started
+        replay_started = time.perf_counter()
 
         for item in slices:
             print(
@@ -378,6 +506,19 @@ def build_block_offline_buffer(
             expert_saturation.append(
                 expert_scaled.abs().ge(0.999).numpy())
             base_saturation.append(base_scaled.abs().ge(0.999).numpy())
+
+        replay_seconds = time.perf_counter() - replay_started
+        print(
+            f"offline_episode_profile episode={episode.episode_id} "
+            f"decoder_backend={getattr(reader, 'decoder_backend', 'unknown')} "
+            f"sparse_frames={len(required_indices)} "
+            f"decode_seconds={decode_seconds:.6f} "
+            f"endpoint_seconds={endpoint_seconds:.6f} "
+            f"replay_seconds={replay_seconds:.6f} "
+            f"endpoint_cache="
+            f"{'hit' if endpoint_record_was_cached else 'miss'} "
+            f"transitions={len(slices)}"
+        )
 
     reward_mean, reward_std = _mean_std(rewards)
     delta_mean, delta_std = _mean_std(potential_deltas)

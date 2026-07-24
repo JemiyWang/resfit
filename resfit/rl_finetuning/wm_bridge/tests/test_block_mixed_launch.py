@@ -50,13 +50,13 @@ def test_production_launch_enables_exact_mixed_configuration():
         "--action_scale": "0.2",
         "--min_range_per_dim": "0.1",
         "--demo_bc_coef": "0.1",
-        "--bc_coef_final": "0.01",
         "--critic_warmup_steps": "10000",
         "--learning_starts": "10000",
     }
     for flag, value in required.items():
         assert tokens.count(flag) == 1
         assert tokens[tokens.index(flag) + 1] == value
+    assert "--bc_coef_final" not in tokens
     assert tokens.count("--no_stage_balanced") == 1
     assert "--offline_base_mode" not in tokens
     assert "--offline_dataset_path" not in tokens
