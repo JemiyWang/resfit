@@ -144,6 +144,10 @@ def _mixed_args(**overrides):
         "subgoal_conditioned": False,
         "online_finetune_value": False,
         "online_finetune_high_actor": False,
+        "pi0_prompt": "build block",
+        "pi0_action_dim": 16,
+        "data_source": "hdf5",
+        "dataset": "block_success",
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -172,6 +176,10 @@ def test_pure_online_does_not_require_mixed_flags():
         ("subgoal_conditioned", True),
         ("online_finetune_value", True),
         ("online_finetune_high_actor", True),
+        ("pi0_prompt", "assemble the three pieces"),
+        ("pi0_action_dim", 14),
+        ("data_source", "lerobot"),
+        ("dataset", "some_other_dataset"),
     ],
 )
 def test_mixed_contract_rejects_invalid_configuration(field, value):

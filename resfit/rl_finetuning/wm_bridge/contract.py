@@ -39,6 +39,9 @@ def parse_mixed_passthrough(argv):
     p.add_argument("--online_finetune_value", action="store_true")
     p.add_argument("--online_finetune_high_actor", action="store_true")
     p.add_argument("--pi0_prompt", default="build block")
+    p.add_argument("--pi0_action_dim", type=int, default=16)
+    p.add_argument("--data_source", default="hdf5")
+    p.add_argument("--dataset", default="block_success")
     p.add_argument("--output_dir", default="outputs_chunk")
     args, _ = p.parse_known_args(argv)
     return args
@@ -48,6 +51,8 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
     if offline_chunk_dataset is None:
         return
 
+    source = os.path.realpath(offline_chunk_dataset)
+    expected_dataset = os.path.basename(source)
     checks = (
         (
             "offline_fraction",
@@ -120,6 +125,26 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
                 getattr(trainer_args, "online_finetune_high_actor", False)),
             "must be disabled",
         ),
+        (
+            "pi0_prompt",
+            getattr(trainer_args, "pi0_prompt", None) == "build block",
+            "must equal 'build block'",
+        ),
+        (
+            "pi0_action_dim",
+            getattr(trainer_args, "pi0_action_dim", None) == 16,
+            "must equal 16",
+        ),
+        (
+            "data_source",
+            getattr(trainer_args, "data_source", None) == "hdf5",
+            "must equal hdf5",
+        ),
+        (
+            "dataset",
+            getattr(trainer_args, "dataset", None) == expected_dataset,
+            f"must equal {expected_dataset!r}",
+        ),
     )
     for field, valid, requirement in checks:
         if not valid:
@@ -127,7 +152,6 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
             raise ContractError(
                 f"mixed replay {field}={value!r} {requirement}")
 
-    source = os.path.realpath(offline_chunk_dataset)
     if os.path.basename(source) != "block_success":
         raise ContractError(
             "offline_chunk_dataset must resolve to block_success, "

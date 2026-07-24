@@ -29,7 +29,11 @@ def _write_success_dataset(parent):
         video.write_bytes(f"video-{key}".encode())
     stats = root / "meta/stats.json"
     stats.parent.mkdir(parents=True)
+    (root / "meta/info.json").write_text(
+        '{"codebase_version": "v2.1"}', encoding="utf-8")
     stats.write_text('{"action": {}, "state": {}}', encoding="utf-8")
+    (root / "meta/episodes_stats.jsonl").write_text(
+        '{"episode_index": 0, "stats": {}}\n', encoding="utf-8")
     return root
 
 
@@ -47,7 +51,6 @@ def _mixed_passthrough(output_dir):
         "--action_scale", "0.2",
         "--min_range_per_dim", "0.1",
         "--no_stage_balanced",
-        "--pi0_prompt", "build block",
         "--output_dir", str(output_dir),
     ]
 
@@ -76,11 +79,13 @@ def test_replace_option_rejects_bare_authoritative_flag():
         )
 
 
-def test_prepare_runtime_fingerprints_and_replaces_trainer_options(tmp_path):
+def test_prepare_runtime_fingerprints_and_replaces_trainer_options(
+        tmp_path, monkeypatch):
     dataset = _write_success_dataset(tmp_path)
     value_ckpt = tmp_path / "value.pt"
     value_ckpt.write_bytes(b"value-weights")
     cache_root = tmp_path / "cache"
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
     bridge_args, _ = parse_bridge_args([
         "--value_ckpt", str(value_ckpt),
         "--offline_chunk_dataset", str(dataset),
@@ -91,6 +96,10 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(tmp_path):
         "--offline_dataset_path", "/old/data",
         "--offline_buffer_cache=/old/cache",
         "--offline_base_mode", "base_policy",
+        "--pi0_prompt", "assemble the three pieces",
+        "--pi0_action_dim=14",
+        "--dataset", "wrong_dataset",
+        "--data_source", "lerobot",
     ]
 
     runtime, translated = prepare_offline_runtime(bridge_args, passthrough)
@@ -105,11 +114,19 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(tmp_path):
     assert translated.count("--offline_dataset_path") == 1
     assert translated.count("--offline_buffer_cache") == 1
     assert translated.count("--offline_base_mode") == 1
+    assert translated.count("--pi0_prompt") == 1
+    assert translated.count("--pi0_action_dim") == 1
+    assert translated.count("--dataset") == 1
+    assert translated.count("--data_source") == 1
     assert translated[translated.index("--offline_dataset_path") + 1] == str(
         dataset.resolve())
     assert translated[translated.index("--offline_buffer_cache") + 1] == (
         runtime.replay_cache_dir)
     assert translated[translated.index("--offline_base_mode") + 1] == "gt"
+    assert translated[translated.index("--pi0_prompt") + 1] == "build block"
+    assert translated[translated.index("--pi0_action_dim") + 1] == "16"
+    assert translated[translated.index("--dataset") + 1] == "block_success"
+    assert translated[translated.index("--data_source") + 1] == "hdf5"
 
     meta = runtime.bridge_meta
     assert meta["trainer_compat_mode"] == "gt"
@@ -118,6 +135,28 @@ def test_prepare_runtime_fingerprints_and_replaces_trainer_options(tmp_path):
     assert meta["online_batch_size"] == 128
     assert meta["offline_batch_size"] == 128
     assert meta["pi0_serve_ckpt_id"] == "pi05_block_awbc_49999"
+    assert meta["pi0_action_dim"] == 16
+    assert meta["normalization_dataset_root"] == str(dataset.resolve())
+    assert meta["normalization_stats_path"] == str(
+        (dataset / "meta/episodes_stats.jsonl").resolve())
+
+
+def test_prepare_runtime_requires_trainer_metadata_to_resolve_to_offline_dataset(
+        tmp_path, monkeypatch):
+    dataset = _write_success_dataset(tmp_path / "offline")
+    value_ckpt = tmp_path / "value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "other"))
+    bridge_args, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_block_awbc_49999",
+    ])
+
+    with pytest.raises(ContractError, match="HF_LEROBOT_HOME"):
+        prepare_offline_runtime(
+            bridge_args, _mixed_passthrough(tmp_path / "output"))
 
 
 def test_metadata_writers_publish_atomic_json(tmp_path):

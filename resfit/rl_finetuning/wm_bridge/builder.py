@@ -139,14 +139,75 @@ def write_bridge_cache_meta(replay_cache_dir, metadata):
     _write_json_atomic(replay_cache_dir, "bridge_meta.json", metadata)
 
 
+def _resolve_trainer_normalization_source(dataset_root):
+    """Resolve the files LeRobotDatasetMetadata will actually use.
+
+    The generic trainer runs its dexmg/HDF5 path with ``root=None``, so
+    LeRobot resolves metadata as ``HF_LEROBOT_HOME / repo_id``.  Make that
+    implicit process-wide lookup explicit and fail before cache generation if
+    it is not the same block_success tree used by the offline bridge.
+    """
+    from resfit.rl_finetuning.wm_bridge.contract import ContractError
+
+    lerobot_home = os.environ.get("HF_LEROBOT_HOME")
+    if not lerobot_home:
+        raise ContractError(
+            "HF_LEROBOT_HOME is required for mixed replay so trainer "
+            "normalization can be tied to offline_chunk_dataset")
+    dataset_name = os.path.basename(dataset_root)
+    trainer_root = os.path.realpath(
+        os.path.join(os.path.expanduser(lerobot_home), dataset_name))
+    if trainer_root != dataset_root:
+        raise ContractError(
+            "HF_LEROBOT_HOME/--dataset must resolve to offline_chunk_dataset: "
+            f"trainer={trainer_root!r}, offline={dataset_root!r}")
+
+    meta_dir = Path(dataset_root) / "meta"
+    info_path = meta_dir / "info.json"
+    if not info_path.is_file():
+        raise ContractError(
+            f"trainer normalization metadata is missing {info_path}")
+    try:
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContractError(
+            f"cannot read trainer normalization metadata {info_path}: {exc}") from exc
+    version = str(info.get("codebase_version", ""))
+    # LeRobotDatasetMetadata aggregates v2.1+ stats from episodes_stats.jsonl;
+    # older datasets use stats.json directly.
+    try:
+        version_numbers = tuple(
+            int(part) for part in version.removeprefix("v").split(".")[:2])
+    except ValueError as exc:
+        raise ContractError(
+            f"invalid codebase_version {version!r} in {info_path}") from exc
+    if len(version_numbers) != 2:
+        raise ContractError(
+            f"invalid codebase_version {version!r} in {info_path}")
+    stats_name = (
+        "episodes_stats.jsonl" if version_numbers >= (2, 1) else "stats.json")
+    stats_path = meta_dir / stats_name
+    if not stats_path.is_file():
+        raise ContractError(
+            f"trainer normalization statistics are missing {stats_path}")
+    return trainer_root, str(stats_path.resolve())
+
+
 def prepare_offline_runtime(bridge_args, passthrough):
     from resfit.rl_finetuning.wm_bridge import contract
 
     if bridge_args.offline_chunk_dataset is None:
         return None, list(passthrough)
-    parsed = contract.parse_mixed_passthrough(passthrough)
-    contract.check_mixed_replay_args(
-        parsed, bridge_args.offline_chunk_dataset)
+
+    dataset_root = os.path.realpath(bridge_args.offline_chunk_dataset)
+    dataset_name = os.path.basename(dataset_root)
+    translated = list(passthrough)
+    translated = _replace_option(translated, "--pi0_prompt", "build block")
+    translated = _replace_option(translated, "--pi0_action_dim", 16)
+    translated = _replace_option(translated, "--dataset", dataset_name)
+    translated = _replace_option(translated, "--data_source", "hdf5")
+    parsed = contract.parse_mixed_passthrough(translated)
+    contract.check_mixed_replay_args(parsed, dataset_root)
 
     if not bridge_args.offline_chunk_cache_root:
         raise contract.ContractError(
@@ -157,8 +218,9 @@ def prepare_offline_runtime(bridge_args, passthrough):
     if parsed.offline_num_demos is not None and parsed.offline_num_demos <= 0:
         raise contract.ContractError("offline_num_demos must be positive")
 
-    dataset_root = os.path.realpath(bridge_args.offline_chunk_dataset)
     cache_root = os.path.realpath(bridge_args.offline_chunk_cache_root)
+    normalization_root, stats_path = _resolve_trainer_normalization_source(
+        dataset_root)
     all_episodes = catalog_episodes(dataset_root)
     selected = (
         all_episodes
@@ -170,7 +232,6 @@ def prepare_offline_runtime(bridge_args, passthrough):
 
     manifest = dataset_manifest(all_episodes)
     value_sha256 = file_sha256(bridge_args.value_ckpt)
-    stats_path = os.path.join(dataset_root, "meta", "stats.json")
     stats_sha256 = file_sha256(stats_path)
     endpoint_fp = endpoint_fingerprint(
         manifest=manifest,
@@ -221,6 +282,8 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "replay_cache_dir": replay_cache_dir,
         "value_sha256": value_sha256,
         "stats_sha256": stats_sha256,
+        "normalization_dataset_root": normalization_root,
+        "normalization_stats_path": stats_path,
         "gamma": float(parsed.gamma),
         "num_demos": len(selected),
         "action_scale": float(parsed.action_scale),
@@ -230,6 +293,7 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "image_size": 84,
         "image_keys": list(CAMERA_KEYS),
         "pi0_prompt": parsed.pi0_prompt,
+        "pi0_action_dim": int(parsed.pi0_action_dim),
         "pi0_serve_ckpt_id": bridge_args.pi0_serve_ckpt_id,
         "trainer_compat_mode": "gt",
         "actual_base_mode": "kai0_chunk",
@@ -250,7 +314,6 @@ def prepare_offline_runtime(bridge_args, passthrough):
         replay_cache_dir=replay_cache_dir,
         bridge_meta=metadata,
     )
-    translated = list(passthrough)
     translated = _replace_option(
         translated, "--offline_dataset_path", dataset_root)
     translated = _replace_option(
