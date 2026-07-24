@@ -180,7 +180,7 @@ def _replay_obs(
         standardized, (16,), "standardized state")
     obs["observation.base_action"] = _finite_tensor(
         scaled_base, (CHUNK_LENGTH * 16,), "scaled base action")
-    obs["observation.stage_id"] = torch.tensor(0.0)
+    obs["observation.stage_id"] = torch.tensor([0.0], dtype=torch.float32)
     return obs
 
 
@@ -213,7 +213,9 @@ def build_block_offline_buffer(
     reader_factory=BlockEpisodeReader,
     **_ignored,
 ) -> BuildStats:
-    del image_keys
+    if tuple(image_keys) != tuple(CAMERA_KEYS):
+        raise ValueError(
+            f"image_keys must exactly match fixed cameras {tuple(CAMERA_KEYS)}")
     if episodes is None:
         selected = catalog_episodes(dataset_root, num_demos)
     else:
@@ -304,13 +306,16 @@ def build_block_offline_buffer(
             reward = float(gamma) * phi_next - phi_current
             if not np.all(np.isfinite([phi_current, phi_next, reward])):
                 raise ValueError("potential and reward must be finite")
+            reward_tensor = torch.tensor(reward, dtype=torch.float32)
+            if not bool(torch.isfinite(reward_tensor)):
+                raise ValueError("reward must be finite float32")
 
             transition = TensorDict({
                 "obs": TensorDict(current_obs, batch_size=[]),
                 "next": TensorDict({
                     "obs": TensorDict(next_obs, batch_size=[]),
                     "done": torch.tensor(item.terminal, dtype=torch.bool),
-                    "reward": torch.tensor(reward, dtype=torch.float32),
+                    "reward": reward_tensor,
                 }, batch_size=[]),
                 "action": expert_scaled,
                 "max_stage": torch.tensor(0.0),
@@ -319,7 +324,7 @@ def build_block_offline_buffer(
             offline_rb.add(transition)
 
             transition_count += 1
-            rewards.append(reward)
+            rewards.append(float(reward_tensor.item()))
             potential_deltas.append(phi_next - phi_current)
             residual_norms.append(float(torch.linalg.vector_norm(
                 expert_scaled - base_scaled).item()))

@@ -3,6 +3,9 @@ import pandas as pd
 import pytest
 import torch
 
+from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import (
+    concat_mixed_batch,
+)
 from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
     EpisodeRef,
     build_block_offline_buffer,
@@ -197,6 +200,8 @@ def test_build_transition_matches_online_schema_and_exact_pbrs(tmp_path):
         assert item["next"]["obs"][key].dtype == torch.uint8
     assert tuple(item["obs"]["observation.state"].shape) == (16,)
     assert tuple(item["next"]["obs"]["observation.state"].shape) == (16,)
+    assert tuple(item["obs"]["observation.stage_id"].shape) == (1,)
+    assert tuple(item["next"]["obs"]["observation.stage_id"].shape) == (1,)
     assert item["obs"]["observation.stage_id"].item() == 0.0
     assert item["next"]["obs"]["observation.stage_id"].item() == 0.0
     assert item["max_stage"].item() == 0.0
@@ -240,3 +245,57 @@ def test_unaligned_terminal_order_done_and_residual_target(tmp_path):
     residual = terminal["action"] - terminal["obs"]["observation.base_action"]
     expected = torch.arange(50, dtype=torch.float32).repeat_interleave(16)
     torch.testing.assert_close(residual, expected)
+
+
+def test_offline_transition_concatenates_with_online_stage_shape(tmp_path):
+    rb = _run_fake_build(tmp_path, 51, MemoryEndpointStore(), FakeBase())
+    offline_batch = rb.items[0]
+    online_batch = offline_batch.clone()
+    online_batch["obs", "observation.stage_id"] = torch.zeros((1, 1))
+    online_batch["next", "obs", "observation.stage_id"] = torch.zeros((1, 1))
+
+    mixed = concat_mixed_batch(online_batch, offline_batch)
+
+    assert tuple(mixed["obs", "observation.stage_id"].shape) == (2, 1)
+    assert tuple(mixed["next", "obs", "observation.stage_id"].shape) == (2, 1)
+
+
+def test_build_rejects_image_keys_that_do_not_match_fixed_cameras(tmp_path):
+    with pytest.raises(ValueError, match="image_keys"):
+        build_block_offline_buffer(
+            ListReplay(),
+            str(tmp_path),
+            action_scaler=IdentityActionScaler(),
+            state_standardizer=IdentityStateStandardizer(),
+            image_keys=list(CAMERA_KEYS[:-1]),
+            gamma=0.5,
+            num_demos=None,
+            base_policy=FakeBase(),
+            scorer=SumFeatureScorer(),
+            endpoint_store=MemoryEndpointStore(),
+            episodes=(synthetic_episode(tmp_path, num_frames=51),),
+            reader_factory=FakeReader,
+        )
+
+
+class Float32OverflowScorer:
+    def phi(self, feature, proprio):
+        return 0.0 if float(np.asarray(feature)[0]) == 0.0 else 1e40
+
+
+def test_build_rejects_reward_that_overflows_float32(tmp_path):
+    with pytest.raises(ValueError, match="reward must be finite float32"):
+        build_block_offline_buffer(
+            ListReplay(),
+            str(tmp_path),
+            action_scaler=IdentityActionScaler(),
+            state_standardizer=IdentityStateStandardizer(),
+            image_keys=list(CAMERA_KEYS),
+            gamma=1.0,
+            num_demos=None,
+            base_policy=FakeBase(),
+            scorer=Float32OverflowScorer(),
+            endpoint_store=MemoryEndpointStore(),
+            episodes=(synthetic_episode(tmp_path, num_frames=51),),
+            reader_factory=FakeReader,
+        )
