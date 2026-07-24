@@ -125,6 +125,20 @@ def test_offline_factory_rejects_non_gt_compatibility_mode():
             object(), RuntimeStub.dataset_root, base_mode="base_policy")
 
 
+def test_offline_factory_requires_explicit_gt_compatibility_mode(monkeypatch):
+    monkeypatch.setattr(
+        builder,
+        "build_block_offline_buffer",
+        lambda *args, **kwargs: types.SimpleNamespace(transitions=0),
+    )
+    factories = make_offline_factories(
+        RuntimeStub(), {"base": object()}, object())
+
+    with pytest.raises(ContractError, match="base_mode"):
+        factories["build_offline_buffer"](
+            object(), RuntimeStub.dataset_root, gamma=0.995)
+
+
 def test_replace_option_rejects_bare_authoritative_flag():
     with pytest.raises(ContractError, match="offline_dataset_path"):
         builder._replace_option(

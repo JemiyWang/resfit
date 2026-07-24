@@ -1,3 +1,4 @@
+from pathlib import Path
 import types
 
 import pytest
@@ -30,6 +31,39 @@ def test_wrapper_still_loops_per_timestep():
 
 def test_offline_hook_points_still_lazy_import_and_call():
     contract.check_offline_hook_points()
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("base_mode=args.offline_base_mode,", ""),
+        ("base_mode=args.offline_base_mode,", "compat_mode=args.offline_base_mode,"),
+        ("gamma=args.gamma,", ""),
+        ("num_demos=args.offline_num_demos,", ""),
+        ("action_scaler=action_scaler,", ""),
+        ("state_standardizer=state_standardizer,", ""),
+        ("image_keys=image_keys,", ""),
+    ],
+)
+def test_offline_hook_contract_rejects_build_keyword_drift(
+    monkeypatch,
+    old,
+    new,
+):
+    original_read_text = Path.read_text
+
+    def altered_source(path, *args, **kwargs):
+        source = original_read_text(path, *args, **kwargs)
+        start = source.index("                build_offline_buffer(\n")
+        end_marker = "                    base_device=args.device, env_hint=args.task,)"
+        end = source.index(end_marker, start) + len(end_marker)
+        build_call = source[start:end]
+        assert old in build_call
+        return source[:start] + build_call.replace(old, new, 1) + source[end:]
+
+    monkeypatch.setattr(Path, "read_text", altered_source)
+    with pytest.raises(ContractError, match="build_offline_buffer"):
+        contract.check_offline_hook_points()
 
 
 def test_reward_shaping_must_be_none():

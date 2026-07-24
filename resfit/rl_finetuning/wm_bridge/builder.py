@@ -370,10 +370,10 @@ def make_offline_factories(offline_runtime, state, scorer) -> dict:
 
         kwargs = dict(kwargs)
         kwargs.pop("base_policy", None)
-        base_mode = kwargs.pop("base_mode", "gt")
+        base_mode = kwargs.pop("base_mode", None)
         if base_mode != "gt":
             raise ContractError(
-                "offline base_mode must equal 'gt' as a trainer "
+                "offline base_mode must be explicitly 'gt' as a trainer "
                 "compatibility marker")
         for key in (
             "bonus",

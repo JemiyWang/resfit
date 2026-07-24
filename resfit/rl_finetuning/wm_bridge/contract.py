@@ -296,17 +296,57 @@ def check_offline_hook_points() -> None:
             "args.offline_dataset_path and args.offline_num_demos")
 
     build_calls = calls["build_offline_buffer"]
+    expected_build_keywords = {
+        "action_scaler": "action_scaler",
+        "state_standardizer": "state_standardizer",
+        "image_keys": "image_keys",
+        "bonus": "args.stage_reward_bonus",
+        "mode": "shaping_mode",
+        "gamma": "args.gamma",
+        "num_demos": "args.offline_num_demos",
+        "stage_cache": "args.offline_stage_cache",
+        "potential": (
+            "gc_potential if args.potential_source == 'hiql_subgoal' "
+            "else potential"),
+        "subgoal": "subgoal",
+        "way_steps": "args.subgoal_way_steps",
+        "act_feat_seqs": "_offline_act_feat_seqs",
+        "data_source": "args.data_source",
+        "lerobot_repo_id": "args.dataset",
+        "lerobot_root": "args.lerobot_root",
+        "base_policy": "base_policy",
+        "base_mode": "args.offline_base_mode",
+        "base_device": "args.device",
+        "env_hint": "args.task",
+    }
+    expected_keyword_asts = {
+        name: ast.dump(
+            ast.parse(expression, mode="eval").body,
+            include_attributes=False,
+        )
+        for name, expression in expected_build_keywords.items()
+    }
+    actual_keyword_asts = {}
+    if len(build_calls) == 1:
+        actual_keyword_asts = {
+            keyword.arg: ast.dump(
+                keyword.value,
+                include_attributes=False,
+            )
+            for keyword in build_calls[0].keywords
+        }
     build_valid = (
         len(build_calls) == 1
         and len(build_calls[0].args) == 2
         and _attribute_name(build_calls[0].args[0]) == "offline_rb"
         and _attribute_name(build_calls[0].args[1])
         == "args.offline_dataset_path"
+        and actual_keyword_asts == expected_keyword_asts
     )
     if not build_valid:
         raise ContractError(
-            "build_offline_buffer call no longer uses offline_rb and "
-            "args.offline_dataset_path")
+            "build_offline_buffer call no longer matches the exact offline "
+            "trainer hook contract")
 
 
 def check_runtime_args(args, imagination_gamma=None) -> None:
