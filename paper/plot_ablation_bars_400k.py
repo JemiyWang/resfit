@@ -81,32 +81,6 @@ PANELS = {
             (CR, "dma01plo"),
         ],
     },
-    "LiftTray": {
-        "full": [
-            (CR, "e7sntzx9"),
-            (CR, "372ah0gx"),
-            (CR, "qodyz8ea"),
-        ],
-        "subgoal_only": [
-            (CR, "dxeu4uj4"),
-            (CR, "5q371vwt"),
-        ],
-        "no_staged": [
-            (CR, "hyp39jad"),
-            (CR, "d6qindb1"),
-            (CR, "dz9ubgf9"),
-        ],
-        "no_subgoal": [
-            (CR, "nbgai06b"),
-            (CR, "pm9ctit1"),
-            (CR, "khbe8135"),
-        ],
-        "no_both": [
-            (CR, "8ztodpmb"),
-            (CR, "lkfs0nhu"),
-            (CR, "pvaq28fk"),
-        ],
-    },
     "ThreePiece": {
         "full": [
             (CR, "kmtsayff"),
@@ -230,7 +204,7 @@ def plot_summaries(summaries, out_pdf, out_png):
     fig, axes = plt.subplots(
         1,
         len(PANELS),
-        figsize=(13.8, 3.5),
+        figsize=(4.6 * len(PANELS), 3.5),
         sharey=True,
         squeeze=False,
     )

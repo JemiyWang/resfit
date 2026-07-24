@@ -18,7 +18,7 @@ overwriting the current learning-curve figure.
 
 ## Layout
 
-- Preserve the current three-panel task order: Pouring, LiftTray, ThreePiece.
+- Use two task panels in this order: Pouring, ThreePiece.
 - Draw five bars per panel in the existing legend order and colors.
 - Share a success-rate y-axis spanning 0 to 1.
 - Use one figure-level legend and typography compatible with the current paper.
@@ -39,7 +39,7 @@ overwriting the current learning-curve figure.
 
 - Unit-test the fixed-window selection, per-seed aggregation, cross-seed
   mean/s.e.m., and incomplete-window rejection without contacting W&B.
-- Query the existing Figure 5 run inventory and require all 42 selected seeds
+- Query the displayed Figure 5 run inventory and require all 28 selected seeds
   to contain the complete 330k--400k window.
 - Inspect the PDF metadata and embedded fonts.
 - Render and visually inspect the generated chart.

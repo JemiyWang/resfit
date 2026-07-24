@@ -27,8 +27,7 @@ new statistical view.
 ## Result Description
 
 The main text will report the strongest task-level patterns: SHORE-RL is best
-on ThreePieceAssembly; removing demo-BC and stage shaping is most damaging on
-LiftTray; and the no-waypoint arm remains close to SHORE-RL on Pouring.
+on ThreePieceAssembly, while the no-waypoint arm remains close on Pouring.
 
 ## Verification
 

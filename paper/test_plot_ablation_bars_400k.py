@@ -64,19 +64,12 @@ class FixedWindowMetricTest(unittest.TestCase):
 
 
 class FigureContractTest(unittest.TestCase):
-    def test_lifttray_no_waypoint_uses_the_three_canonical_seeds(self):
-        expected = [
-            ("dexmg-chunk-residual", "nbgai06b"),
-            ("dexmg-chunk-residual", "pm9ctit1"),
-            ("dexmg-chunk-residual", "khbe8135"),
-        ]
-        self.assertEqual(PANELS["LiftTray"]["no_subgoal"], expected)
-
-    def test_inventory_matches_current_figure_five_selection(self):
+    def test_inventory_matches_two_panel_figure_five_selection(self):
         self.assertEqual(
             list(PANELS),
-            ["Pouring", "LiftTray", "ThreePiece"],
+            ["Pouring", "ThreePiece"],
         )
+        self.assertNotIn("LiftTray", PANELS)
         self.assertTrue(
             all(set(arms) == set(LEGEND_ORDER) for arms in PANELS.values())
         )
@@ -86,7 +79,7 @@ class FigureContractTest(unittest.TestCase):
                 for arms in PANELS.values()
                 for runs in arms.values()
             ),
-            42,
+            28,
         )
 
     def test_plot_summaries_writes_pdf_and_png_without_wandb(self):
@@ -97,7 +90,6 @@ class FigureContractTest(unittest.TestCase):
             }
             for task in PANELS
         }
-        summaries["LiftTray"]["no_subgoal"] = (0.55, None, [0.55])
 
         with tempfile.TemporaryDirectory() as directory:
             out_pdf = Path(directory) / "figure.pdf"
