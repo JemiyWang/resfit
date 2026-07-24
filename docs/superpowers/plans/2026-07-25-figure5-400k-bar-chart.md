@@ -176,4 +176,3 @@ git add paper/plot_ablation_bars_400k.py paper/test_plot_ablation_bars_400k.py \
   paper/figure/fig_ablation_bars_400k.pdf paper/figure/fig_ablation_bars_400k.png
 git commit -m "fig: render Figure 5 at 400k"
 ```
-

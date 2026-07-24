@@ -44,4 +44,3 @@ overwriting the current learning-curve figure.
   to contain the complete 330k--400k window.
 - Inspect the PDF metadata and embedded fonts.
 - Render and visually inspect the generated chart.
-
