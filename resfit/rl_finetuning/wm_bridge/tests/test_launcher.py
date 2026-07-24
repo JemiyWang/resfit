@@ -29,11 +29,13 @@ def _restore_parent_attr(snapshot):
         setattr(parent, leaf, old)
 
 
-def test_install_fakes_registers_all_three_modules():
+def test_install_fakes_registers_all_five_symbols():
     leaf_names = (
         "resfit.dexmg.environments.dexmg",
         "resfit.rl_finetuning.utils.evaluate_dexmg",
-        "resfit.lerobot.policies.pi05")
+        "resfit.lerobot.policies.pi05",
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay",
+    )
     saved = {k: sys.modules.get(k) for k in leaf_names}
     parent_snapshots = [_snapshot_parent_attr(k) for k in leaf_names]
     try:
@@ -41,6 +43,8 @@ def test_install_fakes_registers_all_three_modules():
             "create_vectorized_env": lambda **kw: "ENV",
             "run_dexmg_evaluation": lambda **kw: {"eval/success_rate": 0.0},
             "load_pi05_base_policy": lambda *a, **k: "BASE",
+            "count_offline_transitions": lambda *a, **k: 7,
+            "build_offline_buffer": lambda *a, **k: "BUILT",
         })
         m = sys.modules["resfit.dexmg.environments.dexmg"]
         assert m.create_vectorized_env(num_envs=1, device="cpu") == "ENV"
@@ -49,6 +53,10 @@ def test_install_fakes_registers_all_three_modules():
             "eval/success_rate"] == 0.0
         assert sys.modules[
             "resfit.lerobot.policies.pi05"].load_pi05_base_policy(None, "cpu") == "BASE"
+        offline = sys.modules[
+            "resfit.rl_finetuning.chunk_residual.offline_stage_replay"]
+        assert offline.count_offline_transitions("ignored") == 7
+        assert offline.build_offline_buffer(None, "ignored") == "BUILT"
     finally:
         for k, v in saved.items():
             if v is None:

@@ -28,6 +28,10 @@ def test_wrapper_still_loops_per_timestep():
     contract.check_wrapper_step_loop()         # 当前仓库应通过
 
 
+def test_offline_hook_points_still_lazy_import_and_call():
+    contract.check_offline_hook_points()
+
+
 def test_reward_shaping_must_be_none():
     with pytest.raises(ContractError, match="reward_shaping"):
         contract.check_runtime_args(_args(reward_shaping="staged"))

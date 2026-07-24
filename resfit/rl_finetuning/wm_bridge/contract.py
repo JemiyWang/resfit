@@ -6,9 +6,12 @@ monkeypatch 最大的风险是上游改了符号/签名/调用点而我们静默
 from __future__ import annotations
 
 import argparse
+import ast
+import importlib.util
 import inspect
 import math
 import os
+from pathlib import Path
 
 
 class ContractError(RuntimeError):
@@ -227,6 +230,83 @@ def check_wrapper_step_loop() -> None:
         raise ContractError(
             "ChunkResidualEnvWrapper.step 不再以单步动作调 vec_env.step —— "
             "ImaginationVecEnv.step 的入参约定已失效")
+
+
+def _attribute_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _attribute_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def check_offline_hook_points() -> None:
+    """Statically verify the trainer's lazy block-offline injection points."""
+    module_name = (
+        "resfit.rl_finetuning.chunk_residual.train_chunk_residual")
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
+        raise ContractError(f"cannot locate trainer source for {module_name}")
+    source = Path(spec.origin).read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=spec.origin)
+    main_nodes = [
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "main"
+    ]
+    if len(main_nodes) != 1:
+        raise ContractError("train_chunk_residual.main source is missing or duplicated")
+    main_node = main_nodes[0]
+
+    module = (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay")
+    imports = [
+        node for node in ast.walk(main_node)
+        if isinstance(node, ast.ImportFrom) and node.module == module
+    ]
+    expected_names = ["build_offline_buffer", "count_offline_transitions"]
+    if len(imports) != 1 or [alias.name for alias in imports[0].names] != expected_names:
+        raise ContractError(
+            "train_chunk_residual.main must lazily import exactly "
+            "build_offline_buffer and count_offline_transitions")
+
+    calls = {
+        name: [
+            node for node in ast.walk(main_node)
+            if isinstance(node, ast.Call)
+            and _attribute_name(node.func) == name
+        ]
+        for name in expected_names
+    }
+    count_calls = calls["count_offline_transitions"]
+    count_valid = (
+        len(count_calls) == 1
+        and len(count_calls[0].args) == 1
+        and _attribute_name(count_calls[0].args[0])
+        == "args.offline_dataset_path"
+        and len(count_calls[0].keywords) == 1
+        and count_calls[0].keywords[0].arg == "num_demos"
+        and _attribute_name(count_calls[0].keywords[0].value)
+        == "args.offline_num_demos"
+    )
+    if not count_valid:
+        raise ContractError(
+            "count_offline_transitions call no longer uses "
+            "args.offline_dataset_path and args.offline_num_demos")
+
+    build_calls = calls["build_offline_buffer"]
+    build_valid = (
+        len(build_calls) == 1
+        and len(build_calls[0].args) == 2
+        and _attribute_name(build_calls[0].args[0]) == "offline_rb"
+        and _attribute_name(build_calls[0].args[1])
+        == "args.offline_dataset_path"
+    )
+    if not build_valid:
+        raise ContractError(
+            "build_offline_buffer call no longer uses offline_rb and "
+            "args.offline_dataset_path")
 
 
 def check_runtime_args(args, imagination_gamma=None) -> None:

@@ -1,6 +1,6 @@
 """零改动入口。
 
-在 sys.modules 预置 3 个假模块拦截符号,再用 runpy 以 __main__ 方式跑原 trainer。
+在 sys.modules 预置 4 个假模块拦截 5 个符号,再用 runpy 以 __main__ 方式跑原 trainer。
 WM / RL 两侧源码 0 行改动。仓库先例:run_td3_meta_only_wrapper.py。
 
 ★ 不能 patch build_base_policy —— 它定义在 train_chunk_residual.py 自身,而 runpy 以
@@ -24,6 +24,10 @@ _TARGETS = {
     "create_vectorized_env": "resfit.dexmg.environments.dexmg",
     "run_dexmg_evaluation": "resfit.rl_finetuning.utils.evaluate_dexmg",
     "load_pi05_base_policy": "resfit.lerobot.policies.pi05",
+    "count_offline_transitions": (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay"),
+    "build_offline_buffer": (
+        "resfit.rl_finetuning.chunk_residual.offline_stage_replay"),
 }
 
 TRAINER = "resfit.rl_finetuning.chunk_residual.train_chunk_residual"
@@ -63,6 +67,7 @@ def main(argv=None) -> None:
     contract.check_upstream_symbols()
     contract.check_agent_image_size()
     contract.check_wrapper_step_loop()
+    contract.check_offline_hook_points()
 
     from resfit.rl_finetuning.wm_bridge.builder import (
         build_imagination_factories,

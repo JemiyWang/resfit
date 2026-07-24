@@ -1,12 +1,13 @@
-"""bridge 参数解析 + 组装 launcher 的 3 个假符号。
+"""bridge 参数解析 + 组装 launcher 的 5 个假符号。
 
 parse_bridge_args 摘走 bridge 专属参数(--value_ckpt/--wm_host/... ),其余原样透传给 trainer
 (trainer 的 --pi0_host/--pi0_port/--task/--chunk_length 等不认识 bridge 参数,不摘会报错)。
 
-3 个假符号(见 launch_imagination 的 _TARGETS):
+5 个假符号(见 launch_imagination 的 _TARGETS):
   create_vectorized_env → ImaginationVecEnv(wm=D-serve客户端, base=kai0共享实例, scorer=V, sampler)
   run_dexmg_evaluation  → make_imagination_evaluator(存 checkpoint;可选 adv-logging)
   load_pi05_base_policy → Kai0ImaginationBase(kai0 serve 客户端);与 env 共享同一实例→1 serve/chunk
+  count_offline_transitions / build_offline_buffer → block kai0 chunk replay
 
 ★ 共享实例:trainer 先 build_base_policy(→ load_pi05_base_policy 假物,建 Kai0ImaginationBase 存 state),
    再 create_vectorized_env(用 state["base"] 建 env)。两处同一 base,窗口缓存跨两个调用方生效。
@@ -32,6 +33,7 @@ from resfit.rl_finetuning.wm_bridge.block_offline_cache import (
 )
 from resfit.rl_finetuning.wm_bridge.block_offline_chunk import (
     EpisodeRef,
+    build_block_offline_buffer,
     catalog_episodes,
     plan_episode_chunks,
 )
@@ -331,6 +333,81 @@ def _normalizer(path):
     return ActionNormalizer(np.asarray(d["min"], np.float32), np.asarray(d["max"], np.float32))
 
 
+def _check_offline_source(dataset_path, runtime):
+    from resfit.rl_finetuning.wm_bridge.contract import ContractError
+
+    if os.path.realpath(dataset_path) != os.path.realpath(runtime.dataset_root):
+        raise ContractError(
+            f"dataset_path {dataset_path!r} does not match "
+            f"{runtime.dataset_root!r}")
+
+
+def format_offline_build_stats(stats, runtime):
+    return (
+        f"offline_source=block_success "
+        f"offline_transitions={stats.transitions} "
+        f"trainer_compat_mode=gt actual_offline_base=kai0_chunk "
+        f"offline_reward=gamma_phi_next_minus_phi "
+        f"replay_cache={runtime.replay_cache_dir}"
+    )
+
+
+def make_offline_factories(offline_runtime, state, scorer) -> dict:
+    from resfit.rl_finetuning.wm_bridge.contract import ContractError
+
+    def fake_count_offline_transitions(dataset_path, num_demos=None):
+        _check_offline_source(dataset_path, offline_runtime)
+        episodes = offline_runtime.selected_episodes(num_demos)
+        return sum(
+            len(plan_episode_chunks(episode.num_frames))
+            for episode in episodes
+        )
+
+    def fake_build_offline_buffer(offline_rb, dataset_path, **kwargs):
+        _check_offline_source(dataset_path, offline_runtime)
+        if state["base"] is None:
+            raise RuntimeError("kai0 base must be created before offline replay")
+
+        kwargs = dict(kwargs)
+        kwargs.pop("base_policy", None)
+        base_mode = kwargs.pop("base_mode", "gt")
+        if base_mode != "gt":
+            raise ContractError(
+                "offline base_mode must equal 'gt' as a trainer "
+                "compatibility marker")
+        for key in (
+            "bonus",
+            "mode",
+            "stage_cache",
+            "potential",
+            "subgoal",
+            "way_steps",
+            "act_feat_seqs",
+        ):
+            kwargs.pop(key, None)
+        kwargs.pop("scorer", None)
+        kwargs.pop("endpoint_store", None)
+        kwargs.pop("episodes", None)
+
+        num_demos = kwargs.get("num_demos")
+        kwargs["num_demos"] = num_demos
+        stats = build_block_offline_buffer(
+            offline_rb,
+            dataset_path,
+            base_policy=state["base"],
+            scorer=scorer,
+            endpoint_store=offline_runtime.endpoint_store,
+            episodes=offline_runtime.selected_episodes(num_demos),
+            **kwargs,
+        )
+        print(format_offline_build_stats(stats, offline_runtime))
+
+    return {
+        "count_offline_transitions": fake_count_offline_transitions,
+        "build_offline_buffer": fake_build_offline_buffer,
+    }
+
+
 def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
     from resfit.rl_finetuning.wm_bridge import contract
     from resfit.rl_finetuning.wm_bridge.base_bridge import Kai0ImaginationBase
@@ -388,8 +465,12 @@ def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
             out_dir, state["config"], adv_scorer=adv_scorer,
             n_eval_episodes=bridge_args.n_eval_episodes)(**kw)
 
-    return {
+    factories = {
         "create_vectorized_env": fake_create_vectorized_env,
         "run_dexmg_evaluation": fake_run_dexmg_evaluation,
         "load_pi05_base_policy": fake_load_pi05_base_policy,
     }
+    if offline_runtime is not None:
+        factories.update(make_offline_factories(
+            offline_runtime, state, scorer))
+    return factories

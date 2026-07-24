@@ -9,6 +9,7 @@ from resfit.rl_finetuning.wm_bridge import builder
 from resfit.rl_finetuning.wm_bridge import contract
 from resfit.rl_finetuning.wm_bridge import launch_imagination
 from resfit.rl_finetuning.wm_bridge.builder import (
+    make_offline_factories,
     parse_bridge_args,
     prepare_offline_runtime,
     write_bridge_cache_meta,
@@ -16,6 +17,19 @@ from resfit.rl_finetuning.wm_bridge.builder import (
 )
 from resfit.rl_finetuning.wm_bridge.contract import ContractError
 from resfit.rl_finetuning.wm_bridge.wm_driver import CAMERA_KEYS
+
+
+class RuntimeStub:
+    dataset_root = "/data/block_success"
+    endpoint_store = object()
+    replay_cache_dir = "/cache/replay"
+
+    def selected_episodes(self, num_demos=None):
+        episodes = (
+            types.SimpleNamespace(num_frames=51),
+            types.SimpleNamespace(num_frames=101),
+        )
+        return episodes if num_demos is None else episodes[:num_demos]
 
 
 def _write_success_dataset(parent):
@@ -68,6 +82,47 @@ def test_parse_bridge_offline_args_are_removed_from_passthrough():
     assert bridge.offline_rebuild is True
     assert "--offline_chunk_dataset" not in rest
     assert rest == ["--batch_size", "256"]
+
+
+def test_offline_factories_count_and_forward_shared_objects(monkeypatch):
+    runtime = RuntimeStub()
+    shared_base, shared_scorer = object(), object()
+    state = {"base": shared_base}
+    captured = {}
+
+    def fake_build(rb, path, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(transitions=3)
+
+    monkeypatch.setattr(builder, "build_block_offline_buffer", fake_build)
+    factories = make_offline_factories(runtime, state, shared_scorer)
+    assert factories["count_offline_transitions"](
+        runtime.dataset_root, num_demos=2) == 3
+    with pytest.raises(ContractError, match="dataset_path"):
+        factories["count_offline_transitions"](
+            "/another/root", num_demos=2)
+
+    factories["build_offline_buffer"](
+        object(), runtime.dataset_root, num_demos=2,
+        base_policy="generic", base_mode="gt", gamma=0.995,
+        bonus=100.0, mode="staged", potential="generic")
+    assert captured["base_policy"] is shared_base
+    assert captured["scorer"] is shared_scorer
+    assert captured["endpoint_store"] is runtime.endpoint_store
+    assert len(captured["episodes"]) == 2
+    assert "base_mode" not in captured
+    assert "bonus" not in captured
+    assert "mode" not in captured
+    assert "potential" not in captured
+
+
+def test_offline_factory_rejects_non_gt_compatibility_mode():
+    factories = make_offline_factories(
+        RuntimeStub(), {"base": object()}, object())
+
+    with pytest.raises(ContractError, match="base_mode"):
+        factories["build_offline_buffer"](
+            object(), RuntimeStub.dataset_root, base_mode="base_policy")
 
 
 def test_replace_option_rejects_bare_authoritative_flag():
@@ -196,6 +251,11 @@ def test_launcher_writes_metadata_before_installing_fakes(monkeypatch):
     monkeypatch.setattr(contract, "check_agent_image_size", lambda: None)
     monkeypatch.setattr(contract, "check_wrapper_step_loop", lambda: None)
     monkeypatch.setattr(
+        contract,
+        "check_offline_hook_points",
+        lambda: events.append("hook_points"),
+    )
+    monkeypatch.setattr(
         contract, "check_passthrough_runtime_args", lambda *a, **k: None)
     monkeypatch.setattr(
         contract,
@@ -240,5 +300,6 @@ def test_launcher_writes_metadata_before_installing_fakes(monkeypatch):
     launch_imagination.main([])
 
     assert events == [
-        "runtime", "factories", "run_config", "cache_meta", "install", "run"
+        "hook_points", "runtime", "factories", "run_config", "cache_meta",
+        "install", "run"
     ]
