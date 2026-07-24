@@ -51,6 +51,7 @@ def test_check_report_rejects_failed_gate(change, message):
         ({"sparse_seconds": -1.0}, "sparse_seconds"),
         ({"sparse_seconds": np.inf}, "sparse_seconds"),
         ({"peak_extra_mib": -1.0}, "peak_extra_mib"),
+        ({"peak_extra_mib": 0.0}, "peak_extra_mib"),
         ({"peak_extra_mib": np.nan}, "peak_extra_mib"),
     ],
 )
@@ -182,8 +183,8 @@ def test_reader_peak_measure_uses_spawn_and_full_reader_path(monkeypatch):
         lambda method: events.append(("context", method)) or Context(),
     )
     monkeypatch.setattr(verify, "BlockEpisodeReader", FakeReader)
-    rss = iter([40.0, 175.5])
-    monkeypatch.setattr(verify, "_max_rss_mib", lambda: next(rss))
+    monkeypatch.setattr(verify, "_current_rss_mib", lambda: 40.0)
+    monkeypatch.setattr(verify, "_max_rss_mib", lambda: 175.5)
 
     episode = SimpleNamespace(episode_id=9, num_frames=51)
     assert measure_reader_peak_mib(episode) == pytest.approx(135.5)

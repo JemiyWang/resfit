@@ -50,9 +50,20 @@ def _max_rss_mib():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
+def _current_rss_mib():
+    with open("/proc/self/status", encoding="utf-8") as status:
+        for line in status:
+            if line.startswith("VmRSS:"):
+                return float(line.split()[1]) / 1024.0
+    raise RuntimeError("current RSS unavailable in /proc/self/status")
+
+
 def _reader_peak_worker(episode, sender):
     try:
-        before_mib = _max_rss_mib()
+        # Current RSS avoids an import-time high-water mark hiding the reader
+        # allocations measured below. The ending ru_maxrss remains a
+        # conservative peak for the entire prepare/access interval.
+        before_mib = _current_rss_mib()
         reader = BlockEpisodeReader(episode)
         indices = required_indices(episode)
         reader.prepare_native_frames(indices)
@@ -157,8 +168,8 @@ def check_report(report):
         raise RuntimeError("legacy_seconds must be positive")
     if metrics["sparse_seconds"] <= 0.0:
         raise RuntimeError("sparse_seconds must be positive")
-    if metrics["peak_extra_mib"] < 0.0:
-        raise RuntimeError("peak_extra_mib must be non-negative")
+    if metrics["peak_extra_mib"] <= 0.0:
+        raise RuntimeError("peak_extra_mib must be positive")
 
     speedup = metrics["legacy_seconds"] / metrics["sparse_seconds"]
     if speedup < 3.0:
