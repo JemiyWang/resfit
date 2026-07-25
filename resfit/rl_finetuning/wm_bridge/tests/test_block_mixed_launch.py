@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import shlex
+import subprocess
 import types
 
 import numpy as np
@@ -73,6 +74,167 @@ def test_production_launch_enables_exact_mixed_configuration():
         "${BLK}/block_success", "${BLK}/block_fail"]
 
 
+def test_cup_launcher_is_aligned():
+    text = Path("launch_cup_imagination.sh").read_text()
+    tokens = shlex.split(text, comments=True, posix=True)
+    required = {
+        "--task_profile cup",
+        "--offline_fraction 0.5",
+        "--batch_size 256",
+        "--chunk_length 50",
+        "--demo_bc_coef 0.1",
+        "--critic_warmup_steps 10000",
+        "--learning_starts 10000",
+        "--utd 4",
+        "--actor_lr 0.000001",
+        "--critic_lr 0.0001",
+        "--n_step 1",
+        "--gamma 0.995",
+        "--pi0_prompt \"pick cup\"",
+        "--dataset cup_success",
+        "cup_value_pi0feat.pt",
+        "cup_shore_mixed50_seed",
+    }
+    for item in required:
+        assert item in text
+    assert "--bc_coef_final" not in text
+    assert tokens.index("mkdir") < tokens.index("tee")
+
+
+def test_cup_preparation_uses_three_disjoint_shards():
+    tokens = shlex.split(
+        Path("prepare_cup_pi0feat.sh").read_text(),
+        comments=True, posix=True,
+    )
+    assert "for shard in 0 1 2; do" in " ".join(tokens)
+    assert tokens.count("${PORTS[$shard]}") == 1
+    num_shards = [
+        tokens[index + 1] for index, token in enumerate(tokens)
+        if token == "--num_shards"
+    ]
+    shard_indices = [
+        tokens[index + 1] for index, token in enumerate(tokens)
+        if token == "--shard_index"
+    ]
+    assert num_shards == ["3", "3"]
+    assert shard_indices == ["${shard}", "${shard}"]
+    assert "${OUT}/success_shard${shard}.npz" in tokens
+    assert "${OUT}/fail_shard${shard}.npz" in tokens
+
+
+def test_cup_value_script_argv_matches_parser():
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import build_parser
+
+    tokens = [
+        token for token in shlex.split(
+            Path("train_cup_pi0feat_value.sh").read_text(),
+            comments=True, posix=True,
+        ) if token != "\n"
+    ]
+    module = "resfit.rl_finetuning.chunk_residual.train_hiql_value"
+    args = build_parser().parse_args(tokens[tokens.index(module) + 1:])
+    assert args.pi0_image_keys == ["top_head", "hand_left", "hand_right"]
+    assert len(args.success_dataset) == 3
+    assert len(args.failure_dataset) == 3
+
+
+def test_cup_launcher_actual_argv_matches_bridge_and_trainer_parsers(
+        tmp_path, monkeypatch):
+    capture = tmp_path / "capture-argv.sh"
+    capture.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "{\n"
+        "  printf 'GPU=%s\\n' \"${CUDA_VISIBLE_DEVICES}\"\n"
+        "  printf 'ROOT=%s\\n' \"${HF_LEROBOT_HOME}\"\n"
+        "  printf 'ARG=%s\\n' \"$@\"\n"
+        "} > \"${CAPTURE_ARGV:?}\"\n",
+        encoding="utf-8",
+    )
+    capture.chmod(0o755)
+    captured = tmp_path / "argv.txt"
+    monkeypatch.setenv("CAPTURE_ARGV", str(captured))
+
+    text = Path("launch_cup_imagination.sh").read_text()
+    command = (
+        "/mnt/mnt/data/envs/residual/bin/python -m "
+        "resfit.rl_finetuning.wm_bridge.launch_imagination"
+    )
+    assert text.count(command) == 1
+    text = text.replace(command, str(capture))
+    text = text.replace(
+        "OUT=/mnt/mnt/data/resfit/outputs_imagination/"
+        "cup_shore_mixed50_seed${SEED}",
+        f"OUT={tmp_path}/cup_shore_mixed50_seed${{SEED}}",
+    )
+    launcher = tmp_path / "launch-cup-captured.sh"
+    launcher.write_text(text, encoding="utf-8")
+    launcher.chmod(0o755)
+    subprocess.run(
+        ["bash", str(launcher), "5", "7"],
+        cwd=Path.cwd(),
+        check=True,
+    )
+
+    lines = captured.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == [
+        "GPU=5",
+        "ROOT=/mnt/mnt/data/domains_rise/cup",
+    ]
+    argv = [line.removeprefix("ARG=") for line in lines[2:]]
+    duplicate_flags = {
+        flag for flag in argv
+        if flag.startswith("--") and argv.count(flag) > 1
+    }
+    assert duplicate_flags == {"--init_state_dataset"}
+
+    bridge_args, passthrough = parse_bridge_args(argv)
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        build_parser as build_trainer_parser,
+    )
+    trainer_args = build_trainer_parser().parse_args(passthrough)
+    assert bridge_args.task_profile == "cup"
+    assert bridge_args.init_state_dataset == [
+        "/mnt/mnt/data/domains_rise/cup/cup_success",
+        "/mnt/mnt/data/domains_rise/cup/cup_fail",
+    ]
+    assert trainer_args.seed == 7
+    assert trainer_args.output_dir == \
+        f"{tmp_path}/cup_shore_mixed50_seed7"
+
+
+def test_teleavatar_public_wording_is_task_neutral():
+    forbidden = {
+        "resfit/rl_finetuning/wm_bridge/teleavatar_start_sampler.py": {
+            "从 block 真实 episode",
+            "block_success/block_fail 的完整路径列表",
+            "至少一个 block 数据集路径",
+        },
+        "resfit/rl_finetuning/wm_bridge/builder.py": {
+            "block kai0 chunk replay",
+            "block V (pi0_feat, block_value_pi0feat.pt)",
+            "想象起点数据集(block_success/fail 完整路径)",
+            "block 动作 min/max JSON",
+            "same block_success tree",
+        },
+        "resfit/rl_finetuning/wm_bridge/contract.py": {
+            "block mixed replay is enabled",
+            "trainer's lazy block-offline injection points",
+        },
+        "resfit/rl_finetuning/chunk_residual/"
+        "build_pi0_feat_cache_via_serve.py": {
+            "block/teleavatar 的 kai0 serve obs",
+            "teleavatar/block 数据源",
+            "teleavatar(block 三相机)",
+            "如 block_success",
+        },
+    }
+    for path, phrases in forbidden.items():
+        text = Path(path).read_text()
+        for phrase in phrases:
+            assert phrase not in text
+
+
 def test_production_batch_is_exactly_128_plus_128():
     batch_size, fraction = 256, 0.5
     assert int(batch_size * (1 - fraction)) == 128
@@ -128,8 +290,8 @@ def _complete_build_stats():
     )
 
 
-def _write_success_dataset(parent):
-    root = parent / "block_success"
+def _write_success_dataset(parent, name="block_success"):
+    root = parent / name
     parquet = root / "data/chunk-000/episode_000000.parquet"
     parquet.parent.mkdir(parents=True)
     pd.DataFrame({"frame_index": range(51)}).to_parquet(parquet)
@@ -178,6 +340,144 @@ def test_parse_bridge_offline_args_are_removed_from_passthrough():
     assert bridge.offline_rebuild is True
     assert "--offline_chunk_dataset" not in rest
     assert rest == ["--batch_size", "256"]
+
+
+def test_parse_bridge_args_defaults_to_block_profile():
+    args, _ = builder.parse_bridge_args([
+        "--value_ckpt", "/tmp/value.pt",
+    ])
+    assert args.task_profile == "block"
+
+
+def test_prepare_cup_runtime_translates_task_fields(tmp_path, monkeypatch):
+    dataset = _write_success_dataset(tmp_path, name="cup_success")
+    value_ckpt = tmp_path / "cup_value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    bridge, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--task_profile", "cup",
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_pick_cup_awbc_49999",
+    ])
+    runtime, translated = builder.prepare_offline_runtime(
+        bridge, _mixed_passthrough(tmp_path / "output"))
+    assert translated[translated.index("--pi0_prompt") + 1] == "pick cup"
+    assert translated[translated.index("--dataset") + 1] == "cup_success"
+    assert runtime.bridge_meta["offline_source"] == "cup_success"
+    assert runtime.bridge_meta["pi0_prompt"] == "pick cup"
+
+
+def test_write_success_dataset_helper_can_create_cup_source(tmp_path):
+    dataset = _write_success_dataset(tmp_path, name="cup_success")
+    assert dataset.name == "cup_success"
+    assert (dataset / "meta/episodes_stats.jsonl").is_file()
+
+
+def _capture_imagination_factory_task_fields(monkeypatch, adv_prompt=None):
+    captured = {}
+    scorer = object()
+
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.scorers.Kai0HiqlScorer."
+        "from_value_ckpt",
+        lambda *args, **kwargs: scorer,
+    )
+    monkeypatch.setattr(contract, "check_scorer", lambda *args, **kw: None)
+    monkeypatch.setattr(
+        contract, "check_mixed_scorer", lambda *args, **kw: None)
+    monkeypatch.setattr(
+        contract, "check_psi_samesource", lambda *args, **kw: None)
+
+    class CapturingAdvClient:
+        def __init__(self, *, host, port, prompt):
+            captured["adv_prompt"] = prompt
+
+    class CapturingSampler:
+        def __init__(self, datasets, caption="build block"):
+            captured["datasets"] = datasets
+            captured["caption"] = caption
+
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.adv_client.AdvServeClient",
+        CapturingAdvClient,
+    )
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.teleavatar_start_sampler."
+        "TeleavatarStartSampler",
+        CapturingSampler,
+    )
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.base_bridge.Kai0ImaginationBase",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.imagination_env.ImaginationVecEnv",
+        lambda **kwargs: types.SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        "resfit.rl_finetuning.wm_bridge.wm_client.WmServeClient",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "openpi_client.websocket_client_policy.WebsocketClientPolicy",
+        lambda **kwargs: object(),
+    )
+
+    argv = [
+        "--value_ckpt", "/tmp/cup_value.pt",
+        "--task_profile", "cup",
+        "--init_state_dataset", "/tmp/cup_success",
+        "--adv_host", "127.0.0.1",
+    ]
+    if adv_prompt is not None:
+        argv.extend(["--adv_prompt", adv_prompt])
+    bridge_args, _ = parse_bridge_args(argv)
+    factories = builder.build_imagination_factories(bridge_args)
+    factories["load_pi05_base_policy"](
+        types.SimpleNamespace(
+            host="127.0.0.1",
+            port=8000,
+            prompt="pick cup",
+            action_dim=16,
+        ),
+        "cpu",
+    )
+    factories["create_vectorized_env"]()
+    return captured
+
+
+def test_cup_factory_uses_profile_prompt_for_sampler_and_adv_fallback(
+    monkeypatch,
+):
+    captured = _capture_imagination_factory_task_fields(monkeypatch)
+    assert captured["caption"] == "pick cup"
+    assert captured["adv_prompt"] == "pick cup"
+
+
+def test_explicit_adv_prompt_overrides_cup_profile(monkeypatch):
+    captured = _capture_imagination_factory_task_fields(
+        monkeypatch, adv_prompt="custom cup monitor")
+    assert captured["adv_prompt"] == "custom cup monitor"
+
+
+def test_cup_runtime_missing_cache_root_uses_task_neutral_error(
+    tmp_path, monkeypatch,
+):
+    dataset = _write_success_dataset(tmp_path, name="cup_success")
+    value_ckpt = tmp_path / "cup_value.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    bridge, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--task_profile", "cup",
+        "--offline_chunk_dataset", str(dataset),
+        "--pi0_serve_ckpt_id", "pi05_pick_cup_awbc_49999",
+    ])
+    with pytest.raises(ContractError, match="required for mixed replay"):
+        prepare_offline_runtime(
+            bridge, _mixed_passthrough(tmp_path / "output"))
 
 
 def test_offline_factories_count_and_forward_shared_objects(

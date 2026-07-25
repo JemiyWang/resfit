@@ -1,4 +1,4 @@
-"""想象起点采样(正式版)：从 block 真实 episode 采 4 帧窗口 + 真 proprio。
+"""想象起点采样(正式版)：从 Teleavatar 真实 episode 采 4 帧窗口 + 真 proprio。
 
 替代 S1 冒烟里的 _OneEpisodeSampler(占位 proprio)。产 InitState,直接喂 ImaginationVecEnv。
 起点池 = 成功集 ∪ 失败集(残差主战场是基座跑偏态,失败集正是)。caption 钉死常量。
@@ -33,11 +33,12 @@ def _paths(root, ep):
 
 
 class TeleavatarStartSampler:
-    """dataset_roots: block_success/block_fail 的完整路径列表。"""
+    """dataset_roots: Teleavatar 成功/失败数据集的完整路径列表。"""
 
-    def __init__(self, dataset_roots, rng=None):
-        assert dataset_roots, "须给至少一个 block 数据集路径(成功/失败集)"
+    def __init__(self, dataset_roots, rng=None, caption=BLOCK_CAPTION):
+        assert dataset_roots, "须给至少一个 Teleavatar 数据集路径(成功/失败集)"
         self.rng = rng if rng is not None else np.random.default_rng()
+        self.caption = str(caption)
         self.eps = []                # [(root, ep, n_frames)]
         for root in dataset_roots:
             for pq in sorted(glob.glob(os.path.join(root, "data", "chunk-*", "episode_*.parquet"))):
@@ -70,4 +71,4 @@ class TeleavatarStartSampler:
         df = pd.read_parquet(pq, columns=["observation.state"])
         proprio = np.asarray(df["observation.state"].iloc[start + N_PREVIOUS - 1],
                              dtype=np.float32).reshape(-1)[:ACTION_DIM]
-        return InitState(obs_window=obs_window, proprio=proprio, caption=BLOCK_CAPTION)
+        return InitState(obs_window=obs_window, proprio=proprio, caption=self.caption)

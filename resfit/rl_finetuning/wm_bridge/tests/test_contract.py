@@ -233,6 +233,54 @@ def test_mixed_contract_rejects_non_success_source():
             _mixed_args(), offline_chunk_dataset="/data/block_fail")
 
 
+def test_cup_mixed_replay_contract_accepts_matching_profile():
+    args = _mixed_args()
+    args.pi0_prompt = "pick cup"
+    args.dataset = "cup_success"
+    contract.check_mixed_replay_args(
+        args,
+        "/data/cup_success",
+        expected_prompt="pick cup",
+        expected_source="cup_success",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("pi0_prompt", "build block", "pick cup"),
+        ("dataset", "block_success", "cup_success"),
+    ],
+)
+def test_cup_mixed_replay_contract_rejects_cross_task_values(
+    field, value, message
+):
+    args = _mixed_args()
+    args.pi0_prompt = "pick cup"
+    args.dataset = "cup_success"
+    setattr(args, field, value)
+    with pytest.raises(contract.ContractError, match=message):
+        contract.check_mixed_replay_args(
+            args,
+            "/data/cup_success",
+            expected_prompt="pick cup",
+            expected_source="cup_success",
+        )
+
+
+def test_cup_contract_rejects_failure_dataset_as_offline_source():
+    args = _mixed_args()
+    args.pi0_prompt = "pick cup"
+    args.dataset = "cup_fail"
+    with pytest.raises(contract.ContractError, match="cup_success"):
+        contract.check_mixed_replay_args(
+            args,
+            "/data/cup_fail",
+            expected_prompt="pick cup",
+            expected_source="cup_success",
+        )
+
+
 def test_mixed_mode_rejects_dummy_scorer_even_with_debug_flag():
     with pytest.raises(ContractError, match="DummyScorer"):
         contract.check_mixed_scorer(DummyScorer(), enabled=True)

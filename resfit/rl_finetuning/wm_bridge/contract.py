@@ -50,7 +50,13 @@ def parse_mixed_passthrough(argv):
     return args
 
 
-def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
+def check_mixed_replay_args(
+    trainer_args,
+    offline_chunk_dataset,
+    *,
+    expected_prompt="build block",
+    expected_source="block_success",
+) -> None:
     if offline_chunk_dataset is None:
         return
 
@@ -130,8 +136,8 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
         ),
         (
             "pi0_prompt",
-            getattr(trainer_args, "pi0_prompt", None) == "build block",
-            "must equal 'build block'",
+            getattr(trainer_args, "pi0_prompt", None) == expected_prompt,
+            f"must equal {expected_prompt!r}",
         ),
         (
             "pi0_action_dim",
@@ -155,10 +161,10 @@ def check_mixed_replay_args(trainer_args, offline_chunk_dataset) -> None:
             raise ContractError(
                 f"mixed replay {field}={value!r} {requirement}")
 
-    if os.path.basename(source) != "block_success":
+    if os.path.basename(source) != expected_source:
         raise ContractError(
-            "offline_chunk_dataset must resolve to block_success, "
-            f"got {source!r}")
+            "offline_chunk_dataset must resolve to "
+            f"{expected_source}, got {source!r}")
 
 
 def check_mixed_scorer(
@@ -172,7 +178,7 @@ def check_mixed_scorer(
 
     if isinstance(scorer, DummyScorer):
         raise ContractError(
-            "DummyScorer is forbidden when block mixed replay is enabled")
+            "DummyScorer is forbidden when Teleavatar mixed replay is enabled")
 
     expected_anchor = getattr(scorer, "expected_psi_anchor", None)
     if not expected_anchor:
@@ -258,7 +264,7 @@ def _attribute_name(node):
 
 
 def check_offline_hook_points() -> None:
-    """Statically verify the trainer's lazy block-offline injection points."""
+    """Statically verify the trainer's lazy Teleavatar-offline injection points."""
     module_name = (
         "resfit.rl_finetuning.chunk_residual.train_chunk_residual")
     spec = importlib.util.find_spec(module_name)

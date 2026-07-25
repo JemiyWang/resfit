@@ -844,7 +844,7 @@ the systematic-debugging skill, and do not proceed to full preprocessing.
 - Generated: `outputs_chunk/cup_value_pi0feat.pt`
 
 **Interfaces:**
-- Consumes Cup datasets and kai0 checkpoint 49999.
+- Consumes Cup datasets and the kai0 checkpoint-49999 Cup export at `checkpoints/cup`.
 - Produces the scorer checkpoint required by formal RL.
 
 - [ ] **Step 1: Resolve and stop only the authorized GPU 6 service**
@@ -857,13 +857,13 @@ Do not use `pkill`, broad process patterns, or unresolved shell substitutions.
 
 - [ ] **Step 2: Start temporary Cup kai0 serves**
 
-Retain the existing GPU 1 port-8001 serve. Start two additional instances:
+Ensure GPU 1 port 8001 loads `checkpoints/cup`, then start two additional instances:
 
 ```bash
 CUDA_VISIBLE_DEVICES=6 PYTHONPATH=/mnt/mnt/data/data2/kai0/src:/mnt/mnt/data/data2/kai0 \
 /mnt/mnt/data/chj/openpi/.venv/bin/python \
   /mnt/mnt/data/resfit/pi0_serve/serve_block_awbc.py \
-  --dir /mnt/mnt/data/data2/kai0/checkpoints/49999 \
+  --dir /mnt/mnt/data/data2/kai0/checkpoints/cup \
   --port 8011 --pooling mean \
   --default-prompt "pick cup" \
   --config-name pi05_pick_cup_awbc \

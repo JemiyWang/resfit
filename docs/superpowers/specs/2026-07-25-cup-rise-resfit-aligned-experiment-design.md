@@ -39,12 +39,12 @@ The production allocation is:
 | GPU | Component | Port | Task-specific configuration |
 |---|---|---:|---|
 | 0 | RISE world-model D-serve | 9000 | Request prompt `pick cup` |
-| 1 | kai0 AWBC feature/action serve | 8001 | Checkpoint `checkpoints/49999`, pooling `mean` |
+| 1 | kai0 AWBC feature/action serve | 8001 | Cup export `checkpoints/cup`, pooling `mean` |
 | 6 | RISE advantage monitoring serve | 8002 | Cup `value_cup` checkpoint/config |
 | 7 | ResFiT residual RL | n/a | Cup aligned run |
 
 The existing three-domain world-model checkpoint is reused. The kai0 checkpoint
-at `checkpoints/49999` was trained by the original pick-cup AWBC pipeline and is
+at `checkpoints/cup` was exported from the original pick-cup AWBC pipeline and is
 therefore retained for Cup.
 
 During feature preprocessing, before formal RL occupies GPU 7, GPUs 1, 6, and 7

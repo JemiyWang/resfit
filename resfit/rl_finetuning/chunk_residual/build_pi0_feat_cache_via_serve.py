@@ -152,7 +152,7 @@ read_teleavatar_episode_batched = None
 
 
 def build_teleavatar_serve_obs(images, state, prompt, *, size=224):
-    """block/teleavatar 的 kai0 serve obs(嵌套 schema,对齐 piper_deploy.py)。
+    """Teleavatar 的 kai0 serve obs(嵌套 schema,对齐 piper_deploy.py)。
 
     images: {serve裸键: CHW-or-HWC 图};state: (Dp,) proprio。
     每图 resize_with_pad 到 size×size 并转 CHW(与 libero 路同款客户端预处理 → 与部署同源)。
@@ -178,7 +178,7 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
                           serve_ckpt_id, out_cache, num_demos=None,
                           proprio_key="observation.state",
                           num_shards=1, shard_index=0):
-    """teleavatar/block 数据源:从 LeRobot 读三相机 demo,逐帧经 serve 取 prefix_feat ⊕ state → 缓存。
+    """Teleavatar 数据源:从 LeRobot 读三相机 demo,逐帧经 serve 取 prefix_feat ⊕ state → 缓存。
 
     与 libero 路同构,差别仅在 obs schema(嵌套三相机)与 cam 键映射。
     """
@@ -248,7 +248,7 @@ def build_parser():
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--data_source", choices=["dexmg_hdf5", "libero", "teleavatar"],
                     default="dexmg_hdf5",
-                    help="数据来源:dexmg_hdf5(旧行为)|libero(LeRobot demo)|teleavatar(block 三相机)")
+                    help="数据来源:dexmg_hdf5(旧行为)|libero(LeRobot demo)|teleavatar(三相机 LeRobot demo)")
     # dexmg_hdf5 专用参数(data_source=dexmg_hdf5 时必须,否则可省)
     ap.add_argument("--hdf5", default=None)
     ap.add_argument("--dataset", default=None)
@@ -260,7 +260,7 @@ def build_parser():
     ap.add_argument("--language", default=None,
                     help="LIBERO 任务语言串(直接传,数据集 episodes.jsonl 即任务语言;不依赖 LIBERO 库)")
     ap.add_argument("--repo_id", default=None,
-                    help="teleavatar:LeRobot 数据集名/目录(如 block_success),与 --lerobot_root 组合")
+                    help="teleavatar:LeRobot 数据集名/目录(如 task_success),与 --lerobot_root 组合")
     # 公共参数
     ap.add_argument("--pooling", choices=["last", "mean"], default="last")
     ap.add_argument("--serve_ckpt_id", required=True)
