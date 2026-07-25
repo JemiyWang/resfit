@@ -77,6 +77,7 @@ def test_endpoint_fingerprint_has_no_selected_demo_count_parameter():
         ("camera_keys", tuple(reversed(CAMERA_KEYS))),
         ("chunk_length", 25),
         ("stride", 25),
+        ("policy_state_dim", 14),
     ],
 )
 def test_endpoint_fingerprint_changes_for_every_identity_field(field, changed):
@@ -87,9 +88,26 @@ def test_endpoint_fingerprint_changes_for_every_identity_field(field, changed):
         camera_keys=CAMERA_KEYS,
         chunk_length=50,
         stride=50,
+        policy_state_dim=16,
     )
     assert endpoint_fingerprint(**base) != endpoint_fingerprint(
         **{**base, field: changed})
+
+
+def test_endpoint_fingerprint_separates_policy_state_mappings():
+    base = dict(
+        manifest={"root": "/dataset", "episodes": []},
+        pi0_serve_ckpt_id="kai0-a",
+        prompt="build block",
+        camera_keys=CAMERA_KEYS,
+    )
+    assert endpoint_fingerprint(
+        **base,
+        policy_state_dim=14,
+    ) != endpoint_fingerprint(
+        **base,
+        policy_state_dim=16,
+    )
 
 
 @pytest.mark.parametrize(

@@ -167,6 +167,63 @@ def test_serve_sha_missing_warns_but_does_not_raise():
         contract.check_psi_samesource(sc, serve_ckpt_id=None)
 
 
+def test_pi0_server_metadata_accepts_exact_paper_identity():
+    contract.check_pi0_server_metadata(
+        {
+            "serve_ckpt_id": "pi05_paper_awbc_19999",
+            "pooling": "mean",
+            "policy_state_dim": 14,
+            "asset_id": "pick_paper_all_merged",
+        },
+        expected_ckpt_id="pi05_paper_awbc_19999",
+        expected_pooling="mean",
+        expected_state_dim=14,
+        expected_asset_id="pick_paper_all_merged",
+    )
+
+
+def test_pi0_server_metadata_rejects_wrong_checkpoint():
+    with pytest.raises(ContractError, match="serve_ckpt_id"):
+        contract.check_pi0_server_metadata(
+            {
+                "serve_ckpt_id": "pi05_block_awbc_49999",
+                "pooling": "mean",
+                "policy_state_dim": 14,
+                "asset_id": "pick_paper_all_merged",
+            },
+            expected_ckpt_id="pi05_paper_awbc_19999",
+            expected_pooling="mean",
+            expected_state_dim=14,
+            expected_asset_id="pick_paper_all_merged",
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "bad_value"),
+    [
+        ("pooling", "last"),
+        ("policy_state_dim", 16),
+        ("asset_id", "inference"),
+    ],
+)
+def test_pi0_server_metadata_rejects_other_identity_mismatch(key, bad_value):
+    metadata = {
+        "serve_ckpt_id": "pi05_paper_awbc_19999",
+        "pooling": "mean",
+        "policy_state_dim": 14,
+        "asset_id": "pick_paper_all_merged",
+    }
+    metadata[key] = bad_value
+    with pytest.raises(ContractError, match=key):
+        contract.check_pi0_server_metadata(
+            metadata,
+            expected_ckpt_id="pi05_paper_awbc_19999",
+            expected_pooling="mean",
+            expected_state_dim=14,
+            expected_asset_id="pick_paper_all_merged",
+        )
+
+
 def _mixed_args(**overrides):
     values = {
         "offline_fraction": 0.5,

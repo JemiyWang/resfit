@@ -20,17 +20,23 @@ import numpy as np
 
 from resfit.rl_finetuning.chunk_residual.offline_hdf5_buffer import sorted_demo_keys
 from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import save_pi0_feat_cache
+from resfit.rl_finetuning.wm_bridge.teleavatar_policy_state import (
+    map_teleavatar_policy_state,
+)
 
 
 def pi0_feat_signature(dataset_id, num_demos, *, image_keys, proprio_key, pooling, prompt,
-                       serve_ckpt_id, serve_metadata):
+                       serve_ckpt_id, serve_metadata, policy_state_dim=None):
     """缓存/同源校验签名(可 JSON 序列化、稳定排序)。"""
-    return {
+    signature = {
         "dataset_id": str(dataset_id), "num_demos": num_demos,
         "image_keys": list(image_keys), "proprio_key": str(proprio_key),
         "pooling": str(pooling), "prompt": str(prompt),
         "serve_ckpt_id": str(serve_ckpt_id), "serve_metadata": serve_metadata or {},
     }
+    if policy_state_dim is not None:
+        signature["policy_state_dim"] = int(policy_state_dim)
+    return signature
 
 
 def assemble_pi0_feat_seqs(raw_feats, proprio_seqs):
@@ -177,7 +183,8 @@ def build_teleavatar_serve_obs(images, state, prompt, *, size=224):
 def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
                           serve_ckpt_id, out_cache, num_demos=None,
                           proprio_key="observation.state",
-                          num_shards=1, shard_index=0):
+                          num_shards=1, shard_index=0,
+                          policy_state_dim=16):
     """Teleavatar 数据源:从 LeRobot 读三相机 demo,逐帧经 serve 取 prefix_feat ⊕ state → 缓存。
 
     与 libero 路同构,差别仅在 obs schema(嵌套三相机)与 cam 键映射。
@@ -214,7 +221,11 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
         for t in range(T):
             images = {TELEAVATAR_CAM_MAP[lk]: np.asarray(fr["images"][lk][t])
                       for lk in lerobot_keys}
-            obs = build_teleavatar_serve_obs(images, np.asarray(fr["state"][t]), prompt)
+            policy_state = map_teleavatar_policy_state(
+                fr["state"][t],
+                policy_state_dim,
+            )
+            obs = build_teleavatar_serve_obs(images, policy_state, prompt)
             feats.append(np.asarray(client.infer(obs)["prefix_feat"], np.float32))
         raw_feats.append(np.stack(feats, axis=0))
         proprios.append(np.asarray(fr["state"], np.float32))
@@ -222,7 +233,9 @@ def build_main_teleavatar(client, *, lerobot_root, repo_id, prompt, pooling,
     sig = pi0_feat_signature(repo_id, num_demos,
                              image_keys=list(TELEAVATAR_CAM_MAP.values()),
                              proprio_key=proprio_key, pooling=pooling, prompt=prompt,
-                             serve_ckpt_id=serve_ckpt_id, serve_metadata=_server_metadata(client))
+                             serve_ckpt_id=serve_ckpt_id,
+                             serve_metadata=_server_metadata(client),
+                             policy_state_dim=policy_state_dim)
     save_pi0_feat_cache(out_cache, seqs, (mean, std), signature=sig)
     print(f"[build_pi0_feat teleavatar] wrote {out_cache}: {len(seqs)} demos, dim={seqs[0].shape[1]}")
 
@@ -269,6 +282,13 @@ def build_parser():
     # teleavatar 分片(多卡并行):各分片跨步取 eps[shard_index::num_shards]
     ap.add_argument("--num_shards", type=int, default=1)
     ap.add_argument("--shard_index", type=int, default=0)
+    ap.add_argument(
+        "--policy_state_dim",
+        type=int,
+        choices=(14, 16),
+        default=16,
+        help="TeleAvatar base-policy state dimension; cached proprio remains 16D",
+    )
     return ap
 
 
@@ -303,7 +323,8 @@ def main():
                               prompt=args.prompt, pooling=args.pooling,
                               serve_ckpt_id=args.serve_ckpt_id, out_cache=args.out_cache,
                               num_demos=args.num_demos, proprio_key=args.proprio_key,
-                              num_shards=args.num_shards, shard_index=args.shard_index)
+                              num_shards=args.num_shards, shard_index=args.shard_index,
+                              policy_state_dim=args.policy_state_dim)
     else:
         build_main(client, hdf5=args.hdf5, dataset_id=args.dataset, image_keys=args.image_keys,
                    proprio_key=args.proprio_key, prompt=args.prompt, pooling=args.pooling,

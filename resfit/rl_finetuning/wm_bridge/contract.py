@@ -464,6 +464,31 @@ def check_psi_samesource(scorer, serve_ckpt_id) -> None:
             "Φ 会被喂进它没见过的特征空间,且不会报错,只会静默给出垃圾势")
 
 
+def check_pi0_server_metadata(
+    metadata,
+    *,
+    expected_ckpt_id,
+    expected_pooling,
+    expected_state_dim,
+    expected_asset_id,
+) -> None:
+    """Require the live base-policy server to match the declared identity."""
+    actual = dict(metadata or {})
+    expected = {
+        "serve_ckpt_id": str(expected_ckpt_id),
+        "pooling": str(expected_pooling),
+        "policy_state_dim": int(expected_state_dim),
+        "asset_id": str(expected_asset_id),
+    }
+    for key, expected_value in expected.items():
+        actual_value = actual.get(key)
+        if actual_value != expected_value:
+            raise ContractError(
+                f"pi0 server metadata {key}={actual_value!r}; "
+                f"expected {expected_value!r}"
+            )
+
+
 def check_all(args, scorer, serve_ckpt_id, allow_dummy: bool) -> None:
     check_upstream_symbols()
     check_wrapper_step_loop()

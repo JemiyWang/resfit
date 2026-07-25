@@ -79,6 +79,15 @@ class _StubClient:
         return {}
 
 
+class _RecordingClient(_StubClient):
+    def __init__(self):
+        self.observations = []
+
+    def infer(self, obs):
+        self.observations.append(obs)
+        return super().infer(obs)
+
+
 def _patch_lerobot(monkeypatch, n_eps, T):
     import numpy as np
     from resfit.rl_finetuning.chunk_residual import build_pi0_feat_cache_via_serve as B
@@ -114,6 +123,33 @@ def test_build_main_teleavatar_end_to_end(tmp_path, monkeypatch):
     assert sig["serve_ckpt_id"] == "kai0-block"
     assert sig["prompt"] == "build block"
     assert set(sig["image_keys"]) == {"top_head", "hand_left", "hand_right"}
+
+
+def test_paper_policy_state_is_14_but_cached_proprio_stays_16(
+    tmp_path,
+    monkeypatch,
+):
+    from resfit.rl_finetuning.chunk_residual.pi0_feat_cache import (
+        load_pi0_feat_cache,
+    )
+
+    _patch_lerobot(monkeypatch, n_eps=1, T=4)
+    client = _RecordingClient()
+    out = str(tmp_path / "paper.npz")
+    build_main_teleavatar(
+        client,
+        lerobot_root="/x",
+        repo_id="paper_success",
+        prompt="put the paper roll on the holder",
+        pooling="mean",
+        serve_ckpt_id="pi05_paper_awbc_19999",
+        out_cache=out,
+        policy_state_dim=14,
+    )
+    assert all(obs["state"].shape == (14,) for obs in client.observations)
+    seqs, _, sig = load_pi0_feat_cache(out)
+    assert seqs[0].shape[1] == 8 + 16
+    assert sig["policy_state_dim"] == 14
 
 
 def test_build_main_teleavatar_respects_num_demos(tmp_path, monkeypatch):
@@ -176,3 +212,13 @@ def test_cli_exposes_shard_args():
         "--serve_ckpt_id", "k", "--out_cache", "/o",
         "--num_shards", "4", "--shard_index", "2"])
     assert args.num_shards == 4 and args.shard_index == 2
+
+
+def test_cli_exposes_policy_state_dim():
+    args = build_parser().parse_args([
+        "--host", "h", "--port", "9000", "--data_source", "teleavatar",
+        "--repo_id", "paper_success", "--lerobot_root", "/x",
+        "--serve_ckpt_id", "paper", "--out_cache", "/o",
+        "--policy_state_dim", "14",
+    ])
+    assert args.policy_state_dim == 14

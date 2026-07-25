@@ -3,6 +3,9 @@ import pandas as pd
 import pytest
 
 from resfit.rl_finetuning.wm_bridge.task_profiles import get_task_profile
+from resfit.rl_finetuning.wm_bridge.teleavatar_policy_state import (
+    map_teleavatar_policy_state,
+)
 from resfit.rl_finetuning.wm_bridge.teleavatar_start_sampler import (
     TeleavatarStartSampler,
 )
@@ -17,9 +20,48 @@ def test_builtin_task_profiles_are_exact():
         "pick cup", "cup_success", 16)
 
 
+def test_paper_profile_is_exact():
+    paper = get_task_profile("paper")
+    assert (
+        paper.prompt,
+        paper.success_dataset,
+        paper.action_dim,
+        paper.policy_state_dim,
+        paper.dataset_fps,
+    ) == (
+        "put the paper roll on the holder",
+        "paper_success",
+        16,
+        14,
+        20.0,
+    )
+
+
+def test_policy_state_14_drops_only_grippers():
+    state = np.arange(16, dtype=np.float32)
+    np.testing.assert_array_equal(
+        map_teleavatar_policy_state(state, 14),
+        np.concatenate([state[:7], state[8:15]]),
+    )
+
+
+def test_policy_state_16_is_identity():
+    state = np.arange(16, dtype=np.float32)
+    np.testing.assert_array_equal(
+        map_teleavatar_policy_state(state, 16),
+        state,
+    )
+
+
+@pytest.mark.parametrize("target_dim", [13, 15, 17])
+def test_invalid_policy_state_dim_fails(target_dim):
+    with pytest.raises(ValueError, match="14 or 16"):
+        map_teleavatar_policy_state(np.zeros(16), target_dim)
+
+
 def test_unknown_task_profile_fails():
     with pytest.raises(ValueError, match="unknown task profile"):
-        get_task_profile("paper")
+        get_task_profile("nonexistent")
 
 
 def test_start_sampler_uses_injected_caption(monkeypatch):

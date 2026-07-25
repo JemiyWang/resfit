@@ -51,6 +51,9 @@ class Args:
     default_prompt: str = "build_block"
     config_name: str = "pi05_block_awbc"  # 只用于 assets/<name> 归属;此处 norm 从 checkpoint 读
     repo_id: str = "/mnt/mnt/data/domains_rise/block/block_success"  # 仅建 transform,不读数据
+    asset_id: str = "inference"
+    serve_ckpt_id: str = "pi05_block_awbc_49999"
+    policy_state_dim: int = 16
 
 
 def _create_policy(args: "Args"):
@@ -63,7 +66,15 @@ def _create_policy(args: "Args"):
         name=args.config_name,
         default_prompt=args.default_prompt,
     )
-    # norm_stats 从 checkpoint 的 assets/inference 读(create_trained_policy 默认行为);
+    assets = dataclasses.replace(
+        train_config.data.assets,
+        asset_id=args.asset_id,
+    )
+    train_config = dataclasses.replace(
+        train_config,
+        data=dataclasses.replace(train_config.data, assets=assets),
+    )
+    # norm_stats 从 checkpoint 的 assets/<asset_id> 读;
     # data.create() 只建 transform,不访问 repo_id 数据集 → repo_id 不存在也不影响 serve。
     return _policy_config.create_trained_policy(
         train_config, args.dir, default_prompt=args.default_prompt)
@@ -80,7 +91,16 @@ def run(args: "Args"):
     from feature_policy import wrap_with_feature
 
     inner = _create_policy(args)
-    policy = wrap_with_feature(inner, pooling=args.pooling)
+    policy = wrap_with_feature(
+        inner,
+        pooling=args.pooling,
+        metadata_overrides={
+            "serve_ckpt_id": args.serve_ckpt_id,
+            "pooling": args.pooling,
+            "asset_id": args.asset_id,
+            "policy_state_dim": args.policy_state_dim,
+        },
+    )
     print(f"[serve_block_awbc] up on {args.host}:{args.port} | pooling={args.pooling} | "
           f"dir={args.dir}", flush=True)
     _serve(policy, args.host, args.port)
