@@ -21,6 +21,7 @@ ENT = "674575221-beijing-institute-of-technology"
 CR = "dexmg-chunk-residual"
 BUDGET = 400_000
 WINDOW_STEPS = tuple(range(330_000, BUDGET + 1, 10_000))
+FIGSIZE_INCHES = (3.35, 2.75)
 
 STY = {
     "full": {
@@ -36,11 +37,11 @@ STY = {
         "color": "#d1622b",
     },
     "no_both": {
-        "label": "w/o waypoint & stage shaping",
+        "label": "w/o waypoint &\nstage shaping",
         "color": "#7b3fa0",
     },
     "subgoal_only": {
-        "label": "w/o demo-BC & stage shaping",
+        "label": "w/o demo-BC &\nstage shaping",
         "color": "#0f9b8e",
     },
 }
@@ -180,18 +181,18 @@ def build_summaries(api):
 
 
 def plot_summaries(summaries, out_pdf, out_png):
-    """Render a three-panel five-arm bar chart."""
+    """Render a one-column grouped bar chart for the two tasks."""
     ink = "#0b0b0b"
     muted = "#52514e"
     grid = "#dcdcd7"
     plt.rcParams.update(
         {
             "font.family": "DejaVu Serif",
-            "font.size": 16,
+            "font.size": 8,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "axes.edgecolor": muted,
-            "axes.linewidth": 0.8,
+            "axes.linewidth": 0.55,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "xtick.color": muted,
@@ -201,30 +202,34 @@ def plot_summaries(summaries, out_pdf, out_png):
         }
     )
 
-    fig, axes = plt.subplots(
-        1,
-        len(PANELS),
-        figsize=(4.6 * len(PANELS), 3.5),
-        sharey=True,
-        squeeze=False,
-    )
-    axes = axes[0]
-    x_positions = list(range(len(LEGEND_ORDER)))
+    fig, ax = plt.subplots(figsize=FIGSIZE_INCHES)
+    task_names = list(PANELS)
+    centers = list(range(len(task_names)))
+    bar_width = 0.76 / len(LEGEND_ORDER)
 
-    for ax, task in zip(axes, PANELS):
-        means = [summaries[task][arm][0] for arm in LEGEND_ORDER]
-        colors = [STY[arm]["color"] for arm in LEGEND_ORDER]
+    for arm_index, arm in enumerate(LEGEND_ORDER):
+        offset = (
+            arm_index - (len(LEGEND_ORDER) - 1) / 2
+        ) * bar_width
+        x_positions = [center + offset for center in centers]
+        means = [summaries[task][arm][0] for task in task_names]
+        values_by_task = [summaries[task][arm][2] for task in task_names]
         bars = ax.bar(
             x_positions,
             means,
-            width=0.72,
-            color=colors,
+            width=bar_width * 0.90,
+            color=STY[arm]["color"],
             edgecolor="white",
-            linewidth=0.7,
+            linewidth=0.4,
             zorder=3,
         )
-        for x_pos, arm in zip(x_positions, LEGEND_ORDER):
-            mean, sem, values = summaries[task][arm]
+        for x_pos, task, bar, values in zip(
+            x_positions,
+            task_names,
+            bars,
+            values_by_task,
+        ):
+            mean, sem, _ = summaries[task][arm]
             if sem is not None:
                 ax.errorbar(
                     x_pos,
@@ -232,33 +237,35 @@ def plot_summaries(summaries, out_pdf, out_png):
                     yerr=sem,
                     fmt="none",
                     ecolor=ink,
-                    elinewidth=1.1,
-                    capsize=3,
-                    capthick=1.1,
+                    elinewidth=0.65,
+                    capsize=1.6,
+                    capthick=0.65,
                     zorder=5,
                 )
             if len(values) == 1:
-                bars[x_pos].set_hatch("//")
+                bar.set_hatch("//")
 
-        ax.set_title(
-            task,
-            fontsize=15,
-            fontweight="normal",
-            loc="left",
-            pad=6,
-        )
-        ax.set_xlim(-0.65, len(LEGEND_ORDER) - 0.35)
-        ax.set_ylim(0, 1.0)
-        ax.set_xticks([])
-        ax.yaxis.set_major_locator(MultipleLocator(0.25))
-        ax.tick_params(axis="y", labelsize=13, width=0.8, length=3.5)
-        ax.grid(axis="y", color=grid, linewidth=0.7, zorder=0)
-        ax.set_axisbelow(True)
-
-    axes[0].set_ylabel(
-        "Success rate\n(330k–400k mean)",
-        fontsize=15,
+    ax.set_xlim(-0.53, len(task_names) - 0.47)
+    ax.set_ylim(0, 1.0)
+    ax.set_xticks(centers, task_names)
+    ax.yaxis.set_major_locator(MultipleLocator(0.25))
+    ax.tick_params(
+        axis="x",
+        labelsize=8,
+        width=0.55,
+        length=2.5,
+        pad=2,
     )
+    ax.tick_params(
+        axis="y",
+        labelsize=7,
+        width=0.55,
+        length=2.5,
+        pad=2,
+    )
+    ax.grid(axis="y", color=grid, linewidth=0.45, zorder=0)
+    ax.set_axisbelow(True)
+    ax.set_ylabel("Success rate", fontsize=8, labelpad=3)
 
     legend_handles = [
         Patch(
@@ -270,22 +277,31 @@ def plot_summaries(summaries, out_pdf, out_png):
     ]
     fig.legend(
         handles=legend_handles,
-        loc="lower center",
-        ncol=3,
+        loc="lower left",
+        ncol=2,
         frameon=False,
-        fontsize=13,
-        bbox_to_anchor=(0.5, -0.04),
-        columnspacing=1.4,
-        handlelength=1.5,
+        fontsize=6.6,
+        bbox_to_anchor=(0.05, 0.015, 0.92, 0.22),
+        mode="expand",
+        borderaxespad=0,
+        columnspacing=0.8,
+        handlelength=1.25,
+        handletextpad=0.4,
+        labelspacing=0.35,
     )
-    fig.tight_layout(rect=[0, 0.17, 1, 1], w_pad=1.4)
+    fig.subplots_adjust(
+        left=0.17,
+        right=0.985,
+        top=0.985,
+        bottom=0.30,
+    )
 
     out_pdf = Path(out_pdf)
     out_png = Path(out_png)
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, bbox_inches="tight")
-    fig.savefig(out_png, dpi=180, bbox_inches="tight")
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.03)
+    fig.savefig(out_png, dpi=180, bbox_inches="tight", pad_inches=0.03)
     plt.close(fig)
 
 

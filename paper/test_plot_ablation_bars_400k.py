@@ -4,9 +4,13 @@ import statistics
 import tempfile
 import unittest
 
+import matplotlib.pyplot as plt
+
+import paper.plot_ablation_bars_400k as ablation_plot
 from paper.plot_ablation_bars_400k import (
     LEGEND_ORDER,
     PANELS,
+    STY,
     WINDOW_STEPS,
     plot_summaries,
     summarize_seeds,
@@ -64,6 +68,20 @@ class FixedWindowMetricTest(unittest.TestCase):
 
 
 class FigureContractTest(unittest.TestCase):
+    def test_legend_labels_fit_two_single_column_legend_columns(self):
+        for arm in LEGEND_ORDER:
+            longest_line = max(
+                len(line) for line in STY[arm]["label"].splitlines()
+            )
+            self.assertLessEqual(longest_line, 20)
+
+    def test_plot_uses_single_column_physical_size(self):
+        self.assertEqual(
+            getattr(ablation_plot, "FIGSIZE_INCHES", None),
+            (3.35, 2.75),
+        )
+        self.assertLessEqual(ablation_plot.FIGSIZE_INCHES[1], 3.0)
+
     def test_inventory_matches_two_panel_figure_five_selection(self):
         self.assertEqual(
             list(PANELS),
@@ -99,6 +117,9 @@ class FigureContractTest(unittest.TestCase):
 
             self.assertGreater(out_pdf.stat().st_size, 1_000)
             self.assertGreater(out_png.stat().st_size, 1_000)
+            image = plt.imread(out_png)
+            self.assertGreater(image.shape[1], 500)
+            self.assertLess(image.shape[1], 700)
 
 
 if __name__ == "__main__":
