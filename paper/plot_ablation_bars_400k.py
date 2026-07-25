@@ -21,29 +21,30 @@ ENT = "674575221-beijing-institute-of-technology"
 CR = "dexmg-chunk-residual"
 BUDGET = 400_000
 WINDOW_STEPS = tuple(range(330_000, BUDGET + 1, 10_000))
-FIGSIZE_INCHES = (3.35, 2.75)
+FIGSIZE_INCHES = (3.35, 2.30)
 FONT_SIZE_PT = 7
+BAR_EDGE_COLOR = "#4A4742"
 
 STY = {
     "full": {
         "label": "SHORE-RL",
-        "color": "#008300",
+        "color": "#FAD35B",
     },
     "no_staged": {
         "label": "w/o stage shaping",
-        "color": "#2a6fd6",
+        "color": "#ABACAB",
     },
     "no_subgoal": {
         "label": "w/o waypoint",
-        "color": "#d1622b",
+        "color": "#CC8675",
     },
     "no_both": {
         "label": "w/o waypoint + stage",
-        "color": "#7b3fa0",
+        "color": "#80AECA",
     },
     "subgoal_only": {
         "label": "w/o demo-BC + stage",
-        "color": "#0f9b8e",
+        "color": "#539955",
     },
 }
 
@@ -228,8 +229,8 @@ def plot_summaries(summaries, out_pdf, out_png):
             means,
             width=bar_width * 0.90,
             color=STY[arm]["color"],
-            edgecolor="white",
-            linewidth=0.4,
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=0.55,
             zorder=3,
         )
         for x_pos, task, bar, values in zip(
@@ -245,7 +246,7 @@ def plot_summaries(summaries, out_pdf, out_png):
                     mean,
                     yerr=sem,
                     fmt="none",
-                    ecolor=ink,
+                    ecolor=BAR_EDGE_COLOR,
                     elinewidth=0.65,
                     capsize=1.6,
                     capthick=0.65,
@@ -279,7 +280,8 @@ def plot_summaries(summaries, out_pdf, out_png):
     legend_handles = [
         Patch(
             facecolor=STY[arm]["color"],
-            edgecolor="white",
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=0.45,
             label=STY[arm]["label"],
         )
         for arm in LEGEND_HANDLE_ORDER
@@ -290,7 +292,7 @@ def plot_summaries(summaries, out_pdf, out_png):
         ncol=2,
         frameon=False,
         fontsize=FONT_SIZE_PT,
-        bbox_to_anchor=(0.05, 0.015, 0.92, 0.22),
+        bbox_to_anchor=(0.05, 0.015, 0.92, 0.26),
         mode="expand",
         borderaxespad=0,
         columnspacing=0.8,
@@ -302,7 +304,7 @@ def plot_summaries(summaries, out_pdf, out_png):
         left=0.17,
         right=0.985,
         top=0.985,
-        bottom=0.30,
+        bottom=0.34,
     )
 
     out_pdf = Path(out_pdf)

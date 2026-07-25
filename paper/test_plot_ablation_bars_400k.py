@@ -68,6 +68,19 @@ class FixedWindowMetricTest(unittest.TestCase):
 
 
 class FigureContractTest(unittest.TestCase):
+    def test_reference_palette_is_mapped_semantically(self):
+        expected = {
+            "full": "#FAD35B",
+            "subgoal_only": "#539955",
+            "no_staged": "#ABACAB",
+            "no_subgoal": "#CC8675",
+            "no_both": "#80AECA",
+        }
+        self.assertEqual(
+            {arm: STY[arm]["color"] for arm in LEGEND_ORDER},
+            expected,
+        )
+
     def test_legend_visual_order_matches_bar_order(self):
         self.assertEqual(
             getattr(ablation_plot, "LEGEND_HANDLE_ORDER", None),
@@ -99,9 +112,8 @@ class FigureContractTest(unittest.TestCase):
     def test_plot_uses_single_column_physical_size(self):
         self.assertEqual(
             getattr(ablation_plot, "FIGSIZE_INCHES", None),
-            (3.35, 2.75),
+            (3.35, 2.30),
         )
-        self.assertLessEqual(ablation_plot.FIGSIZE_INCHES[1], 3.0)
 
     def test_inventory_matches_two_panel_figure_five_selection(self):
         self.assertEqual(
@@ -141,6 +153,20 @@ class FigureContractTest(unittest.TestCase):
             image = plt.imread(out_png)
             self.assertGreater(image.shape[1], 500)
             self.assertLess(image.shape[1], 700)
+            self.assertLess(image.shape[0], 440)
+            rgb = (image[:, :, :3] * 255).round().astype(int)
+            rendered_colors = {
+                tuple(color) for color in rgb.reshape(-1, 3)
+            }
+            for color in (
+                STY[arm]["color"] for arm in LEGEND_ORDER
+            ):
+                value = color.lstrip("#")
+                expected_rgb = tuple(
+                    int(value[index:index + 2], 16)
+                    for index in (0, 2, 4)
+                )
+                self.assertIn(expected_rgb, rendered_colors)
 
 
 if __name__ == "__main__":
