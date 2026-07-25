@@ -61,7 +61,7 @@ _BUILD_STATS_FIELDS = (
 
 
 def parse_bridge_args(argv):
-    p = argparse.ArgumentParser(add_help=False)
+    p = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     p.add_argument("--value_ckpt", required=True, help="Teleavatar V (pi0_feat value checkpoint)")
     p.add_argument("--wm_host", default="127.0.0.1", help="D-serve host(d_serve.py)")
     p.add_argument("--wm_port", type=int, default=9000, help="D-serve port")

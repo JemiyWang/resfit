@@ -203,6 +203,163 @@ def test_cup_launcher_actual_argv_matches_bridge_and_trainer_parsers(
         f"{tmp_path}/cup_shore_mixed50_seed7"
 
 
+def test_paper_scripts_declare_exact_task_and_awbc_identity():
+    launcher = Path("launch_paper_imagination.sh").read_text()
+    prepare = Path("prepare_paper_pi0feat.sh").read_text()
+    serve = Path("serve_paper_awbc.sh").read_text()
+    value = Path("train_paper_pi0feat_value.sh").read_text()
+
+    required_launcher = {
+        "--task_profile paper",
+        "--pi0_serve_ckpt_id pi05_paper_awbc_19999",
+        "--pi0_asset_id pick_paper_all_merged",
+        "--pi0_prompt \"put the paper roll on the holder\"",
+        "--dataset paper_success",
+        "--task pick_paper_roll",
+        "paper_value_pi0feat.pt",
+        "paper_shore_mixed50_seed",
+    }
+    for token in required_launcher:
+        assert token in launcher
+    assert "--policy_state_dim 14" in prepare
+    assert "--policy-state-dim 14" in serve
+    assert "--asset-id pick_paper_all_merged" in serve
+    assert "--serve-ckpt-id pi05_paper_awbc_19999" in serve
+    assert "paper_value_pi0feat.pt" in value
+
+
+def test_paper_preparation_uses_four_disjoint_shards():
+    text = Path("prepare_paper_pi0feat.sh").read_text()
+    tokens = shlex.split(text, comments=True, posix=True)
+    assert "for shard in 0 1 2 3; do" in " ".join(tokens)
+    assert tokens.count("${PORTS[$shard]}") == 1
+    num_shards = [
+        tokens[index + 1] for index, token in enumerate(tokens)
+        if token == "--num_shards"
+    ]
+    shard_indices = [
+        tokens[index + 1] for index, token in enumerate(tokens)
+        if token == "--shard_index"
+    ]
+    assert num_shards == ["4", "4"]
+    assert shard_indices == ["${shard}", "${shard}"]
+
+
+def test_paper_value_script_argv_matches_parser():
+    from resfit.rl_finetuning.chunk_residual.train_hiql_value import build_parser
+
+    tokens = [
+        token for token in shlex.split(
+            Path("train_paper_pi0feat_value.sh").read_text(),
+            comments=True,
+            posix=True,
+        ) if token != "\n"
+    ]
+    module = "resfit.rl_finetuning.chunk_residual.train_hiql_value"
+    end = tokens.index("2>&1")
+    args = build_parser().parse_args(tokens[tokens.index(module) + 1:end])
+    assert args.dataset == "paper_success"
+    assert args.pi0_image_keys == ["top_head", "hand_left", "hand_right"]
+    assert len(args.success_dataset) == 4
+    assert len(args.failure_dataset) == 4
+    assert args.steps == 50000
+    assert args.terminal_reward_mode == "success_signed"
+
+
+def _capture_paper_launcher(tmp_path, monkeypatch, *, smoke):
+    capture = tmp_path / "capture-paper-argv.sh"
+    capture.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "{\n"
+        "  printf 'GPU=%s\\n' \"${CUDA_VISIBLE_DEVICES}\"\n"
+        "  printf 'ROOT=%s\\n' \"${HF_LEROBOT_HOME}\"\n"
+        "  printf 'ARG=%s\\n' \"$@\"\n"
+        "} > \"${CAPTURE_ARGV:?}\"\n",
+        encoding="utf-8",
+    )
+    capture.chmod(0o755)
+    captured = tmp_path / "paper-argv.txt"
+    monkeypatch.setenv("CAPTURE_ARGV", str(captured))
+    if smoke:
+        monkeypatch.setenv("SMOKE", "1")
+    else:
+        monkeypatch.delenv("SMOKE", raising=False)
+
+    text = Path("launch_paper_imagination.sh").read_text()
+    command = (
+        "/mnt/mnt/data/envs/residual/bin/python -m "
+        "resfit.rl_finetuning.wm_bridge.launch_imagination"
+    )
+    assert text.count(command) == 1
+    text = text.replace(command, str(capture))
+    text = text.replace(
+        "OUT_ROOT=/mnt/mnt/data/resfit/outputs_imagination",
+        f"OUT_ROOT={tmp_path}",
+    )
+    text = text.replace(
+        "LOG_ROOT=/mnt/mnt/data/resfit/logs",
+        f"LOG_ROOT={tmp_path}/logs",
+    )
+    launcher = tmp_path / "launch-paper-captured.sh"
+    launcher.write_text(text, encoding="utf-8")
+    launcher.chmod(0o755)
+    subprocess.run(
+        ["bash", str(launcher), "4", "0"],
+        cwd=Path.cwd(),
+        check=True,
+    )
+    lines = captured.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == [
+        "GPU=4",
+        "ROOT=/mnt/mnt/data/domains_rise/paper",
+    ]
+    return [line.removeprefix("ARG=") for line in lines[2:]]
+
+
+def test_paper_launcher_actual_formal_argv_is_aligned(
+    tmp_path,
+    monkeypatch,
+):
+    argv = _capture_paper_launcher(tmp_path, monkeypatch, smoke=False)
+    bridge_args, passthrough = parse_bridge_args(argv)
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        build_parser as build_trainer_parser,
+    )
+    trainer = build_trainer_parser().parse_args(passthrough)
+
+    assert bridge_args.task_profile == "paper"
+    assert bridge_args.source_wandb_run == "eegyfzmz"
+    assert bridge_args.pi0_asset_id == "pick_paper_all_merged"
+    assert bridge_args.pi0_pooling == "mean"
+    assert trainer.task == "pick_paper_roll"
+    assert trainer.seed == 0
+    assert trainer.total_env_steps == 500000
+    assert trainer.chunk_length == 50
+    assert trainer.offline_fraction == 0.5
+    assert trainer.demo_bc_coef == 0.1
+    assert trainer.gamma == 0.995
+    assert trainer.n_step == 1
+    assert trainer.utd == 4
+    assert trainer.wandb_mode == "online"
+    assert trainer.wandb_name == "paper_shore_mixed50_seed0"
+    assert not trainer.smoke
+
+
+def test_paper_launcher_smoke_disables_wandb(tmp_path, monkeypatch):
+    argv = _capture_paper_launcher(tmp_path, monkeypatch, smoke=True)
+    _, passthrough = parse_bridge_args(argv)
+    from resfit.rl_finetuning.chunk_residual.train_chunk_residual import (
+        build_parser as build_trainer_parser,
+    )
+    trainer = build_trainer_parser().parse_args(passthrough)
+    assert trainer.smoke
+    assert trainer.wandb_mode == "disabled"
+    assert trainer.output_dir.endswith(
+        "/paper_shore_mixed50_seed0_smoke"
+    )
+
+
 def test_teleavatar_public_wording_is_task_neutral():
     forbidden = {
         "resfit/rl_finetuning/wm_bridge/teleavatar_start_sampler.py": {
