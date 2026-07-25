@@ -140,8 +140,8 @@ for the requested experiment.
 
 ## Task Profile and State Mapping
 
-Paper support must be task-configured, not implemented as a copy of the
-Block-only code.
+Paper support must extend the existing Block/Cup task-profile mechanism, not be
+implemented as a copy of either task.
 
 The Paper task profile contains:
 
@@ -185,6 +185,28 @@ This prevents offline/online feature-source drift.
 
 ## Bridge Generalization
 
+### Existing Cup baseline
+
+Commit `9247b16` (`feat: add aligned cup mixed replay experiment`) is the
+implementation baseline for this work. It already provides:
+
+- `TaskProfile` entries for Block and Cup;
+- profile-driven prompt and success-dataset translation in the builder;
+- profile-aware mixed-replay contract checks;
+- configurable `TeleavatarStartSampler` captions;
+- generic TeleAvatar feature-cache construction;
+- Cup feature, compact-value, and formal launch scripts;
+- Block/Cup regression tests.
+
+Paper work must extend these interfaces in place. It must not replace the
+profile mechanism, restore Block hard-coding, or duplicate the Cup pipeline.
+The existing Cup scripts and tests remain supported and unchanged except where a
+shared generic interface needs an additive field.
+
+The current test that deliberately rejects `paper` as an unknown profile must
+be updated to accept the exact Paper profile. Unknown-profile coverage must use
+a different nonexistent name.
+
 ### AWBC serve
 
 Generalize the existing AWBC feature server so it can receive:
@@ -207,7 +229,8 @@ Block defaults must remain unchanged.
 
 ### Prompt plumbing
 
-Remove the hard-coded `BLOCK_CAPTION` behavior from start-state sampling.
+Preserve the profile-driven caption behavior introduced by the Cup baseline and
+add the Paper prompt to the same profile source of truth.
 
 Use one authoritative task prompt and thread it through:
 
@@ -350,6 +373,7 @@ Tests must cover:
 - preservation of existing Block behavior;
 - feature-cache signature inclusion of Paper provenance;
 - replay-cache separation between Block and Paper.
+- all existing Cup profile, launcher, parser, and contract tests.
 
 ### Live checkpoint smoke
 
