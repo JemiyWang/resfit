@@ -16,6 +16,9 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from resfit.rl_finetuning.wm_bridge.teleavatar_policy_state import (
+    map_teleavatar_policy_state,
+)
 from resfit.rl_finetuning.wm_bridge.wm_driver import (
     ACTION_DIM, CAMERA_KEYS, CHUNK_LENGTH,
 )
@@ -29,10 +32,18 @@ class _BaseConfig:
 
 
 class Kai0ImaginationBase:
-    def __init__(self, client, *, prompt: str, action_dim: int = ACTION_DIM):
+    def __init__(
+        self,
+        client,
+        *,
+        prompt: str,
+        action_dim: int = ACTION_DIM,
+        policy_state_dim: int = ACTION_DIM,
+    ):
         self.client = client
         self.prompt = prompt
         self.action_dim = action_dim
+        self.policy_state_dim = policy_state_dim
         self.config = _BaseConfig(CAMERA_KEYS)
         self.call_count = 0
         self._cache_token = None
@@ -60,7 +71,10 @@ class Kai0ImaginationBase:
         imgs01 = (native + 1.0) * 0.5                       # [-1,1] → [0,1]
         images = {CAMERA_KEYS[i].split(".")[-1]: imgs01[i]
                   for i in range(len(CAMERA_KEYS))}
-        state = _np(raw_obs["observation.state"]).astype(np.float32).reshape(-1)[:self.action_dim]
+        state = map_teleavatar_policy_state(
+            _np(raw_obs["observation.state"]),
+            self.policy_state_dim,
+        )
         return build_teleavatar_serve_obs(images, state, self.prompt)
 
     def query(self, raw_obs):

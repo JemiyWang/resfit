@@ -103,3 +103,21 @@ def test_serve_obs_is_nested_teleavatar_schema():
     assert obs["images"]["top_head"].shape == (3, 224, 224)   # CHW 224
     assert obs["prompt"] == "build block"
     np.testing.assert_allclose(obs["state"], np.arange(16))
+
+
+def test_serve_obs_maps_paper_policy_state_to_14_dimensions():
+    b = Kai0ImaginationBase(
+        _StubClient(),
+        prompt="put the paper roll on the holder",
+        policy_state_dim=14,
+    )
+    raw = {
+        "_wm_native_frames": np.zeros((3, 3, 192, 256), np.float32),
+        "observation.state": np.arange(16, dtype=np.float32),
+    }
+    obs = b._serve_obs(raw)
+    expected = np.concatenate([
+        np.arange(16, dtype=np.float32)[:7],
+        np.arange(16, dtype=np.float32)[8:15],
+    ])
+    np.testing.assert_array_equal(obs["state"], expected)

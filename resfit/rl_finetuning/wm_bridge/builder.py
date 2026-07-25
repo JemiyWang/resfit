@@ -83,7 +83,7 @@ def parse_bridge_args(argv):
     p.add_argument("--adv_port", type=int, default=8002)
     p.add_argument(
         "--task_profile",
-        choices=("block", "cup"),
+        choices=("block", "cup", "paper"),
         default="block",
         help="teleavatar task profile controlling prompt and success source",
     )
@@ -610,7 +610,9 @@ def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
             client = WebsocketClientPolicy(host=cfg.host, port=cfg.port)
             state["base"] = Kai0ImaginationBase(
                 client, prompt=getattr(cfg, "prompt", "build block"),
-                action_dim=getattr(cfg, "action_dim", 16))
+                action_dim=getattr(cfg, "action_dim", 16),
+                policy_state_dim=profile.policy_state_dim,
+            )
         return state["base"]
 
     def fake_create_vectorized_env(*, env_name=None, num_envs=1, device="cpu",
