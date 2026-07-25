@@ -418,4 +418,3 @@ The task is complete when:
 5. The disabled-W&B end-to-end smoke succeeds.
 6. `paper_shore_mixed50_seed0` is visible in W&B with aligned trainer config.
 7. The run is confirmed to be progressing beyond initialization.
-
