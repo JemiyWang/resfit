@@ -38,11 +38,11 @@ STY = {
         "color": "#d1622b",
     },
     "no_both": {
-        "label": "w/o waypoint &\nstage shaping",
+        "label": "w/o waypoint + stage",
         "color": "#7b3fa0",
     },
     "subgoal_only": {
-        "label": "w/o demo-BC &\nstage shaping",
+        "label": "w/o demo-BC + stage",
         "color": "#0f9b8e",
     },
 }
@@ -54,6 +54,14 @@ LEGEND_ORDER = [
     "no_staged",
     "no_subgoal",
     "no_both",
+]
+
+# Matplotlib fills multi-column legends by column. This handle order makes the
+# visual row-major reading order match LEGEND_ORDER and the bars left-to-right.
+LEGEND_HANDLE_ORDER = [
+    arm
+    for column in range(2)
+    for arm in LEGEND_ORDER[column::2]
 ]
 
 # Exact run selection used by paper/plot_ablation_curves.py.
@@ -274,7 +282,7 @@ def plot_summaries(summaries, out_pdf, out_png):
             edgecolor="white",
             label=STY[arm]["label"],
         )
-        for arm in LEGEND_ORDER
+        for arm in LEGEND_HANDLE_ORDER
     ]
     fig.legend(
         handles=legend_handles,

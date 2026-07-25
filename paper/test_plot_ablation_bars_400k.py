@@ -68,6 +68,24 @@ class FixedWindowMetricTest(unittest.TestCase):
 
 
 class FigureContractTest(unittest.TestCase):
+    def test_legend_visual_order_matches_bar_order(self):
+        self.assertEqual(
+            getattr(ablation_plot, "LEGEND_HANDLE_ORDER", None),
+            [
+                "full",
+                "no_staged",
+                "no_both",
+                "subgoal_only",
+                "no_subgoal",
+            ],
+        )
+
+    def test_legend_labels_are_short_single_lines(self):
+        for arm in LEGEND_ORDER:
+            label = STY[arm]["label"]
+            self.assertNotIn("\n", label)
+            self.assertLessEqual(len(label), 22)
+
     def test_plot_uses_uniform_seven_point_type(self):
         self.assertEqual(
             getattr(ablation_plot, "FONT_SIZE_PT", None),
@@ -76,10 +94,7 @@ class FigureContractTest(unittest.TestCase):
 
     def test_legend_labels_fit_two_single_column_legend_columns(self):
         for arm in LEGEND_ORDER:
-            longest_line = max(
-                len(line) for line in STY[arm]["label"].splitlines()
-            )
-            self.assertLessEqual(longest_line, 20)
+            self.assertLessEqual(len(STY[arm]["label"]), 22)
 
     def test_plot_uses_single_column_physical_size(self):
         self.assertEqual(
