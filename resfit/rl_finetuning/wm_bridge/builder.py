@@ -69,6 +69,12 @@ def parse_bridge_args(argv):
                    help="想象起点 Teleavatar 数据集完整路径,可重复。成功/失败都传")
     p.add_argument("--pi0_serve_ckpt_id", default=None,
                    help="在线 kai0 serve 标签,与 value.pt 的 pi0_feat_signature.serve_ckpt_id 比对")
+    p.add_argument("--source_wandb_run", default=None)
+    p.add_argument("--pi0_serve_ckpt_dir", default=None)
+    p.add_argument("--pi0_asset_id", default=None)
+    p.add_argument("--pi0_pooling", choices=("last", "mean"), default=None)
+    p.add_argument("--adv_ckpt", default=None)
+    p.add_argument("--adv_config", default=None)
     p.add_argument("--imagination_gamma", type=float, default=0.995)
     p.add_argument("--max_segments", type=int, default=2)
     p.add_argument("--num_denois_steps", type=int, default=10)
@@ -324,6 +330,7 @@ def prepare_offline_runtime(bridge_args, passthrough):
         camera_keys=CAMERA_KEYS,
         chunk_length=50,
         stride=50,
+        policy_state_dim=profile.policy_state_dim,
     )
     replay_fp = replay_fingerprint(
         endpoint_fp=endpoint_fp,
@@ -394,9 +401,35 @@ def prepare_offline_runtime(bridge_args, passthrough):
         parsed.batch_size * (1.0 - parsed.offline_fraction))
     offline_batch_size = int(
         parsed.batch_size * parsed.offline_fraction)
+    checkpoint_dir = (
+        os.path.realpath(bridge_args.pi0_serve_ckpt_dir)
+        if bridge_args.pi0_serve_ckpt_dir
+        else None
+    )
+    norm_stats_path = None
+    norm_stats_sha256 = None
+    if bool(checkpoint_dir) != bool(bridge_args.pi0_asset_id):
+        raise contract.ContractError(
+            "pi0_serve_ckpt_dir and pi0_asset_id must be provided together"
+        )
+    if checkpoint_dir:
+        norm_stats_path = os.path.join(
+            checkpoint_dir,
+            "assets",
+            bridge_args.pi0_asset_id,
+            "norm_stats.json",
+        )
+        if not os.path.isfile(norm_stats_path):
+            raise contract.ContractError(
+                f"pi0 norm stats are missing {norm_stats_path}"
+            )
+        norm_stats_sha256 = file_sha256(norm_stats_path)
+
     metadata = {
         "schema": 1,
         "task_profile": profile.name,
+        "dataset_fps": float(profile.dataset_fps),
+        "physical_chunk_seconds": 50.0 / float(profile.dataset_fps),
         "offline_source": dataset_name,
         "dataset_root": dataset_root,
         "offline_episodes": len(selected),
@@ -419,7 +452,22 @@ def prepare_offline_runtime(bridge_args, passthrough):
         "image_keys": list(CAMERA_KEYS),
         "pi0_prompt": parsed.pi0_prompt,
         "pi0_action_dim": int(parsed.pi0_action_dim),
+        "pi0_policy_state_dim": int(profile.policy_state_dim),
         "pi0_serve_ckpt_id": bridge_args.pi0_serve_ckpt_id,
+        "pi0_serve_ckpt_dir": checkpoint_dir,
+        "pi0_asset_id": bridge_args.pi0_asset_id,
+        "pi0_pooling": (
+            bridge_args.pi0_pooling or profile.feature_pooling
+        ),
+        "pi0_norm_stats_path": norm_stats_path,
+        "pi0_norm_stats_sha256": norm_stats_sha256,
+        "source_wandb_run": bridge_args.source_wandb_run,
+        "adv_ckpt": bridge_args.adv_ckpt,
+        "adv_config": bridge_args.adv_config,
+        "init_state_datasets": [
+            os.path.realpath(path)
+            for path in bridge_args.init_state_dataset
+        ],
         "trainer_cache_signature": trainer_cache_signature,
         "trainer_compat_mode": "gt",
         "actual_base_mode": "kai0_chunk",
@@ -608,6 +656,44 @@ def build_imagination_factories(bridge_args, offline_runtime=None) -> dict:
         # queue 模式 eval 会建第二个 base 实例;想象路只用一个(env+trainer 共享),复用 state["base"]
         if state["base"] is None:
             client = WebsocketClientPolicy(host=cfg.host, port=cfg.port)
+            strict_identity = any((
+                bridge_args.pi0_serve_ckpt_dir,
+                bridge_args.pi0_asset_id,
+                bridge_args.pi0_pooling,
+            ))
+            if strict_identity:
+                missing = [
+                    name
+                    for name, value in (
+                        ("pi0_serve_ckpt_id", bridge_args.pi0_serve_ckpt_id),
+                        ("pi0_serve_ckpt_dir", bridge_args.pi0_serve_ckpt_dir),
+                        ("pi0_asset_id", bridge_args.pi0_asset_id),
+                        ("pi0_pooling", bridge_args.pi0_pooling),
+                    )
+                    if not value
+                ]
+                if missing:
+                    raise contract.ContractError(
+                        "strict pi0 server contract is missing "
+                        + ", ".join(missing)
+                    )
+                metadata_getter = getattr(
+                    client,
+                    "get_server_metadata",
+                    None,
+                )
+                server_metadata = (
+                    metadata_getter()
+                    if callable(metadata_getter)
+                    else getattr(client, "metadata", {})
+                )
+                contract.check_pi0_server_metadata(
+                    server_metadata,
+                    expected_ckpt_id=bridge_args.pi0_serve_ckpt_id,
+                    expected_pooling=bridge_args.pi0_pooling,
+                    expected_state_dim=profile.policy_state_dim,
+                    expected_asset_id=bridge_args.pi0_asset_id,
+                )
             state["base"] = Kai0ImaginationBase(
                 client, prompt=getattr(cfg, "prompt", "build block"),
                 action_dim=getattr(cfg, "action_dim", 16),

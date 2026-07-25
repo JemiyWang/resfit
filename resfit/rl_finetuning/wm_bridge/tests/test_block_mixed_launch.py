@@ -369,6 +369,58 @@ def test_prepare_cup_runtime_translates_task_fields(tmp_path, monkeypatch):
     assert runtime.bridge_meta["pi0_prompt"] == "pick cup"
 
 
+def test_paper_metadata_records_physical_clock_and_awbc_provenance(
+    tmp_path,
+    monkeypatch,
+):
+    dataset = _write_success_dataset(tmp_path, name="paper_success")
+    value_ckpt = tmp_path / "paper_value_pi0feat.pt"
+    value_ckpt.write_bytes(b"value-weights")
+    checkpoint_dir = tmp_path / "checkpoints/paper/19999"
+    norm_stats = (
+        checkpoint_dir
+        / "assets/pick_paper_all_merged/norm_stats.json"
+    )
+    norm_stats.parent.mkdir(parents=True)
+    norm_stats.write_text('{"norm": "paper"}', encoding="utf-8")
+    adv_ckpt = tmp_path / "value_paper/model.safetensors"
+    adv_ckpt.parent.mkdir()
+    adv_ckpt.write_bytes(b"adv")
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path))
+    bridge, _ = parse_bridge_args([
+        "--value_ckpt", str(value_ckpt),
+        "--task_profile", "paper",
+        "--offline_chunk_dataset", str(dataset),
+        "--offline_chunk_cache_root", str(tmp_path / "cache"),
+        "--pi0_serve_ckpt_id", "pi05_paper_awbc_19999",
+        "--pi0_serve_ckpt_dir", str(checkpoint_dir),
+        "--pi0_asset_id", "pick_paper_all_merged",
+        "--pi0_pooling", "mean",
+        "--source_wandb_run", "eegyfzmz",
+        "--adv_ckpt", str(adv_ckpt),
+        "--adv_config", "value_paper",
+        "--init_state_dataset", str(dataset),
+    ])
+
+    runtime, _ = builder.prepare_offline_runtime(
+        bridge,
+        _mixed_passthrough(tmp_path / "output"),
+    )
+    meta = runtime.bridge_meta
+    assert meta["task_profile"] == "paper"
+    assert meta["dataset_fps"] == 20.0
+    assert meta["physical_chunk_seconds"] == 2.5
+    assert meta["pi0_policy_state_dim"] == 14
+    assert meta["pi0_serve_ckpt_dir"] == str(checkpoint_dir.resolve())
+    assert meta["pi0_asset_id"] == "pick_paper_all_merged"
+    assert meta["pi0_pooling"] == "mean"
+    assert meta["source_wandb_run"] == "eegyfzmz"
+    assert meta["adv_ckpt"] == str(adv_ckpt)
+    assert meta["adv_config"] == "value_paper"
+    assert meta["init_state_datasets"] == [str(dataset)]
+    assert len(meta["pi0_norm_stats_sha256"]) == 64
+
+
 def test_write_success_dataset_helper_can_create_cup_source(tmp_path):
     dataset = _write_success_dataset(tmp_path, name="cup_success")
     assert dataset.name == "cup_success"

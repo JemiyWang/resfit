@@ -82,6 +82,7 @@ def endpoint_fingerprint(
     camera_keys,
     chunk_length=50,
     stride=50,
+    policy_state_dim=16,
 ):
     return _stable_sha({
         "schema": ENDPOINT_SCHEMA,
@@ -92,6 +93,7 @@ def endpoint_fingerprint(
         "camera_keys": list(camera_keys),
         "prompt": prompt,
         "action_dim": 16,
+        "policy_state_dim": int(policy_state_dim),
         "pi0_serve_ckpt_id": pi0_serve_ckpt_id,
     })
 
