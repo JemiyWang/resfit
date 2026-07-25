@@ -517,16 +517,16 @@ individual components. In particular, the waypoint-only arm reaches just $.23$
 on \textsc{ThreePieceAssembly}, so waypoint conditioning alone is not sufficient
 in every tested configuration.
 
-\begin{figure*}[t]
+\begin{figure}[t]
 \centering
-\includegraphics[width=\textwidth]{figure/fig_ablation_bars_400k.pdf}
+\includegraphics[width=\columnwidth]{figure/fig_ablation_bars_400k.pdf}
 \caption{\textbf{Ablation~A: matched component ablation.}
 Final-window success on two long-horizon dual-arm tasks at a common $400$k
 comparison budget. Each per-seed score averages the eight evaluations from
 $330$k through $400$k. Bars show means across $2$--$3$ seeds, and error bars
 show $\pm 1$ s.e.m.}
 \label{fig:ablbars}
-\end{figure*}
+\end{figure}
 
 \paragraph{Reward Form: Stage Bonus vs.\ Self-Derived Potential.}
 The main long-horizon study uses a hand-designed per-stage signal, whose
