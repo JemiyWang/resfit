@@ -22,6 +22,7 @@ CR = "dexmg-chunk-residual"
 BUDGET = 400_000
 WINDOW_STEPS = tuple(range(330_000, BUDGET + 1, 10_000))
 FIGSIZE_INCHES = (3.35, 2.75)
+FONT_SIZE_PT = 7
 
 STY = {
     "full": {
@@ -188,7 +189,7 @@ def plot_summaries(summaries, out_pdf, out_png):
     plt.rcParams.update(
         {
             "font.family": "DejaVu Serif",
-            "font.size": 8,
+            "font.size": FONT_SIZE_PT,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
             "axes.edgecolor": muted,
@@ -251,21 +252,21 @@ def plot_summaries(summaries, out_pdf, out_png):
     ax.yaxis.set_major_locator(MultipleLocator(0.25))
     ax.tick_params(
         axis="x",
-        labelsize=8,
+        labelsize=FONT_SIZE_PT,
         width=0.55,
         length=2.5,
         pad=2,
     )
     ax.tick_params(
         axis="y",
-        labelsize=7,
+        labelsize=FONT_SIZE_PT,
         width=0.55,
         length=2.5,
         pad=2,
     )
     ax.grid(axis="y", color=grid, linewidth=0.45, zorder=0)
     ax.set_axisbelow(True)
-    ax.set_ylabel("Success rate", fontsize=8, labelpad=3)
+    ax.set_ylabel("Success rate", fontsize=FONT_SIZE_PT, labelpad=3)
 
     legend_handles = [
         Patch(
@@ -280,7 +281,7 @@ def plot_summaries(summaries, out_pdf, out_png):
         loc="lower left",
         ncol=2,
         frameon=False,
-        fontsize=6.6,
+        fontsize=FONT_SIZE_PT,
         bbox_to_anchor=(0.05, 0.015, 0.92, 0.22),
         mode="expand",
         borderaxespad=0,

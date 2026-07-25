@@ -68,6 +68,12 @@ class FixedWindowMetricTest(unittest.TestCase):
 
 
 class FigureContractTest(unittest.TestCase):
+    def test_plot_uses_uniform_seven_point_type(self):
+        self.assertEqual(
+            getattr(ablation_plot, "FONT_SIZE_PT", None),
+            7,
+        )
+
     def test_legend_labels_fit_two_single_column_legend_columns(self):
         for arm in LEGEND_ORDER:
             longest_line = max(
