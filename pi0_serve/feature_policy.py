@@ -79,14 +79,23 @@ class FeaturePolicy:
     离线 build 一次性可忽略;若将来复用于在线路径,注意 ~2x per-step 计算。
     """
 
-    def __init__(self, inner, pooling="last", prefix_feat_fn=None):
+    def __init__(
+        self,
+        inner,
+        pooling="last",
+        prefix_feat_fn=None,
+        metadata_overrides=None,
+    ):
         self.inner = inner
         self.pooling = pooling
         self._prefix_feat_fn = make_prefix_feat_fn() if prefix_feat_fn is None else prefix_feat_fn
+        self._metadata_overrides = dict(metadata_overrides or {})
 
     @property
     def metadata(self):
-        return self.inner.metadata
+        metadata = dict(self.inner.metadata)
+        metadata.update(self._metadata_overrides)
+        return metadata
 
     def infer(self, obs, **kw):
         outputs = self.inner.infer(obs, **kw)                         # 原 actions/state 不动
@@ -95,6 +104,16 @@ class FeaturePolicy:
         return outputs
 
 
-def wrap_with_feature(inner, pooling="last", prefix_feat_fn=None):
+def wrap_with_feature(
+    inner,
+    pooling="last",
+    prefix_feat_fn=None,
+    metadata_overrides=None,
+):
     """把一个 Policy 包成透特征的 FeaturePolicy。"""
-    return FeaturePolicy(inner, pooling=pooling, prefix_feat_fn=prefix_feat_fn)
+    return FeaturePolicy(
+        inner,
+        pooling=pooling,
+        prefix_feat_fn=prefix_feat_fn,
+        metadata_overrides=metadata_overrides,
+    )

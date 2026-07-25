@@ -59,6 +59,25 @@ def test_feature_policy_metadata_passthrough():
     assert fp.metadata == {"ckpt": "stub"}
 
 
+def test_metadata_overrides_are_merged_without_mutating_inner():
+    inner = _StubInner()
+    fp = wrap_with_feature(
+        inner,
+        pooling="mean",
+        prefix_feat_fn=lambda *args: np.zeros(2, np.float32),
+        metadata_overrides={
+            "serve_ckpt_id": "pi05_paper_awbc_19999",
+            "asset_id": "pick_paper_all_merged",
+        },
+    )
+    assert fp.metadata == {
+        "ckpt": "stub",
+        "serve_ckpt_id": "pi05_paper_awbc_19999",
+        "asset_id": "pick_paper_all_merged",
+    }
+    assert inner.metadata == {"ckpt": "stub"}
+
+
 def test_wrap_with_feature_returns_feature_policy():
     inner = _StubInner()
     fp = wrap_with_feature(inner, pooling="mean", prefix_feat_fn=lambda *a: np.zeros(2, np.float32))
