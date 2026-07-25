@@ -1,5 +1,5 @@
 """Long-horizon anti-collapse (seed-level): SHORE-RL (ours, staged_joint) vs
-Residual RL, DSRL, IQL, and IBRL.
+ResFit, DSRL, IQL, and IBRL.
 1x5 panels: Pouring | LiftTray | ThreePiece | Threading | CanSort(short-horizon ref).
 Shared y-axis and legend; each method uses a mean +/-1 s.e.m. band over seeds.
 Self-contained: pulls fresh from wandb.
@@ -37,7 +37,7 @@ ENT = "674575221-beijing-institute-of-technology"
 STY = {
  "ours": {"label":"SHORE-RL", "short":"SHORE-RL",
           "color":"#008300", "ls":"-", "lw":3.0, "z":5},
- "base": {"label":"Residual RL", "short":"Residual RL",
+ "base": {"label":"ResFit", "short":"ResFit",
           "color":"#8a8a86", "ls":(0,(4,2)), "lw":2.5, "z":2},
  "dsrl": {"label":"DSRL", "short":"DSRL",
           "color":"#2a6fd6", "ls":(0,(5,1)), "lw":2.3, "z":3},

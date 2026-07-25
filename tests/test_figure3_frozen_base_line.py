@@ -70,4 +70,6 @@ def test_figure3_frozen_base_uses_shore_step_zero(monkeypatch, tmp_path):
         assert len(references) == 1
         assert list(references[0].get_ydata()) == pytest.approx([0.8, 0.8])
     legend_text = [text.get_text() for text in namespace["fig"].legends[0].texts]
+    assert "ResFit" in legend_text
+    assert "Residual RL" not in legend_text
     assert legend_text[-1] == "Frozen base"
