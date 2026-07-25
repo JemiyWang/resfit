@@ -11,7 +11,7 @@ TrainConfig,**从不注册进 openpi 的 _CONFIGS**。所以 serve_with_feat.py 
   PYTHONPATH=/mnt/mnt/data/data2/kai0/src:/mnt/mnt/data/data2/kai0 \
   CUDA_VISIBLE_DEVICES=0 \
   /mnt/mnt/data/chj/openpi/.venv/bin/python /mnt/mnt/data/resfit/pi0_serve/serve_block_awbc.py \
-    --dir /mnt/mnt/data/data2/kai0/checkpoints/49999 --port 8001 --pooling mean
+    --dir /mnt/mnt/data/data2/kai0/checkpoints/block/49999 --port 8001 --pooling mean
 
 ★ --pooling 必须与建缓存/训 V 侧一致(我们用 mean)。serve 与下游 pooling 不一致 → ψ 不同源。
 ★ 建缓存客户端会自己发 prompt="build block";此处 default_prompt 只是 fallback
@@ -44,7 +44,7 @@ def _ensure_paths():
 
 @dataclasses.dataclass
 class Args:
-    dir: str                              # checkpoint 目录(如 .../checkpoints/49999)
+    dir: str                              # checkpoint 目录(如 .../checkpoints/block/49999)
     port: int = 8001
     host: str = "0.0.0.0"
     pooling: str = "mean"                 # ★ 与下游一致
