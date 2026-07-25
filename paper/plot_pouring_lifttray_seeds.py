@@ -146,19 +146,18 @@ def agg(seeds):
 # ---- gather ----
 DATA = {task: {gk: [pull(p,r,gk) for p,r in runs] for gk,runs in groups.items()}
         for task, groups in PANELS.items()}
-# frozen base per panel = the flat base-recipe's own starting eval (residual ~ 0), 'base' group
-# ONLY. ours/iql come from different repos/eval-harnesses; averaging their starts would draw a
-# misleading mid-line. Aligning the base recipe's replanning period to ours (exec10) closes only
-# part of that harness gap -- LiftTray: same frozen base = 0.78 under ours, 0.38 at exec20 and
-# 0.56 at exec10 under baseline's -- so the two harnesses still differ by something else.
-# The base recipe visibly starts here and collapses -> honest reference. (M.2.)
+# frozen base per panel = the green SHORE-RL recipe's own step-zero evaluation.
+# At step zero the residual is still zero, so averaging the available SHORE-RL
+# seeds gives the height from which the green mean curve starts.
 BASE = {}
 for task, groups in DATA.items():
-    firsts = [s[0] for s in groups.get("base", []) if 0 in s]
-    BASE[task] = sum(firsts)/len(firsts) if firsts else None
+    firsts = [seed[0] for seed in groups.get("ours", []) if 0 in seed]
+    BASE[task] = sum(firsts) / len(firsts) if firsts else None
 
 # ---- style ----
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#dcdcd7"
+FROZEN_STYLE = {"label":"Frozen base", "color":"#5f5f5b",
+                "ls":(0,(1.5,2.2)), "lw":1.35, "z":1}
 plt.rcParams.update({"font.family":"serif",
  "font.serif":["TeX Gyre Termes", "Times New Roman", "Times", "DejaVu Serif"],
  "font.size":18,"pdf.fonttype":42,"ps.fonttype":42,
@@ -169,6 +168,10 @@ plt.rcParams.update({"font.family":"serif",
 fig, axes = plt.subplots(1, 5, figsize=(16.6, 4.1), sharey=True)
 handles = {}
 for ax, task in zip(axes, PANELS):
+    if BASE[task] is not None:
+        handles["frozen"] = ax.axhline(
+            BASE[task], color=FROZEN_STYLE["color"], ls=FROZEN_STYLE["ls"],
+            lw=FROZEN_STYLE["lw"], zorder=FROZEN_STYLE["z"], label="_frozen_base")
     pending = []
     for gk in DRAW_ORDER:                 # base, iql, ours (ours on top)
         seeds = DATA[task].get(gk, [])
@@ -199,8 +202,10 @@ for ax, task in zip(axes, PANELS):
     ax.grid(axis="y", color=GRID, lw=0.7, zorder=0); ax.set_axisbelow(True)
 axes[0].set_ylabel("Eval success rate", fontsize=19)
 
-order = [k for k in ("ours", "base", "dsrl", "iql", "ibrl") if k in handles]
-leg = fig.legend([handles[k] for k in order], [STY[k]["label"] for k in order],
+order = [k for k in ("ours", "base", "dsrl", "iql", "ibrl", "frozen") if k in handles]
+legend_labels = {**{key: style["label"] for key, style in STY.items()},
+                 "frozen": FROZEN_STYLE["label"]}
+leg = fig.legend([handles[k] for k in order], [legend_labels[k] for k in order],
                  loc="lower center", ncol=len(order), frameon=False, fontsize=16,
                  bbox_to_anchor=(0.5, -0.05), columnspacing=1.8, handlelength=2.4)
 fig.tight_layout(rect=[0, 0.07, 1, 1], w_pad=1.4)
