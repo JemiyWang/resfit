@@ -22,6 +22,7 @@ def test_generator_renders_editable_failure_and_success_svgs(tmp_path):
     generator = _load_generator()
     failure, failure_spread, success, success_spread = generator.build_curve_data()
 
+    assert abs(failure[0] - success[0]) < 1e-12
     assert failure[0] > failure[-1]
     assert success[0] < success[-1]
 

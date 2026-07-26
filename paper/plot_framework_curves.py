@@ -23,7 +23,7 @@ def build_curve_data() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
     success = (
         0.95
-        - 0.27 * np.exp(-X / 135.0)
+        - 0.70 * np.exp(-X / 135.0)
         + 0.020 * np.exp(-X / 420.0) * np.sin(X / 17.0)
         + 0.010 * np.sin(X / 6.0)
     )
