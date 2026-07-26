@@ -13,12 +13,18 @@ layout must remain robust when prose length changes.
 - Size Figure 4 to `\columnwidth`.
 - Keep Figures 4, 5, and 6 next to their existing logical discussion points
   and preserve their source and numbering order.
+- Keep Figure 4 adjacent to the base-generality discussion, Figure 5 adjacent
+  to the matched component-ablation discussion, and Figure 6 adjacent to the
+  stage-bonus-versus-potential discussion.
 - Use normal LaTeX float placement rather than absolute or page-specific
   positioning.
 - Do not add `[H]`, forced page breaks, manual vertical offsets, or placeholder
   space.
-- Remove the float barrier between the ablation material and the real-world
-  extension so that the two-column page builder can fill columns naturally.
+- Allow top, bottom, and float-page placement so the two-column page builder
+  has enough freedom to fill columns naturally.
+- Keep the semantic float barrier before the real-world extension so Figures
+  5 and 6 cannot drift into an unrelated subsection. The barrier is a section
+  boundary, not a page-position lock.
 
 ## Expected Result
 
@@ -32,6 +38,8 @@ another column or page as normal floats, without requiring manual layout edits.
 - Compile the paper from a clean enough LaTeX state to refresh float placement.
 - Confirm that Figure 4 is one column wide.
 - Confirm that Figures 4, 5, and 6 remain in numeric and reading order.
+- Confirm that each figure remains next to the paragraph that interprets it
+  and does not cross into an unrelated subsection.
 - Inspect rendered pages 6 and 7 for large avoidable gaps, collisions, clipped
   content, or captions separated from their figures.
 - Check the LaTeX log for new float, overfull-box, and reference warnings.
