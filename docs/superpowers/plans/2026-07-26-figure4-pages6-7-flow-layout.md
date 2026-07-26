@@ -26,14 +26,14 @@
 
 **Interfaces:**
 - Consumes: existing labels `fig:libero`, `fig:ablbars`, and `fig:stagevspot`, plus the existing `\FloatBarrier`
-- Produces: three ordered single-column floats using `[tbp]`, with Figure 4 sized to `\columnwidth`
+- Produces: Figure 4 as a `[t]` single-column float and Figures 5--6 as `[tbp]` single-column floats, all sized to `\columnwidth`
 
 - [ ] **Step 1: Run the pre-change assertion and verify it fails**
 
 Run:
 
 ```bash
-rg -U '\\begin\{figure\}\[tbp\]\n\\centering\n\\includegraphics\[width=\\columnwidth\]\{figure/fig_libero10_aligned.pdf\}' paper/main.tex
+rg -U '\\begin\{figure\}\[t\]\n\\centering\n\\includegraphics\[width=\\columnwidth\]\{figure/fig_libero10_aligned.pdf\}' paper/main.tex
 ```
 
 Expected: exit status `1`, because Figure 4 is currently a `figure*` with width `0.66\textwidth`.
@@ -43,7 +43,7 @@ Expected: exit status `1`, because Figure 4 is currently a `figure*` with width 
 In `paper/main.tex`, change only these environment and placement lines:
 
 ```latex
-\begin{figure}[tbp]
+\begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figure/fig_libero10_aligned.pdf}
 ...
@@ -66,7 +66,7 @@ Run:
 rg -n 'begin\{figure\}\[tbp\]|fig_libero10_aligned|fig_ablation_bars_400k|fig_staged_vs_pothiql_threading_piece_v2|FloatBarrier' paper/main.tex
 ```
 
-Expected: three `[tbp]` ordinary figures occur in Figure 4–6 source order; Figure 4 uses `fig_libero10_aligned`; the barrier follows Figure 6.
+Expected: Figure 4 uses `[t]`, Figures 5 and 6 use `[tbp]`, and all three ordinary figures occur in source order; Figure 4 uses `fig_libero10_aligned`; the barrier follows Figure 6.
 
 - [ ] **Step 4: Inspect the narrow diff**
 
@@ -98,3 +98,26 @@ pdflatex -interaction=nonstopmode -halt-on-error main.tex
 
 Expected: both commands exit `0` and produce `main.pdf`.
 
+### Task 3: Refine section-level semantic anchors after visual review
+
+**Files:**
+- Modify: `paper/main.tex:461-636`
+- Inspect: rendered pages 4--7
+
+**Rationale:** The first compile showed that flexible Figure 4--6 floats fixed page 6, but the ablation subsection could begin before the main-result floats and the full-width real-task overview left page 7 sparse. The final layout therefore uses section-semantic barriers and preserves full width for both real-world overview figures.
+
+- [ ] **Step 1: Keep main results with their discussion**
+
+Use `\begin{figure}[t]` and `width=\columnwidth` for Figure 4, then retain a `\FloatBarrier` immediately before `\subsection{Ablations}`.
+
+- [ ] **Step 2: Keep ablations with their discussion**
+
+Use `[tbp]` for Figures 5 and 6 and retain the existing `\FloatBarrier` before `Real-World Extension`.
+
+- [ ] **Step 3: Balance the real-world pages without shrinking the learning curves**
+
+Use full-width `figure*` floats at `\textwidth` for both Figures 7 and 8. Declare them consecutively at the start of `Real-World Extension` so LaTeX can stack them in source order at the next page top while the matching task and evaluation text flows below.
+
+- [ ] **Step 4: Recompile twice and inspect pages 4--7**
+
+Expected: Figure 4 follows the base-generality discussion before the ablation subsection; Figures 5 and 6 remain with their matching ablation paragraphs; Figures 7 and 8 both span page 7 in source order above the task and evaluation text; pages 6 and 7 use both columns without manual page breaks or absolute placement.
