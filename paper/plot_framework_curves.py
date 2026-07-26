@@ -105,6 +105,10 @@ def render_curve(
         facecolor="white",
         metadata=metadata,
     )
+    if output_format == "svg":
+        svg = output_path.read_text(encoding="utf-8")
+        normalized = "\n".join(line.rstrip() for line in svg.splitlines()) + "\n"
+        output_path.write_text(normalized, encoding="utf-8")
     plt.close(fig)
 
 

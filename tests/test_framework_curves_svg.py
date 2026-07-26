@@ -40,6 +40,7 @@ def test_generator_renders_editable_failure_and_success_svgs(tmp_path):
         assert "Eval success rate" in svg
         assert color.lower() in svg
         assert "fill-opacity: 0.2" in svg
+        assert all(line == line.rstrip() for line in svg.splitlines())
 
 
 def test_plot_content_has_safe_canvas_margins(tmp_path):
