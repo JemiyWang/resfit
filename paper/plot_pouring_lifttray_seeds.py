@@ -35,7 +35,7 @@ ENT = "674575221-beijing-institute-of-technology"
 
 # shared styling so a single legend covers all panels; 'short' used in pending notes
 STY = {
- "ours": {"label":"SHORE-RL", "short":"SHORE-RL",
+ "ours": {"label":"SHORE-RL (Ours)", "short":"SHORE-RL",
           "color":"#008300", "ls":"-", "lw":3.0, "z":5},
  "base": {"label":"ResFit", "short":"ResFit",
           "color":"#8a8a86", "ls":(0,(4,2)), "lw":2.5, "z":2},
@@ -161,11 +161,11 @@ FROZEN_STYLE = {"label":"Frozen base", "color":"#5f5f5b",
 plt.rcParams.update({"font.family":"serif",
  "font.serif":["TeX Gyre Termes", "Times New Roman", "Times", "DejaVu Serif"],
  "font.size":18,"pdf.fonttype":42,"ps.fonttype":42,
- "axes.edgecolor":MUTED,"axes.linewidth":0.8,"axes.spines.top":False,
- "axes.spines.right":False,"xtick.color":MUTED,"ytick.color":MUTED,
+ "axes.edgecolor":MUTED,"axes.linewidth":0.8,"axes.spines.top":True,
+ "axes.spines.right":True,"xtick.color":MUTED,"ytick.color":MUTED,
  "text.color":INK,"axes.labelcolor":INK})
 
-fig, axes = plt.subplots(1, 5, figsize=(16.6, 4.1), sharey=True)
+fig, axes = plt.subplots(1, 5, figsize=(19.0, 4.1), sharey=True)
 handles = {}
 for ax, task in zip(axes, PANELS):
     if BASE[task] is not None:
@@ -192,7 +192,7 @@ for ax, task in zip(axes, PANELS):
     if pending:
         ax.text(0.5, 0.10, " / ".join(pending) + ": pending", transform=ax.transAxes,
                 ha="center", va="bottom", fontsize=17, color=MUTED, style="italic")
-    ttl = task   # panel title = bare task name (group labels removed per request)
+    ttl = "PieceAssembly" if task == "ThreePiece" else task
     ax.set_title(ttl, fontsize=18, fontweight="normal", loc="left", pad=8)
     ax.set_xlabel("Env steps (k)", fontsize=18)
     ax.set_xlim(0, 500); ax.set_ylim(-0.03, 1.03)

@@ -1,0 +1,29 @@
+# LaTeX 编译产物(Overleaf 会自己重新生成)
+*.aux
+*.log
+*.blg
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.toc
+*.lof
+*.lot
+*.bbl
+*.orig
+main.pdf
+aaai2027-unified-supp.pdf
+
+# 编辑备份(沿用 resfit 仓库约定)
+*.bak_*
+*.bak
+
+# 本地实验日志和生成过程中的中间文件
+wandb/
+generated/
+
+# Python bytecode and local paper-review scratch files
+__pycache__/
+*.py[cod]
+temp/
+.worktrees/

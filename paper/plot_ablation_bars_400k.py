@@ -205,6 +205,8 @@ def plot_summaries(summaries, out_pdf, out_png):
             "axes.linewidth": 0.55,
             "axes.spines.top": False,
             "axes.spines.right": False,
+            "axes.spines.left": False,
+            "axes.spines.bottom": False,
             "xtick.color": muted,
             "ytick.color": muted,
             "text.color": ink,
@@ -257,7 +259,11 @@ def plot_summaries(summaries, out_pdf, out_png):
 
     ax.set_xlim(-0.53, len(task_names) - 0.47)
     ax.set_ylim(0, 1.0)
-    ax.set_xticks(centers, task_names)
+    display_names = [
+        "PieceAssembly" if task == "ThreePiece" else task
+        for task in task_names
+    ]
+    ax.set_xticks(centers, display_names)
     ax.yaxis.set_major_locator(MultipleLocator(0.25))
     ax.tick_params(
         axis="x",

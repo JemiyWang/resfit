@@ -1,0 +1,378 @@
+% ===== Reward shaping / potential-based =====
+@inproceedings{ng1999policy,
+  title={Policy Invariance Under Reward Transformations: Theory and Application to Reward Shaping},
+  author={Ng, Andrew Y. and Harada, Daishi and Russell, Stuart},
+  booktitle={International Conference on Machine Learning (ICML)},
+  pages={278--287},
+  year={1999}
+}
+
+@inproceedings{wiewiora2003principled,
+  title={Principled Methods for Advising Reinforcement Learning Agents},
+  author={Wiewiora, Eric and Cottrell, Garrison W. and Elkan, Charles},
+  booktitle={International Conference on Machine Learning (ICML)},
+  pages={792--799},
+  year={2003}
+}
+
+@inproceedings{devlin2012dynamic,
+  title={Dynamic Potential-Based Reward Shaping},
+  author={Devlin, Sam and Kudenko, Daniel},
+  booktitle={International Conference on Autonomous Agents and Multiagent Systems (AAMAS)},
+  pages={433--440},
+  year={2012}
+}
+
+% ===== Imitation-learning distribution shift =====
+@inproceedings{ross2011dagger,
+  title={A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning},
+  author={Ross, Stephane and Gordon, Geoffrey and Bagnell, Drew},
+  booktitle={Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics},
+  pages={627--635},
+  year={2011},
+  volume={15},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v15/ross11a.html}
+}
+
+% ===== Reward hacking / misspecification =====
+@inproceedings{skalse2022defining,
+  title={Defining and Characterizing Reward Hacking},
+  author={Skalse, Joar and Howe, Nikolaus H. R. and Krasheninnikov, Dmitrii and Krueger, David},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={35},
+  year={2022}
+}
+
+@inproceedings{pan2022effects,
+  title={The Effects of Reward Misspecification: Mapping and Mitigating Misaligned Models},
+  author={Pan, Alexander and Bhatia, Kush and Steinhardt, Jacob},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2022},
+  url={https://arxiv.org/abs/2201.03544}
+}
+
+% ===== Delayed rewards / temporal credit assignment =====
+@inproceedings{arjona2019rudder,
+  title={{RUDDER}: Return Decomposition for Delayed Rewards},
+  author={Arjona-Medina, Jose A. and Gillhofer, Michael and Widrich, Michael and Unterthiner, Thomas and Brandstetter, Johannes and Hochreiter, Sepp},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={32},
+  year={2019},
+  url={https://proceedings.neurips.cc/paper/2019/hash/16105fb9cc614fc29e1bda00dab60d41-Abstract.html}
+}
+
+% ===== Off-policy RL / RLPD / TD3 =====
+@inproceedings{fujimoto2018addressing,
+  title={Addressing Function Approximation Error in Actor-Critic Methods},
+  author={Fujimoto, Scott and van Hoof, Herke and Meger, David},
+  booktitle={Proceedings of the 35th International Conference on Machine Learning},
+  pages={1587--1596},
+  year={2018},
+  volume={80},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v80/fujimoto18a.html}
+}
+
+@inproceedings{ball2023efficient,
+  title={Efficient Online Reinforcement Learning with Offline Data},
+  author={Ball, Philip J. and Smith, Laura and Kostrikov, Ilya and Levine, Sergey},
+  booktitle={Proceedings of the 40th International Conference on Machine Learning},
+  pages={1577--1594},
+  year={2023},
+  volume={202},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v202/ball23a.html}
+}
+
+% ===== Goal-conditioned / hierarchical RL =====
+@inproceedings{nachum2018hiro,
+  title={Data-Efficient Hierarchical Reinforcement Learning},
+  author={Nachum, Ofir and Gu, Shixiang and Lee, Honglak and Levine, Sergey},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={31},
+  year={2018},
+  url={https://proceedings.neurips.cc/paper/2018/hash/e6384711491713d29bc63fc5eeb5ba4f-Abstract.html}
+}
+
+@inproceedings{fang2022ptp,
+  title={Planning to Practice: Efficient Online Fine-Tuning by Composing Goals in Latent Space},
+  author={Fang, Kuan and Yin, Patrick and Nair, Ashvin and Levine, Sergey},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2022},
+  url={https://openreview.net/forum?id=StZUCEaV1Zc}
+}
+
+@inproceedings{park2023hiql,
+  title={{HIQL}: Offline Goal-Conditioned RL with Latent States as Actions},
+  author={Park, Seohong and Ghosh, Dibya and Eysenbach, Benjamin and Levine, Sergey},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2023},
+  url={https://openreview.net/forum?id=cLQCCtVDuW}
+}
+
+% ===== Model-based RL / learning in imagination =====
+@inproceedings{hafner2020dreamer,
+  title={Dream to Control: Learning Behaviors by Latent Imagination},
+  author={Hafner, Danijar and Lillicrap, Timothy and Ba, Jimmy and Norouzi, Mohammad},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2020},
+  url={https://openreview.net/forum?id=S1lOTC4tDS}
+}
+
+@inproceedings{janner2019mbpo,
+  title={When to Trust Your Model: Model-Based Policy Optimization},
+  author={Janner, Michael and Fu, Justin and Zhang, Marvin and Levine, Sergey},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={32},
+  year={2019},
+  url={https://proceedings.neurips.cc/paper/2019/hash/5faf461eff3099671ad63c6f3f094f7f-Abstract.html}
+}
+
+% ===== Residual and latent-space RL =====
+@article{resfit2025residual,
+  title={Residual Off-Policy RL for Finetuning Behavior Cloning Policies},
+  author={Ankile, Lars and Jiang, Zhenyu and Duan, Rocky and Shi, Guanya and Abbeel, Pieter and Nagabandi, Anusha},
+  journal={arXiv preprint arXiv:2509.19301},
+  year={2025},
+  note={ICLR 2026 Workshop on Recursive Self-Improvement},
+  url={https://arxiv.org/abs/2509.19301}
+}
+
+@inproceedings{wagenmaker2025dsrl,
+  title={Steering Your Diffusion Policy with Latent Space Reinforcement Learning},
+  author={Wagenmaker, Andrew and Nakamoto, Mitsuhiko and Zhang, Yunchu and Park, Seohong and Yagoub, Waleed and Nagabandi, Anusha and Gupta, Abhishek and Levine, Sergey},
+  booktitle={Proceedings of the 9th Conference on Robot Learning (CoRL)},
+  year={2025},
+  url={https://openreview.net/forum?id=jU7AbGq3se}
+}
+
+@inproceedings{yang2026rise,
+  title={{RISE}: Self-Improving Robot Policy with Compositional World Model},
+  author={Yang, Jiazhi and Lin, Kunyang and Li, Jinwei and Zhang, Wencong and Lin, Tianwei and Wu, Longyan and Su, Zhizhong and Zhao, Hao and Zhang, Ya-Qin and Chen, Li and Luo, Ping and Yue, Xiangyu and Li, Hongyang},
+  booktitle={Proceedings of Robotics: Science and Systems},
+  year={2026},
+  url={https://arxiv.org/abs/2602.11075}
+}
+
+@inproceedings{johannink2019residual,
+  title={Residual Reinforcement Learning for Robot Control},
+  author={Johannink, Tobias and Bahl, Shikhar and Nair, Ashvin and Luo, Jianlan and Kumar, Avinash and Loskyll, Matthias and Ojea, Juan Aparicio and Solowjow, Eugen and Levine, Sergey},
+  booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  year={2019},
+  url={https://arxiv.org/abs/1812.03201}
+}
+
+% ===== BC-bootstrapped / full-policy RL baselines =====
+@inproceedings{hu2023imitation,
+  title={Imitation Bootstrapped Reinforcement Learning},
+  author={Hu, Hengyuan and Mirchandani, Suvir and Sadigh, Dorsa},
+  booktitle={Proceedings of Robotics: Science and Systems},
+  year={2024},
+  address={Delft, Netherlands},
+  month={July},
+  doi={10.15607/RSS.2024.XX.056},
+  url={https://www.roboticsproceedings.org/rss20/p056.html}
+}
+
+@inproceedings{kostrikov2022iql,
+  title={Offline Reinforcement Learning with Implicit Q-Learning},
+  author={Kostrikov, Ilya and Nair, Ashvin and Levine, Sergey},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2022},
+  url={https://openreview.net/forum?id=68n2s9ZJWF8}
+}
+
+% ===== Imitation-learning bases =====
+@inproceedings{zhao2023learning,
+  title={Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware},
+  author={Zhao, Tony Z. and Kumar, Vikash and Levine, Sergey and Finn, Chelsea},
+  booktitle={Proceedings of Robotics: Science and Systems},
+  year={2023},
+  doi={10.15607/RSS.2023.XIX.016},
+  url={https://www.roboticsproceedings.org/rss19/p016.html}
+}
+
+@inproceedings{black2024pi0,
+  title={{$\pi_0$: A Vision-Language-Action Flow Model for General Robot Control}},
+  author={Black, Kevin and Brown, Noah and Driess, Danny and Esmail, Adnan and Equi, Michael Robert and Finn, Chelsea and Fusai, Niccolo and Groom, Lachy and Hausman, Karol and Ichter, Brian and Jakubczak, Szymon and Jones, Tim and Ke, Liyiming and Levine, Sergey and Li-Bell, Adrian and Mothukuri, Mohith and Nair, Suraj and Pertsch, Karl and Shi, Lucy Xiaoyang and Smith, Laura and Tanner, James and Vuong, Quan and Walling, Anna and Wang, Haohuan and Zhilinsky, Ury},
+  booktitle={Proceedings of Robotics: Science and Systems},
+  year={2025},
+  address={Los Angeles, California, USA},
+  month={June},
+  doi={10.15607/RSS.2025.XXI.010},
+  url={https://www.roboticsproceedings.org/rss21/p010.html}
+}
+
+% ===== Benchmarks / data generation =====
+@inproceedings{mandlekar2021matters,
+  title={What Matters in Learning from Offline Human Demonstrations for Robot Manipulation},
+  author={Mandlekar, Ajay and Xu, Danfei and Wong, Josiah and Nasiriany, Soroush and Wang, Chen and Kulkarni, Rohun and Fei-Fei, Li and Savarese, Silvio and Zhu, Yuke and Mart{\'i}n-Mart{\'i}n, Roberto},
+  booktitle={Proceedings of the 5th Conference on Robot Learning},
+  pages={1678--1690},
+  year={2022},
+  volume={164},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v164/mandlekar22a.html}
+}
+
+@inproceedings{mandlekar2023mimicgen,
+  title={MimicGen: A Data Generation System for Scalable Robot Learning using Human Demonstrations},
+  author={Mandlekar, Ajay and Nasiriany, Soroush and Wen, Bowen and Akinola, Iretiayo and Narang, Yashraj and Fan, Linxi and Zhu, Yuke and Fox, Dieter},
+  booktitle={Proceedings of the 7th Conference on Robot Learning},
+  pages={1820--1864},
+  year={2023},
+  volume={229},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v229/mandlekar23a.html}
+}
+
+@inproceedings{jia2024dexmimicgen,
+  title={DexMimicGen: Automated Data Generation for Bimanual Dexterous Manipulation via Imitation Learning},
+  author={Jiang, Zhenyu and Xie, Yuqi and Lin, Kevin and Xu, Zhenjia and Wan, Weikang and Mandlekar, Ajay and Fan, Linxi and Zhu, Yuke},
+  booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  year={2025},
+  url={https://arxiv.org/abs/2410.24185}
+}
+
+@inproceedings{liu2023libero,
+  title={{LIBERO}: Benchmarking Knowledge Transfer for Lifelong Robot Learning},
+  author={Liu, Bo and Zhu, Yifeng and Gao, Chongkai and Feng, Yihao and Liu, Qiang and Zhu, Yuke and Stone, Peter},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2023},
+  note={Datasets and Benchmarks Track},
+  url={https://proceedings.neurips.cc/paper_files/paper/2023/hash/8c3c666820ea055a77726d66fc7d447f-Abstract-Datasets_and_Benchmarks.html}
+}
+
+@article{sima2026kai0,
+  title={{$\chi_0$: Resource-Aware Robust Manipulation via Taming Distributional Inconsistencies}},
+  author={Yu, Checheng and Sima, Chonghao and Jiang, Gangcheng and Zhang, Hai and Mai, Haoguang and Li, Hongyang and Wang, Huijie and Chen, Jin and Wu, Kaiyang and Chen, Li and Zhao, Lirui and Shi, Modi and Luo, Ping and Bu, Qingwen and Peng, Shijia and Li, Tianyu and Yuan, Yibo},
+  journal={arXiv preprint arXiv:2602.09021},
+  year={2026},
+  url={https://arxiv.org/abs/2602.09021}
+}
+
+
+@inproceedings{nakamoto2023calql,
+  title={{Cal-QL}: Calibrated Offline RL Pre-Training for Efficient Online Fine-Tuning},
+  author={Nakamoto, Mitsuhiko and Zhai, Simon and Singh, Anikait and Mark, Max Sobol and Ma, Yi and Finn, Chelsea and Kumar, Aviral and Levine, Sergey},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2023},
+  url={https://proceedings.neurips.cc/paper_files/paper/2023/hash/c44a04289beaf0a7d968a94066a1d696-Abstract-Conference.html}
+}
+
+@inproceedings{zhang2023pex,
+  title={Policy Expansion for Bridging Offline-to-Online Reinforcement Learning},
+  author={Zhang, Haichao and Xu, Wei and Yu, Haonan},
+  booktitle={International Conference on Learning Representations},
+  year={2023},
+  url={https://openreview.net/forum?id=-Y34L45JR6z}
+}
+
+@inproceedings{li2023explore,
+  title={Accelerating Exploration with Unlabeled Prior Data},
+  author={Li, Qiyang and Zhang, Jason and Ghosh, Dibya and Zhang, Amy and Levine, Sergey},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2023},
+  url={https://openreview.net/forum?id=Itorzn4Kwf}
+}
+
+@inproceedings{yuan2025policydecorator,
+  title={Policy Decorator: Model-Agnostic Online Refinement for Large Policy Model},
+  author={Yuan, Xiu and Mu, Tongzhou and Tao, Stone and Fang, Yunhao and Zhang, Mengke and Su, Hao},
+  booktitle={International Conference on Learning Representations},
+  year={2025},
+  url={https://openreview.net/forum?id=e5jGTEiJMT}
+}
+
+@inproceedings{ren2025dppo,
+  title={Diffusion Policy Policy Optimization},
+  author={Ren, Allen Z. and Lidard, Justin and Ankile, Lars Lien and Simeonov, Anthony and Agrawal, Pulkit and Majumdar, Anirudha and Burchfiel, Benjamin and Dai, Hongkai and Simchowitz, Max},
+  booktitle={International Conference on Learning Representations},
+  year={2025},
+  url={https://openreview.net/forum?id=mEpqHvbD2h}
+}
+
+@inproceedings{shi2023skimo,
+  title={Skill-based Model-based Reinforcement Learning},
+  author={Shi, Lucy Xiaoyang and Lim, Joseph J. and Lee, Youngwoon},
+  booktitle={Proceedings of the 6th Conference on Robot Learning},
+  series={Proceedings of Machine Learning Research},
+  volume={205},
+  pages={2262--2272},
+  year={2023},
+  url={https://proceedings.mlr.press/v205/shi23a.html}
+}
+
+@inproceedings{zheng2024prise,
+  title={{PRISE}: {LLM}-Style Sequence Compression for Learning Temporal Action Abstractions in Control},
+  author={Zheng, Ruijie and Cheng, Ching-An and Daum{\'e} III, Hal and Huang, Furong and Kolobov, Andrey},
+  booktitle={Proceedings of the 41st International Conference on Machine Learning},
+  series={Proceedings of Machine Learning Research},
+  volume={235},
+  pages={61267--61286},
+  year={2024},
+  url={https://proceedings.mlr.press/v235/zheng24b.html}
+}
+
+@inproceedings{hansen2024tdmpc2,
+  title={{TD-MPC2}: Scalable, Robust World Models for Continuous Control},
+  author={Hansen, Nicklas and Su, Hao and Wang, Xiaolong},
+  booktitle={International Conference on Learning Representations},
+  year={2024},
+  url={https://openreview.net/forum?id=Oxh5CstDJU}
+}
+
+@inproceedings{mazzaglia2023choreographer,
+  title={Choreographer: Learning and Adapting Skills in Imagination},
+  author={Mazzaglia, Pietro and Verbelen, Tim and Dhoedt, Bart and Lacoste, Alexandre and Rajeswar, Sai},
+  booktitle={International Conference on Learning Representations},
+  year={2023},
+  url={https://openreview.net/forum?id=PhkWyijGi5b}
+}
+
+@inproceedings{escontrela2023viper,
+  title={Video Prediction Models as Rewards for Reinforcement Learning},
+  author={Escontrela, Alejandro and Adeniji, Ademi and Yan, Wilson and Jain, Ajay and Peng, Xue Bin and Goldberg, Ken and Lee, Youngwoon and Hafner, Danijar and Abbeel, Pieter},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2023},
+  url={https://openreview.net/forum?id=HWNl9PAYIP}
+}
+
+
+@article{hacohen2025ltxvideo,
+  title={{LTX-Video}: Realtime Video Latent Diffusion},
+  author={HaCohen, Yoav and Chiprut, Nisan and Brazowski, Benny and Shalem, Daniel and Moshe, Dudu and Richardson, Eitan and Levin, Eran and Shiran, Guy and Zabari, Nir and Gordon, Ori and Panet, Poriya and Weissbuch, Sapir and Kulikov, Victor and Bitterman, Yaki and Melumian, Zeev and Bibi, Ofir},
+  journal={arXiv preprint arXiv:2501.00103},
+  year={2025},
+  url={https://arxiv.org/abs/2501.00103}
+}
+
+@article{raffel2020t5,
+  title={Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer},
+  author={Raffel, Colin and Shazeer, Noam and Roberts, Adam and Lee, Katherine and Narang, Sharan and Matena, Michael and Zhou, Yanqi and Li, Wei and Liu, Peter J.},
+  journal={Journal of Machine Learning Research},
+  volume={21},
+  number={140},
+  pages={1--67},
+  year={2020},
+  url={https://jmlr.org/papers/v21/20-074.html}
+}
+
+@inproceedings{lipman2023flowmatching,
+  title={Flow Matching for Generative Modeling},
+  author={Lipman, Yaron and Chen, Ricky T. Q. and Ben-Hamu, Heli and Nickel, Maximilian and Le, Matt},
+  booktitle={International Conference on Learning Representations},
+  year={2023},
+  url={https://openreview.net/forum?id=PqvMRDCJT9t}
+}
