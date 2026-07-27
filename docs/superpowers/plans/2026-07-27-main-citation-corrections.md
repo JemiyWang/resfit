@@ -13,7 +13,7 @@
 - Preserve all experimental results, figures, tables, equations, and method claims.
 - Preserve unrelated staged, tracked, and untracked user changes.
 - Do not commit `paper/main.tex` or `paper/references.bib` because both contained pre-existing user modifications before this task.
-- Keep exactly 48 cited keys and 48 bibliography entries with identical sets.
+- Keep exactly 47 cited keys and 47 bibliography entries with identical sets after removing the unsupported MimicGen co-citation.
 - Keep `paper/main.pdf` at exactly ten pages.
 - Keep References starting on page 9 and ending on page 10.
 - Do not invent RISE pages or a DOI before official metadata is available.
@@ -36,7 +36,7 @@
 Run a Python assertion that rejects the audited old phrases:
 
 ```bash
-python3 -c 'from pathlib import Path; t=Path("paper/main.tex").read_text(); old=["more sample efficient~\\\\cite{ball2023efficient,resfit2025residual}", "prior-data methods improve sample efficiency by mixing demonstrations with newly", "improvement~\\\\cite{yang2026rise,escontrela2023viper}", "DexMimicGen~\\\\cite{jia2024dexmimicgen,mandlekar2023mimicgen}", "\\\\emph{(v)~IQL}~\\\\cite{kostrikov2022iql}: a"]; found=[s for s in old if s in t]; print(found); raise SystemExit(bool(found))'
+python3 -c 'from pathlib import Path; t=Path("paper/main.tex").read_text(); old=[r"more sample efficient~\cite{ball2023efficient,resfit2025residual}", "prior-data methods improve sample efficiency by mixing demonstrations with newly", r"improvement~\cite{yang2026rise,escontrela2023viper}", r"DexMimicGen~\cite{jia2024dexmimicgen,mandlekar2023mimicgen}", r"\emph{(v)~IQL}~\cite{kostrikov2022iql}: a"]; found=[s for s in old if s in t]; print(found); raise SystemExit(bool(found))'
 ```
 
 Expected: exit 1 and print all five old patterns.
@@ -143,7 +143,7 @@ Expected: exit 0 and print `[]`.
 
 **Interfaces:**
 - Consumes: corrected `paper/main.tex` and `paper/references.bib`
-- Produces: a verified ten-page PDF with 48 resolved references
+- Produces: a verified ten-page PDF with 47 resolved references
 
 - [ ] **Step 1: Build from `paper/`**
 
@@ -159,10 +159,10 @@ Expected: all four commands exit 0.
 - [ ] **Step 2: Check citation-set integrity**
 
 ```bash
-python3 -c 'import re; t=open("paper/main.tex").read(); b=open("paper/main.bbl").read(); c=set(k.strip() for g in re.findall(r"\\cite(?:t|p|alp|author|year|yearpar)?\{([^}]+)\}",t) for k in g.split(",")); x=set(re.findall(r"\\bibitem.*?\]\{([^}]+)\}",b,re.S)); print("cited",len(c),"bibliography",len(x),"missing",sorted(c-x),"uncited",sorted(x-c)); raise SystemExit(c!=x or len(c)!=48)'
+python3 -c 'import re; t=open("paper/main.tex").read(); b=open("paper/main.bbl").read(); c=set(k.strip() for g in re.findall(r"\\cite(?:t|p|alp|author|year|yearpar)?\{([^}]+)\}",t) for k in g.split(",")); x=set(re.findall(r"\\bibitem.*?\]\{([^}]+)\}",b,re.S)); print("cited",len(c),"bibliography",len(x),"missing",sorted(c-x),"uncited",sorted(x-c)); raise SystemExit(c!=x or len(c)!=47)'
 ```
 
-Expected: `cited 48 bibliography 48 missing [] uncited []`, exit 0.
+Expected: `cited 47 bibliography 47 missing [] uncited []`, exit 0.
 
 - [ ] **Step 3: Check LaTeX warnings and page contract**
 

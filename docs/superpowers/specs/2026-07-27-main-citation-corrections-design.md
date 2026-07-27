@@ -53,8 +53,8 @@ previously presented audit recommendations.
 
 - Build with `pdflatex`, `bibtex`, `pdflatex`, `pdflatex`.
 - Require zero undefined citations or references.
-- Require exactly 48 cited keys and 48 bibliography entries with identical
-  sets.
+- Require exactly 47 cited keys and 47 bibliography entries with identical
+  sets after removing the unsupported MimicGen co-citation.
 - Preserve the ten-page paper, with References starting on page 9 and ending
   on page 10.
 - Inspect the final two reference pages and review the scoped source diff.
