@@ -1,0 +1,167 @@
+\begin{thebibliography}{20}
+\providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Ankile et~al.(2026)Ankile, Jiang, Duan, Shi, Abbeel, and
+  Nagabandi}]{resfit2025residual}
+Ankile, L.; Jiang, Z.; Duan, R.; Shi, G.; Abbeel, P.; and Nagabandi, A. 2026.
+\newblock Residual Off-Policy RL for Finetuning Behavior Cloning Policies.
+\newblock In \emph{IEEE International Conference on Robotics and Automation
+  (ICRA)}.
+
+\bibitem[{Ball et~al.(2023)Ball, Smith, Kostrikov, and
+  Levine}]{ball2023efficient}
+Ball, P.~J.; Smith, L.; Kostrikov, I.; and Levine, S. 2023.
+\newblock Efficient Online Reinforcement Learning with Offline Data.
+\newblock In \emph{Proceedings of the 40th International Conference on Machine
+  Learning}, volume 202 of \emph{Proceedings of Machine Learning Research},
+  1577--1594. PMLR.
+
+\bibitem[{Black et~al.(2025{\natexlab{a}})Black, Brown, Darpinian, Dhabalia,
+  Driess, Esmail, Equi, Finn, Fusai, Galliker, Ghosh, Groom, Hausman, Ichter,
+  Jakubczak, Jones, Ke, LeBlanc, Levine, Li-Bell, Mothukuri, Nair, Pertsch,
+  Ren, Shi, Smith, Springenberg, Stachowicz, Tanner, Vuong, Walke, Walling,
+  Wang, Yu, and Zhilinsky}]{black2025pi05}
+Black, K.; Brown, N.; Darpinian, J.; Dhabalia, K.; Driess, D.; Esmail, A.;
+  Equi, M.~R.; Finn, C.; Fusai, N.; Galliker, M.~Y.; Ghosh, D.; Groom, L.;
+  Hausman, K.; Ichter, B.; Jakubczak, S.; Jones, T.; Ke, L.; LeBlanc, D.;
+  Levine, S.; Li-Bell, A.; Mothukuri, M.; Nair, S.; Pertsch, K.; Ren, A.~Z.;
+  Shi, L.~X.; Smith, L.; Springenberg, J.~T.; Stachowicz, K.; Tanner, J.;
+  Vuong, Q.; Walke, H.; Walling, A.; Wang, H.; Yu, L.; and Zhilinsky, U.
+  2025{\natexlab{a}}.
+\newblock {${\pi}_{0.5}$}: A Vision-Language-Action Model with Open-World
+  Generalization.
+\newblock In \emph{Proceedings of the 9th Conference on Robot Learning}, volume
+  305 of \emph{Proceedings of Machine Learning Research}, 17--40. PMLR.
+
+\bibitem[{Black et~al.(2025{\natexlab{b}})Black, Brown, Driess, Esmail, Equi,
+  Finn, Fusai, Groom, Hausman, Ichter, Jakubczak, Jones, Ke, Levine, Li-Bell,
+  Mothukuri, Nair, Pertsch, Shi, Smith, Tanner, Vuong, Walling, Wang, and
+  Zhilinsky}]{black2024pi0}
+Black, K.; Brown, N.; Driess, D.; Esmail, A.; Equi, M.~R.; Finn, C.; Fusai, N.;
+  Groom, L.; Hausman, K.; Ichter, B.; Jakubczak, S.; Jones, T.; Ke, L.; Levine,
+  S.; Li-Bell, A.; Mothukuri, M.; Nair, S.; Pertsch, K.; Shi, L.~X.; Smith, L.;
+  Tanner, J.; Vuong, Q.; Walling, A.; Wang, H.; and Zhilinsky, U.
+  2025{\natexlab{b}}.
+\newblock {$\pi_0$: A Vision-Language-Action Flow Model for General Robot
+  Control}.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}. Los Angeles,
+  California, USA.
+
+\bibitem[{Devlin and Kudenko(2012)}]{devlin2012dynamic}
+Devlin, S.; and Kudenko, D. 2012.
+\newblock Dynamic Potential-Based Reward Shaping.
+\newblock In \emph{International Conference on Autonomous Agents and Multiagent
+  Systems (AAMAS)}, 433--440.
+
+\bibitem[{Fujimoto, van Hoof, and Meger(2018)}]{fujimoto2018addressing}
+Fujimoto, S.; van Hoof, H.; and Meger, D. 2018.
+\newblock Addressing Function Approximation Error in Actor-Critic Methods.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine
+  Learning}, volume~80 of \emph{Proceedings of Machine Learning Research},
+  1587--1596. PMLR.
+
+\bibitem[{HaCohen et~al.(2025)HaCohen, Chiprut, Brazowski, Shalem, Moshe,
+  Richardson, Levin, Shiran, Zabari, Gordon, Panet, Weissbuch, Kulikov,
+  Bitterman, Melumian, and Bibi}]{hacohen2025ltxvideo}
+HaCohen, Y.; Chiprut, N.; Brazowski, B.; Shalem, D.; Moshe, D.; Richardson, E.;
+  Levin, E.; Shiran, G.; Zabari, N.; Gordon, O.; Panet, P.; Weissbuch, S.;
+  Kulikov, V.; Bitterman, Y.; Melumian, Z.; and Bibi, O. 2025.
+\newblock {LTX-Video}: Realtime Video Latent Diffusion.
+\newblock arXiv:2501.00103.
+
+\bibitem[{Hu, Mirchandani, and Sadigh(2024)}]{hu2023imitation}
+Hu, H.; Mirchandani, S.; and Sadigh, D. 2024.
+\newblock Imitation Bootstrapped Reinforcement Learning.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}. Delft,
+  Netherlands.
+
+\bibitem[{Janner et~al.(2019)Janner, Fu, Zhang, and Levine}]{janner2019mbpo}
+Janner, M.; Fu, J.; Zhang, M.; and Levine, S. 2019.
+\newblock When to Trust Your Model: Model-Based Policy Optimization.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~32.
+
+\bibitem[{Jiang et~al.(2025)Jiang, Xie, Lin, Xu, Wan, Mandlekar, Fan, and
+  Zhu}]{jia2024dexmimicgen}
+Jiang, Z.; Xie, Y.; Lin, K.; Xu, Z.; Wan, W.; Mandlekar, A.; Fan, L.; and Zhu,
+  Y. 2025.
+\newblock DexMimicGen: Automated Data Generation for Bimanual Dexterous
+  Manipulation via Imitation Learning.
+\newblock In \emph{IEEE International Conference on Robotics and Automation
+  (ICRA)}, 16923--16930.
+
+\bibitem[{Kostrikov, Nair, and Levine(2022)}]{kostrikov2022iql}
+Kostrikov, I.; Nair, A.; and Levine, S. 2022.
+\newblock Offline Reinforcement Learning with Implicit Q-Learning.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Lipman et~al.(2023)Lipman, Chen, Ben-Hamu, Nickel, and
+  Le}]{lipman2023flowmatching}
+Lipman, Y.; Chen, R. T.~Q.; Ben-Hamu, H.; Nickel, M.; and Le, M. 2023.
+\newblock Flow Matching for Generative Modeling.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Liu et~al.(2023)Liu, Zhu, Gao, Feng, Liu, Zhu, and
+  Stone}]{liu2023libero}
+Liu, B.; Zhu, Y.; Gao, C.; Feng, Y.; Liu, Q.; Zhu, Y.; and Stone, P. 2023.
+\newblock {LIBERO}: Benchmarking Knowledge Transfer for Lifelong Robot
+  Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36, 44776--44791.
+\newblock Datasets and Benchmarks Track.
+
+\bibitem[{Mandlekar et~al.(2023)Mandlekar, Nasiriany, Wen, Akinola, Narang,
+  Fan, Zhu, and Fox}]{mandlekar2023mimicgen}
+Mandlekar, A.; Nasiriany, S.; Wen, B.; Akinola, I.; Narang, Y.; Fan, L.; Zhu,
+  Y.; and Fox, D. 2023.
+\newblock MimicGen: A Data Generation System for Scalable Robot Learning using
+  Human Demonstrations.
+\newblock In \emph{Proceedings of the 7th Conference on Robot Learning}, volume
+  229 of \emph{Proceedings of Machine Learning Research}, 1820--1864. PMLR.
+
+\bibitem[{Ng, Harada, and Russell(1999)}]{ng1999policy}
+Ng, A.~Y.; Harada, D.; and Russell, S. 1999.
+\newblock Policy Invariance Under Reward Transformations: Theory and
+  Application to Reward Shaping.
+\newblock In \emph{International Conference on Machine Learning (ICML)},
+  278--287.
+
+\bibitem[{Raffel et~al.(2020)Raffel, Shazeer, Roberts, Lee, Narang, Matena,
+  Zhou, Li, and Liu}]{raffel2020t5}
+Raffel, C.; Shazeer, N.; Roberts, A.; Lee, K.; Narang, S.; Matena, M.; Zhou,
+  Y.; Li, W.; and Liu, P.~J. 2020.
+\newblock Exploring the Limits of Transfer Learning with a Unified Text-to-Text
+  Transformer.
+\newblock \emph{Journal of Machine Learning Research}, 21(140): 1--67.
+
+\bibitem[{Wagenmaker et~al.(2025)Wagenmaker, Zhang, Nakamoto, Park, Yagoub,
+  Nagabandi, Gupta, and Levine}]{wagenmaker2025dsrl}
+Wagenmaker, A.; Zhang, Y.; Nakamoto, M.; Park, S.; Yagoub, W.; Nagabandi, A.;
+  Gupta, A.; and Levine, S. 2025.
+\newblock Steering Your Diffusion Policy with Latent Space Reinforcement
+  Learning.
+\newblock In \emph{Proceedings of the 9th Conference on Robot Learning}, volume
+  305 of \emph{Proceedings of Machine Learning Research}, 258--282. PMLR.
+
+\bibitem[{Yang et~al.(2026)Yang, Lin, Zhang, Li, Lin, Wu, Zhang, Zhao, Luo, Su,
+  Li, Yue, and Chen}]{yang2026rise}
+Yang, J.; Lin, K.; Zhang, W.; Li, J.; Lin, T.; Wu, L.; Zhang, Y.-Q.; Zhao, H.;
+  Luo, P.; Su, Z.; Li, H.; Yue, X.; and Chen, L. 2026.
+\newblock Self-Improving Robot Policy with Compositional World Model.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}.
+
+\bibitem[{Yu et~al.(2026)Yu, Sima, Jiang, Zhang, Mai, Li, Wang, Chen, Wu, Chen,
+  Zhao, Shi, Luo, Bu, Peng, Li, and Yuan}]{sima2026kai0}
+Yu, C.; Sima, C.; Jiang, G.; Zhang, H.; Mai, H.; Li, H.; Wang, H.; Chen, J.;
+  Wu, K.; Chen, L.; Zhao, L.; Shi, M.; Luo, P.; Bu, Q.; Peng, S.; Li, T.; and
+  Yuan, Y. 2026.
+\newblock {$\chi_0$: Resource-Aware Robust Manipulation via Taming
+  Distributional Inconsistencies}.
+\newblock arXiv:2602.09021.
+
+\bibitem[{Zhao et~al.(2023)Zhao, Kumar, Levine, and Finn}]{zhao2023learning}
+Zhao, T.~Z.; Kumar, V.; Levine, S.; and Finn, C. 2023.
+\newblock Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}.
+
+\end{thebibliography}

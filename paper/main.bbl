@@ -1,0 +1,324 @@
+\begin{thebibliography}{44}
+\providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Andrychowicz et~al.(2017)Andrychowicz, Wolski, Ray, Schneider, Fong,
+  Welinder, McGrew, Tobin, Abbeel, and Zaremba}]{andrychowicz2017hindsight}
+Andrychowicz, M.; Wolski, F.; Ray, A.; Schneider, J.; Fong, R.; Welinder, P.;
+  McGrew, B.; Tobin, J.; Abbeel, P.; and Zaremba, W. 2017.
+\newblock Hindsight Experience Replay.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~30.
+
+\bibitem[{Ankile et~al.(2026)Ankile, Jiang, Duan, Shi, Abbeel, and
+  Nagabandi}]{resfit2025residual}
+Ankile, L.; Jiang, Z.; Duan, R.; Shi, G.; Abbeel, P.; and Nagabandi, A. 2026.
+\newblock Residual Off-Policy RL for Finetuning Behavior Cloning Policies.
+\newblock In \emph{IEEE International Conference on Robotics and Automation
+  (ICRA)}.
+
+\bibitem[{Arjona-Medina et~al.(2019)Arjona-Medina, Gillhofer, Widrich,
+  Unterthiner, Brandstetter, and Hochreiter}]{arjona2019rudder}
+Arjona-Medina, J.~A.; Gillhofer, M.; Widrich, M.; Unterthiner, T.;
+  Brandstetter, J.; and Hochreiter, S. 2019.
+\newblock {RUDDER}: Return Decomposition for Delayed Rewards.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~32.
+
+\bibitem[{Ball et~al.(2023)Ball, Smith, Kostrikov, and
+  Levine}]{ball2023efficient}
+Ball, P.~J.; Smith, L.; Kostrikov, I.; and Levine, S. 2023.
+\newblock Efficient Online Reinforcement Learning with Offline Data.
+\newblock In \emph{Proceedings of the 40th International Conference on Machine
+  Learning}, volume 202 of \emph{Proceedings of Machine Learning Research},
+  1577--1594. PMLR.
+
+\bibitem[{Black et~al.(2025)Black, Brown, Darpinian, Dhabalia, Driess, Esmail,
+  Equi, Finn, Fusai, Galliker, Ghosh, Groom, Hausman, Ichter, Jakubczak, Jones,
+  Ke, LeBlanc, Levine, Li-Bell, Mothukuri, Nair, Pertsch, Ren, Shi, Smith,
+  Springenberg, Stachowicz, Tanner, Vuong, Walke, Walling, Wang, Yu, and
+  Zhilinsky}]{black2025pi05}
+Black, K.; Brown, N.; Darpinian, J.; Dhabalia, K.; Driess, D.; Esmail, A.;
+  Equi, M.~R.; Finn, C.; Fusai, N.; Galliker, M.~Y.; Ghosh, D.; Groom, L.;
+  Hausman, K.; Ichter, B.; Jakubczak, S.; Jones, T.; Ke, L.; LeBlanc, D.;
+  Levine, S.; Li-Bell, A.; Mothukuri, M.; Nair, S.; Pertsch, K.; Ren, A.~Z.;
+  Shi, L.~X.; Smith, L.; Springenberg, J.~T.; Stachowicz, K.; Tanner, J.;
+  Vuong, Q.; Walke, H.; Walling, A.; Wang, H.; Yu, L.; and Zhilinsky, U. 2025.
+\newblock {${\pi}_{0.5}$}: A Vision-Language-Action Model with Open-World
+  Generalization.
+\newblock In \emph{Proceedings of the 9th Conference on Robot Learning}, volume
+  305 of \emph{Proceedings of Machine Learning Research}, 17--40. PMLR.
+
+\bibitem[{Buckman et~al.(2018)Buckman, Hafner, Tucker, Brevdo, and
+  Lee}]{buckman2018steve}
+Buckman, J.; Hafner, D.; Tucker, G.; Brevdo, E.; and Lee, H. 2018.
+\newblock Sample-Efficient Reinforcement Learning with Stochastic Ensemble
+  Value Expansion.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~31.
+
+\bibitem[{Devlin and Kudenko(2012)}]{devlin2012dynamic}
+Devlin, S.; and Kudenko, D. 2012.
+\newblock Dynamic Potential-Based Reward Shaping.
+\newblock In \emph{International Conference on Autonomous Agents and Multiagent
+  Systems (AAMAS)}, 433--440.
+
+\bibitem[{Dietterich(2000)}]{dietterich2000maxq}
+Dietterich, T.~G. 2000.
+\newblock Hierarchical Reinforcement Learning with the {MAXQ} Value Function
+  Decomposition.
+\newblock \emph{Journal of Artificial Intelligence Research}, 13: 227--303.
+
+\bibitem[{Escontrela et~al.(2023)Escontrela, Adeniji, Yan, Jain, Peng,
+  Goldberg, Lee, Hafner, and Abbeel}]{escontrela2023viper}
+Escontrela, A.; Adeniji, A.; Yan, W.; Jain, A.; Peng, X.~B.; Goldberg, K.; Lee,
+  Y.; Hafner, D.; and Abbeel, P. 2023.
+\newblock Video Prediction Models as Rewards for Reinforcement Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36.
+
+\bibitem[{Fang et~al.(2022)Fang, Yin, Nair, and Levine}]{fang2022ptp}
+Fang, K.; Yin, P.; Nair, A.; and Levine, S. 2022.
+\newblock Planning to Practice: Efficient Online Fine-Tuning by Composing Goals
+  in Latent Space.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Fujimoto, van Hoof, and Meger(2018)}]{fujimoto2018addressing}
+Fujimoto, S.; van Hoof, H.; and Meger, D. 2018.
+\newblock Addressing Function Approximation Error in Actor-Critic Methods.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine
+  Learning}, volume~80 of \emph{Proceedings of Machine Learning Research},
+  1587--1596. PMLR.
+
+\bibitem[{Hafner et~al.(2020)Hafner, Lillicrap, Ba, and
+  Norouzi}]{hafner2020dreamer}
+Hafner, D.; Lillicrap, T.; Ba, J.; and Norouzi, M. 2020.
+\newblock Dream to Control: Learning Behaviors by Latent Imagination.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Hansen, Su, and Wang(2024)}]{hansen2024tdmpc2}
+Hansen, N.; Su, H.; and Wang, X. 2024.
+\newblock {TD-MPC2}: Scalable, Robust World Models for Continuous Control.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Harutyunyan et~al.(2019)Harutyunyan, Dabney, Mesnard, Azar, Piot,
+  Heess, van Hasselt, Wayne, Singh, Precup, and
+  Munos}]{harutyunyan2019hindsight}
+Harutyunyan, A.; Dabney, W.; Mesnard, T.; Azar, M.~G.; Piot, B.; Heess, N.; van
+  Hasselt, H.~P.; Wayne, G.; Singh, S.; Precup, D.; and Munos, R. 2019.
+\newblock Hindsight Credit Assignment.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~32.
+
+\bibitem[{Hu, Mirchandani, and Sadigh(2024)}]{hu2023imitation}
+Hu, H.; Mirchandani, S.; and Sadigh, D. 2024.
+\newblock Imitation Bootstrapped Reinforcement Learning.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}. Delft,
+  Netherlands.
+
+\bibitem[{Hung et~al.(2019)Hung, Lillicrap, Abramson, Wu, Mirza, Carnevale,
+  Ahuja, and Wayne}]{hung2019optimizing}
+Hung, C.-C.; Lillicrap, T.; Abramson, J.; Wu, Y.; Mirza, M.; Carnevale, F.;
+  Ahuja, A.; and Wayne, G. 2019.
+\newblock Optimizing Agent Behavior over Long Time Scales by Transporting
+  Value.
+\newblock \emph{Nature Communications}, 10(1): 5223.
+
+\bibitem[{Janner et~al.(2019)Janner, Fu, Zhang, and Levine}]{janner2019mbpo}
+Janner, M.; Fu, J.; Zhang, M.; and Levine, S. 2019.
+\newblock When to Trust Your Model: Model-Based Policy Optimization.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~32.
+
+\bibitem[{Johannink et~al.(2019)Johannink, Bahl, Nair, Luo, Kumar, Loskyll,
+  Ojea, Solowjow, and Levine}]{johannink2019residual}
+Johannink, T.; Bahl, S.; Nair, A.; Luo, J.; Kumar, A.; Loskyll, M.; Ojea,
+  J.~A.; Solowjow, E.; and Levine, S. 2019.
+\newblock Residual Reinforcement Learning for Robot Control.
+\newblock In \emph{IEEE International Conference on Robotics and Automation
+  (ICRA)}, 6023--6029.
+
+\bibitem[{Kostrikov, Nair, and Levine(2022)}]{kostrikov2022iql}
+Kostrikov, I.; Nair, A.; and Levine, S. 2022.
+\newblock Offline Reinforcement Learning with Implicit Q-Learning.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Kulkarni et~al.(2016)Kulkarni, Narasimhan, Saeedi, and
+  Tenenbaum}]{kulkarni2016hierarchical}
+Kulkarni, T.~D.; Narasimhan, K.; Saeedi, A.; and Tenenbaum, J.~B. 2016.
+\newblock Hierarchical Deep Reinforcement Learning: Integrating Temporal
+  Abstraction and Intrinsic Motivation.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~29.
+
+\bibitem[{Li et~al.(2023)Li, Zhang, Ghosh, Zhang, and Levine}]{li2023explore}
+Li, Q.; Zhang, J.; Ghosh, D.; Zhang, A.; and Levine, S. 2023.
+\newblock Accelerating Exploration with Unlabeled Prior Data.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36.
+
+\bibitem[{Mandlekar et~al.(2022)Mandlekar, Xu, Wong, Nasiriany, Wang, Kulkarni,
+  Fei-Fei, Savarese, Zhu, and Mart{\'i}n-Mart{\'i}n}]{mandlekar2021matters}
+Mandlekar, A.; Xu, D.; Wong, J.; Nasiriany, S.; Wang, C.; Kulkarni, R.;
+  Fei-Fei, L.; Savarese, S.; Zhu, Y.; and Mart{\'i}n-Mart{\'i}n, R. 2022.
+\newblock What Matters in Learning from Offline Human Demonstrations for Robot
+  Manipulation.
+\newblock In \emph{Proceedings of the 5th Conference on Robot Learning}, volume
+  164 of \emph{Proceedings of Machine Learning Research}, 1678--1690. PMLR.
+
+\bibitem[{Mazzaglia et~al.(2023)Mazzaglia, Verbelen, Dhoedt, Lacoste, and
+  Rajeswar}]{mazzaglia2023choreographer}
+Mazzaglia, P.; Verbelen, T.; Dhoedt, B.; Lacoste, A.; and Rajeswar, S. 2023.
+\newblock Choreographer: Learning and Adapting Skills in Imagination.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Nachum et~al.(2018)Nachum, Gu, Lee, and Levine}]{nachum2018hiro}
+Nachum, O.; Gu, S.; Lee, H.; and Levine, S. 2018.
+\newblock Data-Efficient Hierarchical Reinforcement Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~31.
+
+\bibitem[{Nair et~al.(2018)Nair, McGrew, Andrychowicz, Zaremba, and
+  Abbeel}]{nair2018overcoming}
+Nair, A.; McGrew, B.; Andrychowicz, M.; Zaremba, W.; and Abbeel, P. 2018.
+\newblock Overcoming Exploration in Reinforcement Learning with Demonstrations.
+\newblock In \emph{IEEE International Conference on Robotics and Automation
+  (ICRA)}, 6292--6299.
+
+\bibitem[{Nakamoto et~al.(2023)Nakamoto, Zhai, Singh, Mark, Ma, Finn, Kumar,
+  and Levine}]{nakamoto2023calql}
+Nakamoto, M.; Zhai, S.; Singh, A.; Mark, M.~S.; Ma, Y.; Finn, C.; Kumar, A.;
+  and Levine, S. 2023.
+\newblock {Cal-QL}: Calibrated Offline RL Pre-Training for Efficient Online
+  Fine-Tuning.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36, 62244--62269.
+
+\bibitem[{Ng, Harada, and Russell(1999)}]{ng1999policy}
+Ng, A.~Y.; Harada, D.; and Russell, S. 1999.
+\newblock Policy Invariance Under Reward Transformations: Theory and
+  Application to Reward Shaping.
+\newblock In \emph{International Conference on Machine Learning (ICML)},
+  278--287.
+
+\bibitem[{Park et~al.(2023)Park, Ghosh, Eysenbach, and Levine}]{park2023hiql}
+Park, S.; Ghosh, D.; Eysenbach, B.; and Levine, S. 2023.
+\newblock {HIQL}: Offline Goal-Conditioned RL with Latent States as Actions.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~36.
+
+\bibitem[{Peng et~al.(2019)Peng, Kumar, Zhang, and Levine}]{peng2019awr}
+Peng, X.~B.; Kumar, A.; Zhang, G.; and Levine, S. 2019.
+\newblock Advantage-Weighted Regression: Simple and Scalable Off-Policy
+  Reinforcement Learning.
+\newblock arXiv:1910.00177.
+
+\bibitem[{Pertsch, Lee, and Lim(2021)}]{pertsch2021accelerating}
+Pertsch, K.; Lee, Y.; and Lim, J. 2021.
+\newblock Accelerating Reinforcement Learning with Learned Skill Priors.
+\newblock In \emph{Proceedings of the 2020 Conference on Robot Learning},
+  volume 155 of \emph{Proceedings of Machine Learning Research}, 188--204.
+  PMLR.
+
+\bibitem[{Rajeswaran et~al.(2018)Rajeswaran, Kumar, Gupta, Vezzani, Schulman,
+  Todorov, and Levine}]{rajeswaran2018learning}
+Rajeswaran, A.; Kumar, V.; Gupta, A.; Vezzani, G.; Schulman, J.; Todorov, E.;
+  and Levine, S. 2018.
+\newblock Learning Complex Dexterous Manipulation with Deep Reinforcement
+  Learning and Demonstrations.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}. Pittsburgh,
+  Pennsylvania.
+
+\bibitem[{Ren et~al.(2025)Ren, Lidard, Ankile, Simeonov, Agrawal, Majumdar,
+  Burchfiel, Dai, and Simchowitz}]{ren2025dppo}
+Ren, A.~Z.; Lidard, J.; Ankile, L.~L.; Simeonov, A.; Agrawal, P.; Majumdar, A.;
+  Burchfiel, B.; Dai, H.; and Simchowitz, M. 2025.
+\newblock Diffusion Policy Policy Optimization.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Ross, Gordon, and Bagnell(2011)}]{ross2011dagger}
+Ross, S.; Gordon, G.; and Bagnell, D. 2011.
+\newblock A Reduction of Imitation Learning and Structured Prediction to
+  No-Regret Online Learning.
+\newblock In \emph{Proceedings of the Fourteenth International Conference on
+  Artificial Intelligence and Statistics}, volume~15 of \emph{Proceedings of
+  Machine Learning Research}, 627--635. PMLR.
+
+\bibitem[{Shi, Lim, and Lee(2023)}]{shi2023skimo}
+Shi, L.~X.; Lim, J.~J.; and Lee, Y. 2023.
+\newblock Skill-based Model-based Reinforcement Learning.
+\newblock In \emph{Proceedings of the 6th Conference on Robot Learning}, volume
+  205 of \emph{Proceedings of Machine Learning Research}, 2262--2272.
+
+\bibitem[{Sutton, Precup, and Singh(1999)}]{sutton1999between}
+Sutton, R.~S.; Precup, D.; and Singh, S. 1999.
+\newblock Between {MDPs} and Semi-{MDPs}: A Framework for Temporal Abstraction
+  in Reinforcement Learning.
+\newblock \emph{Artificial Intelligence}, 112(1--2): 181--211.
+
+\bibitem[{Wagenmaker et~al.(2025)Wagenmaker, Zhang, Nakamoto, Park, Yagoub,
+  Nagabandi, Gupta, and Levine}]{wagenmaker2025dsrl}
+Wagenmaker, A.; Zhang, Y.; Nakamoto, M.; Park, S.; Yagoub, W.; Nagabandi, A.;
+  Gupta, A.; and Levine, S. 2025.
+\newblock Steering Your Diffusion Policy with Latent Space Reinforcement
+  Learning.
+\newblock In \emph{Proceedings of the 9th Conference on Robot Learning}, volume
+  305 of \emph{Proceedings of Machine Learning Research}, 258--282. PMLR.
+
+\bibitem[{Wang, Hunt, and Zhou(2023)}]{wang2023diffusion}
+Wang, Z.; Hunt, J.~J.; and Zhou, M. 2023.
+\newblock Diffusion Policies as an Expressive Policy Class for Offline
+  Reinforcement Learning.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Wiewiora, Cottrell, and Elkan(2003)}]{wiewiora2003principled}
+Wiewiora, E.; Cottrell, G.~W.; and Elkan, C. 2003.
+\newblock Principled Methods for Advising Reinforcement Learning Agents.
+\newblock In \emph{International Conference on Machine Learning (ICML)},
+  792--799.
+
+\bibitem[{Wu et~al.(2023)Wu, Escontrela, Hafner, Abbeel, and
+  Goldberg}]{wu2023daydreamer}
+Wu, P.; Escontrela, A.; Hafner, D.; Abbeel, P.; and Goldberg, K. 2023.
+\newblock DayDreamer: World Models for Physical Robot Learning.
+\newblock In \emph{Proceedings of the 6th Conference on Robot Learning}, volume
+  205 of \emph{Proceedings of Machine Learning Research}, 2226--2240. PMLR.
+
+\bibitem[{Yang et~al.(2026)Yang, Lin, Zhang, Li, Lin, Wu, Zhang, Zhao, Luo, Su,
+  Li, Yue, and Chen}]{yang2026rise}
+Yang, J.; Lin, K.; Zhang, W.; Li, J.; Lin, T.; Wu, L.; Zhang, Y.-Q.; Zhao, H.;
+  Luo, P.; Su, Z.; Li, H.; Yue, X.; and Chen, L. 2026.
+\newblock Self-Improving Robot Policy with Compositional World Model.
+\newblock In \emph{Proceedings of Robotics: Science and Systems}.
+
+\bibitem[{Yu et~al.(2026)Yu, Sima, Jiang, Zhang, Mai, Li, Wang, Chen, Wu, Chen,
+  Zhao, Shi, Luo, Bu, Peng, Li, and Yuan}]{sima2026kai0}
+Yu, C.; Sima, C.; Jiang, G.; Zhang, H.; Mai, H.; Li, H.; Wang, H.; Chen, J.;
+  Wu, K.; Chen, L.; Zhao, L.; Shi, M.; Luo, P.; Bu, Q.; Peng, S.; Li, T.; and
+  Yuan, Y. 2026.
+\newblock {$\chi_0$: Resource-Aware Robust Manipulation via Taming
+  Distributional Inconsistencies}.
+\newblock arXiv:2602.09021.
+
+\bibitem[{Yuan et~al.(2025)Yuan, Mu, Tao, Fang, Zhang, and
+  Su}]{yuan2025policydecorator}
+Yuan, X.; Mu, T.; Tao, S.; Fang, Y.; Zhang, M.; and Su, H. 2025.
+\newblock Policy Decorator: Model-Agnostic Online Refinement for Large Policy
+  Model.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Zhang, Xu, and Yu(2023)}]{zhang2023pex}
+Zhang, H.; Xu, W.; and Yu, H. 2023.
+\newblock Policy Expansion for Bridging Offline-to-Online Reinforcement
+  Learning.
+\newblock In \emph{International Conference on Learning Representations}.
+
+\bibitem[{Zheng et~al.(2024)Zheng, Cheng, Daum{\'e}~III, Huang, and
+  Kolobov}]{zheng2024prise}
+Zheng, R.; Cheng, C.-A.; Daum{\'e}~III, H.; Huang, F.; and Kolobov, A. 2024.
+\newblock {PRISE}: {LLM}-Style Sequence Compression for Learning Temporal
+  Action Abstractions in Control.
+\newblock In \emph{Proceedings of the 41st International Conference on Machine
+  Learning}, volume 235 of \emph{Proceedings of Machine Learning Research},
+  61267--61286.
+
+\end{thebibliography}

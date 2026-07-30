@@ -62,11 +62,11 @@
 
 % Title - conditionally set based on version
 \ifdefined\aaaianonymous
-    \title{SHORE-RL: Shortening the Horizon for Long-Horizon Residual\\
+    \title{SHORE-RL: Shortening Effective Horizon for Long-Horizon Residual\\
     Reinforcement Learning\\
     \vspace{0.5em}\large Supplementary Material}
 \else
-    \title{SHORE-RL: Shortening the Horizon for Long-Horizon Residual\\
+    \title{SHORE-RL: Shortening Effective Horizon for Long-Horizon Residual\\
     Reinforcement Learning\\
     \vspace{0.5em}\large Supplementary Material}
 \fi
@@ -92,12 +92,15 @@
 \maketitle
 
 \begin{abstract}
-This supplement provides the complete SHORE-RL objective and implementation details,
-followed by the simulation and real-robot experimental protocols. The two venues share
+This supplement documents the SHORE-RL objective and the implementation details
+currently recoverable from the retained code and artifacts, followed by the simulation
+and real-robot experimental protocols. The two venues share
 the same residual policy parameterization and actor--critic update, while instantiating
 different transition collectors, reward sources, and replay samplers. We additionally
-document the ablation design, run provenance, dynamics-model validation, and paired
-physical-robot evaluation needed to interpret the main-paper results.
+document the ablation design, available run provenance, qualitative dynamics-model
+evidence, and the physical-robot evaluation controls needed to interpret the
+main-paper results. Unavailable validation results and provenance fields are marked
+explicitly rather than inferred.
 \end{abstract}
 
 % Supplementary Content Starts Here
@@ -105,60 +108,61 @@ physical-robot evaluation needed to interpret the main-paper results.
 \section{A\quad Method and Implementation Details}
 
 The main paper introduces the residual controller, self-derived waypoint, and two
-dense-reward choices. Here we give the complete optimization objective and the venue-parameterized update of
-Algorithm~\ref{alg:shore}, in the notation the two venues reuse. Venue-independent settings
-are collected in Table~\ref{tab:sharedhp}; venue-specific numbers appear in Section~B.3 and
-Section~C.5.
+dense-reward choices. Here we give the method-level optimization objective and the venue-parameterized update of
+Algorithm~\ref{alg:shore}, in the notation the two venues reuse. Shared architectural
+settings and the simulation defaults are collected in Table~\ref{tab:sharedhp};
+venue-specific numbers and overrides appear in Section~B.3 and Section~C.5.
 
 \subsection{A.1\quad Residual Coordinates and Decision Time Scale}
 
 We write the navigator state as
-$e_t=\operatorname{Std}([\psi_b(o_{\leq t});q_t])$, where $\psi_b$ is the
+$e_t=\operatorname{Std}([\psi_b(o_t);q_t])$, where $\psi_b$ is the
 frozen base-policy feature and $q_t$ is proprioception; implementation tables
 occasionally abbreviate this feature as $s_t$. The residual actor and critic do
 \emph{not} use $\psi_b$: they share a trainable multi-view image encoder,
 distinct from $\psi_b$ and updated only through the critic loss
 (Section~A.4). Both additionally read proprioception and the waypoint $z_t$;
 the actor also receives the base action $a_t^b$, whereas the critic conditions
-on a normalized combined-action record $a_t^Q$ and does not take $a_t^b$ as a
-separate input.
+on the projected combined action $a_t$ and does not take $a_t^b$ as a separate
+input.
 
-The scaled residual, normalized critic action, and physical command are
+Let $f_\theta$ denote the actor's pre-squash output. The deterministic scaled
+residual mean and projected normalized command are
 \[
 \begin{aligned}
-\delta_t&=s_a\tanh\!\big(\mu_\theta(o_t,a_t^b,z_t)\big),\\
-a_t^Q&=\Pi_Q^{(v)}(a_t^b+\delta_t),\\
-a_t&=\Pi_{\mathcal A}(a_t^Q),
+\mu_\theta(o_t,a_t^b,z_t)
+&=s_a\tanh\!\big(f_\theta(o_t,a_t^b,z_t)\big),\\
+a_t&=\Pi_{\mathcal A}(a_t^b+\delta_t),
 \end{aligned}
 \]
-where $v$ denotes the collection interface. In the queue implementation,
-$\Pi_Q^{(v)}$ is the identity: replay preserves the pre-projection normalized
-combined action, while the environment-side action scaler projects it to the
-valid physical range. In the replan/chunk implementation,
-$\Pi_Q^{(v)}(x)=\operatorname{clip}(x,-1,1)$, so the replayed normalized action
-already equals the projected normalized command. The actor and target-critic
-branches explicitly use this normalized clipping operation. This distinction is why the main paper does not call $a_t^Q$ an executed clipped action.
+where collection samples $\delta_t$ around $\mu_\theta$ using the exploration
+rule in Section~A.4, while evaluation uses $\delta_t=\mu_\theta$. The same
+projected normalized action $a_t$ is passed to the collector (and to the
+dynamics model in imagination) and stored in replay. The environment may
+subsequently convert this normalized action to the robot's physical command
+coordinates, but the critic is never trained on a distinct unprojected
+combined action.
 
 The residual coordinates satisfy
-$\tanh(\mu_\theta)\in[-1,1]^d$. Zero-initializing the actor final layer
-makes the deterministic scaled mean $\bar\delta_t$ exactly zero, so the
+$\mu_\theta\in[-s_a,s_a]^d$. Zero-initializing the actor final layer
+makes the deterministic scaled mean $\mu_\theta$ exactly zero, so the
 initial evaluation policy equals the frozen base. Training rollouts add
 exploration noise in scaled-action coordinates (Section~A.4); the initial
 behavior policy is therefore the base plus exploration noise.
 
 The residual decision time scale is venue-specific. In the \emph{simulation} venue the
-residual chunk length is $1$, so the residual is produced once per low-level control step.
+residual chunk length is $1$, so the residual is produced once per simulation control step.
 A fresh $a_{\mathrm{res}}$ is sampled and added to the current base action at every step
 rather than held fixed across a chunk. The frozen base replans its action chunk every
 execution horizon of $10$ steps, as detailed in Section~B.2. A $30$-step variant is also
 run on LIBERO. These base actions are executed open-loop between replans, so the base is open-loop
 within a chunk while the residual stays closed-loop per step. In these simulated
-experiments the episode horizons (Table~\ref{tab:simtasks}) count low-level control steps,
+experiments the episode horizons (Table~\ref{tab:simtasks}) count simulation control steps,
 which coincide one-to-one with residual decisions. The \emph{real-robot imagination} venue
 (Section~C) is different: the dynamics-model bridge forces a residual chunk length of $50$
 (Sections~C.1 and~C.5), so a single residual decision emits the full $50$-step residual chunk---
 executed open-loop and scored as one chunk-level transition---rather than one closed-loop
-correction per step, and one RL decision there corresponds to $50$ low-level actions.
+correction per step, and one RL decision there corresponds to $50$ control actions.
 
 \subsection{A.2\quad Waypoint Implementation Details}
 
@@ -240,7 +244,7 @@ Offline, the clamp-to-goal sampler chooses the waypoint index as the earlier of
 the sampled goal and $k$ steps ahead; its random-goal probability is $0.3$.
 We use $k=15$ for dual-arm tasks and $k=25$ for LIBERO, $\beta=1$, and the
 weight cap shown above. Offline training aggregates the two value heads by
-their mean. The online dual-arm update instead uses their minimum.
+their mean. The online update instead uses their minimum.
 
 At deployment, the navigator never reads a future observation. Let
 $\mu_t=\mathbb E_{\pi_h(\cdot\mid e_t,g_\star)}[z]$. The actual actor
@@ -254,13 +258,12 @@ z_t=
 \end{cases}
 \]
 Thus radius-$\sqrt{10}$ deployment renormalization is a LIBERO-specific
-switch, not a universal definition of the waypoint. In waypoint-enabled
-dual-arm runs, $V_{\mathrm{gc}}$ and $\pi_h$ are updated after $2{,}000$
-online transitions, once per residual UTD block, using Adam with learning rate
-$10^{-5}$, batch size $256$, and a $50/50$ demonstration--online split. Only
-the two value heads and navigator are updated; the base policy, base encoder,
-and $\phi$ remain frozen. LIBERO keeps both $V_{\mathrm{gc}}$ and $\pi_h$
-frozen throughout residual RL.
+switch, not a universal definition of the waypoint. In all waypoint-enabled
+simulation runs, including the dual-arm and LIBERO runs, $V_{\mathrm{gc}}$ and
+$\pi_h$ are updated after $2{,}000$ online transitions, once per residual UTD
+block, using Adam with learning rate $10^{-5}$, batch size $256$, and a $50/50$
+demonstration--online split. Only the two value heads and navigator are
+updated; the base policy, base encoder, and $\phi$ remain frozen.
 
 \subsection{A.3\quad Potential and Stage-Bonus Implementations}
 
@@ -326,6 +329,8 @@ truncation is artificial and must not zero the endpoint potential:
 \widetilde r_t^{\mathrm{imag}}
 =\gamma\Phi(\widehat e_{t+1})-\Phi(e_t).
 \]
+The retained bridge assigns no additional imagined task reward and has no
+success classifier, so $r_t^{\mathrm{imag}}\equiv0$ in this venue.
 The collector preserves the endpoint observation and potential and bootstraps
 from that endpoint. The implementation records this behavior with
 \url{bootstrap_on_truncation}. In both
@@ -336,11 +341,11 @@ recomputed when the transition is sampled.
 
 The residual is trained off-policy in the RLPD~\cite{ball2023efficient} regime
 with TD3-style~\cite{fujimoto2018addressing} updates on a mixed replay buffer.
-The buffer stores the normalized combined-action record $a_t^Q$ defined in
-Section~A.1 together with the base action $a_t^b$. In queue mode this is the
-pre-projection sum; in replan/chunk mode it is already clipped to $[-1,1]$.
-The critic conditions on $a_t^Q$, while residual coordinates
-$\tanh(\mu_\theta)$ enter only the actor and demonstration anchor. An
+The buffer stores the projected normalized action $a_t$ defined in
+Section~A.1 together with the base action $a_t^b$. This is the same action
+passed to the transition collector or dynamics model. The critic conditions
+on $a_t$, while the scaled residual mean $\mu_\theta$ enters only the actor and
+demonstration anchor. An
 ensemble of $N$ critics $\{Q_i\}_{i=1}^{N}$ (with $N=10$) is
 trained toward an $n$-step clipped target that takes the minimum over two randomly chosen
 heads,
@@ -355,7 +360,7 @@ $\mathcal B$ is a pair of random heads. The projected normalized target action
 is
 \[
 a^{\prime}_{t+n}=\operatorname{clip}\!\left(
- a_{b,t+n}+s_a\tanh(\mu_{\bar\theta})+\epsilon,-1,1
+ a_{b,t+n}+\mu_{\bar\theta}+\epsilon,-1,1
 \right),
 \]
 where $\mu_{\bar\theta}$ is evaluated at
@@ -373,17 +378,17 @@ than the critic and anchored to the demonstrations,
 \begin{aligned}
 \mathcal{L}_{\mu}={}&-\,\mathbb{E}\big[\hat Q(o,z,a^\theta)\big]\\
 &{}+\lambda_{\mathrm{bc}}\,\mathbb{E}_{\mathcal{D}}
-\big[\lVert s_a\tanh(\mu_\theta)-(a_{\mathrm{demo}}-a_b)\rVert^2\big],
+\big[\lVert \mu_\theta-(a_{\mathrm{demo}}-a_b)\rVert^2\big],
 \end{aligned}
 \]
 where $\hat Q=\tfrac1N\sum_{i=1}^{N}Q_i$ is the \emph{online} ensemble mean over all $N$
 heads (the actor uses the mean, whereas the critic target above uses the min over two
-heads), and $a^\theta=\operatorname{clip}(a_b+s_a\tanh(\mu_\theta(o,a_b,z)),-1,1)$ is the
+heads), and $a^\theta=\operatorname{clip}(a_b+\mu_\theta(o,a_b,z),-1,1)$ is the
 projected normalized action scored by the critic. The anchor is taken in scaled-action coordinates: the actor's
-scaled residual $s_a\tanh(\mu_\theta)$ is regressed directly onto the base-relative
+scaled residual mean $\mu_\theta$ is regressed directly onto the base-relative
 demonstrator correction $a_{\mathrm{demo}}-a_b$, \emph{without} dividing by $s_a$ and
 \emph{without} clipping the target. This matches the normalized-coordinate form
-$\lVert\tanh(\mu_\theta)-(a_{\mathrm{demo}}-a_b)/s_a\rVert^2$ up to the constant factor
+$\lVert\tanh(f_\theta)-(a_{\mathrm{demo}}-a_b)/s_a\rVert^2$ up to the constant factor
 $s_a^2$ folded into $\lambda_{\mathrm{bc}}$, except that the un-clipped target leaves a
 residual gradient toward $\tanh$ saturation whenever
 $\lvert a_{\mathrm{demo}}-a_b\rvert>s_a$. The residual actor is zero-initialized as in
@@ -397,9 +402,9 @@ referenced in Section~A.1---whereas the evaluation policy takes the deterministi
 The actor and critic updates do not depend on where a transition originates, but the
 collector $\mathcal C$, reward source $R$, shaping $F$, and replay sampler $\rho$ do.
 Algorithm~\ref{alg:shore} therefore states a venue-parameterized update rather than
-claiming that only one collection line changes. Table~\ref{tab:sharedhp} lists the
-venue-independent hyperparameters both venues reuse, and Table~\ref{tab:venueinst} lists
-what each venue sets differently.
+claiming that only one collection line changes. Table~\ref{tab:sharedhp} lists
+the shared architecture together with the simulation defaults, and
+Table~\ref{tab:venueinst} lists what each venue sets differently.
 
 \begin{figure}[t]
 \small
@@ -408,22 +413,22 @@ what each venue sets differently.
 \begin{tabular}{@{}r@{\,\,}p{0.84\linewidth}@{}}
 \toprule
 \multicolumn{2}{@{}p{0.9\linewidth}@{}}{\textbf{Algorithm \thealgorithm}\quad SHORE-RL residual training across validation venues}\\[1pt]
-\multicolumn{2}{@{}p{0.9\linewidth}@{}}{\textbf{Input} frozen $\pi_b,\psi$; goal value $V_g$ and navigator $\pi_h$; frozen bottleneck $\phi$; shaping $F$ (stage bonus or $\gamma\Phi_V(s')-\Phi_V(s)$); collector $\mathcal C$; reward source $R$; sampler $\rho$; demonstrations $\mathcal D$}\\[1pt]
-\multicolumn{2}{@{}p{0.9\linewidth}@{}}{\textbf{Output} trained residual actor $\mu_\theta$}\\
+\multicolumn{2}{@{}p{0.9\linewidth}@{}}{\textbf{Input} frozen $\pi_b,\psi_b$; goal value $V_{\mathrm{gc}}$ and navigator $\pi_h$; frozen bottleneck $\phi$; shaping $F$ (stage bonus or $\gamma\Phi_V(s')-\Phi_V(s)$); collector $\mathcal C$; reward source $R$; sampler $\rho$; demonstrations $\mathcal D$}\\[1pt]
+\multicolumn{2}{@{}p{0.9\linewidth}@{}}{\textbf{Output} trained residual actor $\mu_\theta$ and finetuned navigator $\pi_h$}\\
 \midrule
 $1$ & initialize a zero-output residual actor and a $10$-head critic ensemble \\
 $2$ & initialize replay stores with the offline transitions required by $\rho$ \\
 $3$ & \textbf{for} each collection round \textbf{do} \\
-$4$ & \quad $\mathcal T\gets\mathcal C(\pi_b,\mu_\theta,\pi_h,\psi)$ \\
+$4$ & \quad $\mathcal T\gets\mathcal C(\pi_b,\mu_\theta,\pi_h,\psi_b)$ \\
 $5$ & \quad \textbf{for} each $(o,z,a,a_b,r_{\mathrm{env}},o',d)\in\mathcal T$ \textbf{do} \\
 $6$ & \quad\quad $\tilde r\gets R(r_{\mathrm{env}})+F(o,o')$; store the transition \\
-$7$ & \quad \textbf{for} each critic update prescribed by UTD \textbf{do} \\
-$8$ & \quad\quad sample a venue-specific mixed batch using $\rho$ \\
-$9$ & \quad\quad update all critics toward the $n$-step clipped target \\
-$10$ & \quad\quad on delayed steps, update the actor with $Q$ and the demo anchor \\
-$11$ & \quad\quad soft-update actor and critic targets \\
-$12$ & \quad\quad if joint finetuning is enabled, update $V_g$ and $\pi_h$ on mixed data; keep $\phi$ frozen \\
-$13$ & \textbf{return} $\mu_\theta$ \\
+$7$ & \quad update $V_{\mathrm{gc}}$ and $\pi_h$ on equally mixed completed online and demonstration trajectories; keep $\phi$ frozen \\
+$8$ & \quad \textbf{for} each critic update prescribed by UTD \textbf{do} \\
+$9$ & \quad\quad sample a venue-specific mixed batch using $\rho$ \\
+$10$ & \quad\quad update all critics toward the $n$-step clipped target \\
+$11$ & \quad\quad on delayed steps, update the actor with $Q$ and the demo anchor \\
+$12$ & \quad\quad soft-update actor and critic targets \\
+$13$ & \textbf{return} $\mu_\theta,\pi_h$ \\
 \bottomrule
 \end{tabular}
 \end{figure}
@@ -435,16 +440,18 @@ $13$ & \textbf{return} $\mu_\theta$ \\
 Component & Simulation & Real-robot imagination \\
 \midrule
 Collector $\mathcal C$ & simulator steps & bounded rollouts of frozen $D$ \\
-Env. reward & task reward & none ($r_{\mathrm{env}}=0$) \\
+Env. reward & task reward & none ($r^{\mathrm{imag}}\equiv0$) \\
 Shaping $F$ & stage bonus or $\Phi_V$ & $\Phi_V$ only \\
 Replay mix $\rho$ & demo $+$ online & recorded $+$ imagined \\
 Re-anchor & simulator reset & real-data start; depth $\leq2$ \\
 Other params & Table~\ref{tab:simresrl} & Section~C.5 \\
 \bottomrule
 \end{tabular}
-\caption{Shared update and venue-specific instantiations. The policy and critic objectives
-are common; collection, reward availability, and replay composition are not. The exact
-real/imagined/demo mixture remains to be reported in Section~C.5.}
+\caption{Method-level update and venue-specific instantiations. Collection,
+reward availability, and replay composition are venue-specific. The retained
+block command audited in Section~C.5 additionally disables waypoint
+conditioning and online navigator/value updates; its recorded half of the 50/50
+mixture is successful-demonstration replay.}
 \label{tab:venueinst}
 \end{table}
 
@@ -454,7 +461,7 @@ real/imagined/demo mixture remains to be reported in Section~C.5.}
 \toprule
 Setting & Value \\
 \midrule
-Residual output / scale $s_a$   & $\tanh\times s_a$, $s_a=0.05$, zero-init \\
+Residual output / scale $s_a$   & $\mu_\theta=s_a\tanh(f_\theta)$, $s_a=0.05$, zero-init \\
 Critic ensemble                 & $10$ Q-nets; target $\min$ of $2$ random heads \\
 Critic / actor MLP              & $2$ layers $\times$ $1024$, ReLU, LayerNorm \\
 Discount $\gamma$ / $n$-step    & $0.99$ / $3$ \\
@@ -466,9 +473,9 @@ Expectile $\tau$ / AWR $\beta$  & $0.7$ / $1.0$ \\
 actor\_lr / critic\_lr          & $1{\times}10^{-6}$ / $1{\times}10^{-4}$ (AdamW) \\
 \bottomrule
 \end{tabular}
-\caption{Venue-independent SHORE-RL hyperparameters, shared by the simulation venue
-(Section~B) and the real-robot venue (Section~C). Venue-specific settings (budgets,
-collection, replay composition, evaluation) appear in Table~\ref{tab:simresrl} and
+\caption{Shared SHORE-RL architecture and simulation-default hyperparameters.
+Venue-specific scalar settings, collection, replay composition, and the
+retained block command's disabled waypoint components are reported in
 Section~C.5.}
 \label{tab:sharedhp}
 \end{table}
@@ -564,16 +571,16 @@ On the dual-arm tasks, the base policy is ACT~\cite{zhao2023learning}, fine-tune
 \emph{separately for each task} on its demonstrations and then frozen. On LIBERO, the
 base is a served $\pi_0$ VLA~\cite{black2024pi0}, which is likewise frozen. In the
 default and deployed configurations, the value modules read the base policy's
-\emph{frozen} encoder feature $\psi$ together with proprioception, but no privileged
+\emph{frozen} encoder feature $\psi_b$ together with proprioception, but no privileged
 object pose. The residual actor and critic do not share this feature extractor; they
 train their own multi-view encoder directly from the raw camera observations
 (Section~A.4).
 
-For ACT, $\psi$ is the mean-pooled encoder-token feature (width $512$). Concatenating
+For ACT, $\psi_b$ is the mean-pooled encoder-token feature (width $512$). Concatenating
 proprioception gives an input dimension of $530$ for
 \textsc{PieceAssembly} and \textsc{Threading} ($512{+}18$), $548$ for
 \textsc{Pouring} ($512{+}36$), and $550$ for \textsc{LiftTray} ($512{+}38$).
-For $\pi_0$, $\psi$ is the last prefix token (width $2048$), extracted server-side
+For $\pi_0$, $\psi_b$ is the last prefix token (width $2048$), extracted server-side
 when the feature cache is built. Concatenating the standardized $8$-D LIBERO
 proprioception gives a $2056$-D input.
 
@@ -587,15 +594,16 @@ visual-proprioceptive.
 
 \subsection{B.3\quad Configuration and Hyperparameters}
 
-The goal-conditioned value $V_g$ and navigator $\pi_h$ are pretrained once per task
-from demonstrations using the frozen base-policy features $\psi$. In waypoint-enabled
-\emph{dual-arm} runs, the two value heads and $\pi_h$ are then jointly fine-tuned during
-residual RL while the bottleneck encoder $\phi$ remains frozen. These online updates
-use Adam with a learning rate of $10^{-5}$ for both modules, a batch size of $256$
-split evenly between demonstrations and online data, and begin after $2{,}000$ online
-transitions; one joint update is applied per residual UTD block. The online
-navigator update aggregates the two value heads by their minimum. On LIBERO, $V_g$
-and $\pi_h$ remain frozen throughout residual RL.
+The goal-conditioned value $V_{\mathrm{gc}}$ and navigator $\pi_h$ are
+pretrained once per task from demonstrations using the frozen base-policy
+features $\psi_b$. In all waypoint-enabled runs, including the dual-arm and
+LIBERO runs, the two value heads and $\pi_h$ are then jointly fine-tuned during
+residual RL while the bottleneck encoder $\phi$ remains frozen. These online
+updates use Adam with a learning rate of $10^{-5}$ for both modules, a batch
+size of $256$ split evenly between demonstrations and online data, and begin
+after $2{,}000$ online transitions; one joint update is applied per residual
+UTD block. The online navigator update aggregates the two value heads by their
+minimum.
 
 The separate single-state value that supplies $\Phi_V$ is trained independently from
 demonstrations using only the current state, and remains frozen throughout residual
@@ -652,7 +660,7 @@ Setting & Value \\
 Regime                          & RLPD, TD3-style updates \\
 Critic ensemble                 & $10$ Q-nets; target $=\min$ of $2$ random heads \\
 Critic / actor MLP              & $2$ layers $\times$ $1024$, ReLU, LayerNorm \\
-Residual actor output           & $\tanh \times s_a$; final layer zero-init \\
+Residual actor output           & $\mu_\theta=s_a\tanh(f_\theta)$; final layer zero-init \\
 Action scale $s_a$              & $0.05$ \\
 Discount $\gamma$ / $n$-step    & $0.99$ / $3$ \\
 Update-to-data (UTD)            & $4$ (actor updated every $4$th critic step) \\
@@ -693,18 +701,19 @@ the collapse-control setting BC$0$ from the demo-anchored BC$0.1$ setting.
 base's noise space. \emph{IBRL}~\cite{hu2023imitation} selects between base and
 learned actions by a $Q$-argmax, providing a soft anchor. We instantiate this
 selection rule on our RLPD/TD3 base and use the same evaluation harness as the
-other dual-arm comparisons. All IBRL runs reach $500$k steps; there are two
-seeds per task and a third seed on \textsc{PieceAssembly}. \emph{Full-policy
+other dual-arm comparisons. All IBRL runs reach $500$k steps, with three
+seeds per task. \emph{Full-policy
 IQL}~\cite{kostrikov2022iql} instead fine-tunes the entire policy without a frozen
 base, isolating the residual parameterization.
 
 \subsection{B.5\quad Ablation Design}
 
-Table~\ref{tab:simarms} gives the five-configuration leave-one-out component study. Within a
-task, all configurations share the codebase, frozen features, demonstrations, action scale,
-budget, and seed set. ``Waypoint'' includes online joint fine-tuning of the two value
-heads and navigator. ``Stage'' is the direct bonus of Section~A.3, not a
-potential-based reward.
+Table~\ref{tab:simarms} gives the five-configuration structured component
+study. Within a task, all configurations share the codebase, frozen features,
+demonstrations, action scale, budget, and seed set. ``Waypoint'' includes
+online joint fine-tuning of the two value heads and navigator. ``Stage'' is the
+stage-derived training branch: it includes the direct bonus of Section~A.3 and,
+where enabled, stage-balanced replay; it is not a potential-based reward.
 
 \begin{table}[t]
 \centering\small\setlength{\tabcolsep}{4pt}
@@ -713,15 +722,16 @@ potential-based reward.
 Configuration & waypoint & BC & stage & Removed \\
 \midrule
 \textbf{Full (SHORE-RL)} & on  & $0.1$ & on  & --- \\
-$-$ stage                & on  & $0.1$ & off & shaping \\
+$-$ stage                & on  & $0.1$ & off & stage branch \\
 $-$ waypoint             & off & $0.1$ & on  & waypoint \\
-$-$ waypoint $-$ stage   & off & $0.1$ & off & both structural \\
-waypoint only             & on  & $0$   & off & BC $+$ stage \\
+$-$ waypoint $-$ stage   & off & $0.1$ & off & waypoint $+$ stage \\
+waypoint only             & on  & $0$   & off & BC $+$ stage branch \\
 \bottomrule
 \end{tabular}
-\caption{Leave-one-out component ablation (Ablation~A). \textbf{Full} uses
-waypoint$+$joint fine-tuning, demo-BC, and the direct stage bonus; each subsequent
-configuration removes the component(s) named in the last column.}
+\caption{Structured component ablation (Ablation~A). \textbf{Full} uses
+waypoint$+$joint fine-tuning, demo-BC, and the stage-derived training branch;
+each subsequent configuration removes the component(s) named in the last
+column.}
 \label{tab:simarms}
 \end{table}
 
@@ -733,11 +743,12 @@ comparison between privileged \texttt{eef\_piece} features and ACT or $\pi_0$ fe
 is orthogonal.
 
 \paragraph{Coverage.}
-The five component configurations cover \textsc{Pouring}, \textsc{LiftTray}, and
-\textsc{PieceAssembly} ($1$--$3$ seeds per configuration). The shaping-form pair covers
-\textsc{PieceAssembly} and \textsc{Threading} ($3$ seeds per configuration through
-$5{\times}10^5$ steps). \textsc{CanSort} is excluded because its residual runs do not
-collapse and it has no stage decomposition.
+The five component configurations cover \textsc{Pouring} and
+\textsc{PieceAssembly}, with three seeds per configuration and a common
+$4{\times}10^5$-step budget. The shaping-form pair covers
+\textsc{PieceAssembly} and \textsc{Threading}, with three seeds per
+configuration through $5{\times}10^5$ steps. \textsc{CanSort} is excluded
+because its residual runs do not collapse and it has no stage decomposition.
 
 \subsection{B.6\quad Evaluation Protocol}
 
@@ -750,8 +761,9 @@ LIBERO uses eight environments and $10$ episodes. For a success probability $p$,
 binomial standard error of a $50$-episode success-rate estimate is
 $\sqrt{p(1-p)/50}\approx0.057$ at $p=0.8$; this within-checkpoint uncertainty is
 distinct from the across-seed s.e.m.\ bands in the learning curves. The nominal online budget is
-$5{\times}10^{5}$ environment steps for DexMimicGen and $4{\times}10^{5}$
-environment steps for LIBERO. Since the residual mean is zero
+$5{\times}10^{5}$ environment steps for the main DexMimicGen comparison and
+$4{\times}10^{5}$ environment steps for LIBERO; component Ablation~A uses the
+matched $4{\times}10^{5}$-step budget stated above. Since the residual mean is zero
 before training, the step-$0$ evaluation also provides the frozen-base reference.
 
 Method-specific anchoring parameters---our action scale, DSRL's noise scale, and
@@ -766,23 +778,24 @@ For each seed, the \emph{steady-state} success rate is the mean over its final $
 of evaluation checkpoints. This window always contains at least one checkpoint. We then
 report the mean and standard error of these seed-level values. Learning curves instead aggregate seeds at
 each recorded checkpoint and show a $\pm1$ s.e.m.\ band when at least two seeds are
-available. Incomplete runs are shown only over their observed ranges; their terminal
-windows are neither extrapolated nor treated as budget-matched $500$k results.
+available. Diagnostic runs outside the matched main comparisons are shown only
+over their observed ranges; their terminal windows are neither extrapolated nor
+treated as budget-matched results.
 
 \subsection{B.7\quad Results, Run Inventory, and Provenance}
 
 The main paper reports the compact steady-state table and learning curves.
-SHORE-RL, the flat residual, and IQL use three seeds per method on all four
-long-horizon tasks and reach $500$k steps. IBRL also reaches $500$k steps, with
-two seeds per task and a third seed on \textsc{PieceAssembly}, whereas some
-DSRL seeds terminate early. The \textsc{CanSort} diagnostic uses $2$--$3$ seeds
-per method, including two completed IBRL seeds. Component
-ablation~(A) covers \textsc{Pouring}, \textsc{LiftTray}, and
-\textsc{PieceAssembly} with $1$--$3$ seeds per configuration and marks all early
-endpoints. Shaping comparison~(B) uses three $500$k-step seeds per configuration on
+SHORE-RL and all four main baselines---the flat residual (ResFit), DSRL, IBRL,
+and IQL---use three seeds per method on all four long-horizon tasks and reach
+$500$k steps. The
+\textsc{CanSort} diagnostic uses $2$--$3$ seeds per method, including three
+completed IBRL seeds. Component
+ablation~(A) covers \textsc{Pouring} and \textsc{PieceAssembly} with three
+$400$k-step seeds per configuration. Shaping comparison~(B) uses three
+$500$k-step seeds per configuration on
 \textsc{PieceAssembly} and \textsc{Threading}. The LIBERO-10 Task~8 and
-LIBERO-90 Task~57 studies use three $400$k-step seeds per method, subject to
-the DSRL exception below.
+LIBERO-90 Task~57 studies use three $400$k-step seeds per method; the DSRL
+comparison uses the separate harness described below.
 
 \paragraph{Inclusion and provenance.}
 The included dual-arm SHORE-RL, flat-residual, and ablation runs use the same
@@ -793,33 +806,31 @@ settings or codebases.
 
 Removing the waypoint also removes its online joint update and is therefore treated
 as one bundled mechanism. A second, task-dependent caveat applies to the
-leave-one-out study: on \textsc{Pouring} and \textsc{PieceAssembly}, the
+structured component study: on \textsc{Pouring} and \textsc{PieceAssembly}, the
 $-$stage configurations also disable stage-balanced replay and thus remove all stage-derived
-training information; on \textsc{LiftTray}, the corresponding configuration removes only the
-direct bonus. The shaping-form comparison is cleaner: all three seeds reach $500$k,
+training information. The shaping-form comparison is cleaner: all three seeds reach $500$k,
 and only the direct stage bonus is replaced by the self-derived potential.
 
 \paragraph{Coverage caveats.}
-Early DSRL terminations remain visible in the learning curves but are not treated as
-matched $500$k results. IBRL is a completed, matched comparison, but
-\textsc{Pouring}, \textsc{LiftTray}, and \textsc{Threading} have two seeds
-rather than three. Its final-window performance is $.00{\pm}.00$,
-$.00{\pm}.00$, and $.01{\pm}.01$ on those tasks, respectively, and
-$.10{\pm}.05$ on the three-seed \textsc{PieceAssembly} comparison. The
-LIBERO DSRL overlay remains a separate-harness comparison, as noted in
-Section~B.6.
+The main long-horizon comparison is complete and matched at three seeds and
+$500$k steps for every method. IBRL's final-window performance is $0.00{\pm}0.00$ on
+\textsc{Pouring}, \textsc{LiftTray}, and \textsc{Threading}, and
+$0.10{\pm}0.05$ on \textsc{PieceAssembly}. The
+smaller \textsc{CanSort} diagnostic uses the available $2$--$3$ seeds per
+method, and the LIBERO DSRL overlay remains a separate-harness comparison, as
+noted in Section~B.6.
 
 \subsection{B.8\quad Limitations of the Simulation Venue}
 
 \paragraph{Statistical coverage.}
-The shaping-form comparison now includes three full-budget seeds per configuration on
-\textsc{PieceAssembly} and \textsc{Threading}. Its task coverage nevertheless
-remains narrow: the evidence supports the self-derived potential as a substitute for
-the direct stage bonus on these two tasks, not their equivalence in general.
-Moreover, several component ablation configurations have only $1$--$2$ seeds or terminate
-early, some DSRL seeds do not reach $500$k steps, and three of the four
-long-horizon IBRL comparisons use only two seeds. We therefore treat those cells
-as diagnostic rather than uniformly powered evidence.
+The component ablation includes three matched $400$k-step seeds per
+configuration on \textsc{Pouring} and \textsc{PieceAssembly}, and the
+shaping-form comparison includes three full-budget seeds per configuration on
+\textsc{PieceAssembly} and \textsc{Threading}. Their task coverage nevertheless
+remains narrow: the evidence supports the reported component interactions and
+the self-derived potential on these tested tasks, not universal equivalence or
+task-independent effects. The smaller \textsc{CanSort} study is therefore
+treated as a diagnostic rather than uniformly powered evidence.
 
 \paragraph{Privileged task structure.}
 The main simulation result uses a per-stage bonus computed from a task-specific
@@ -830,8 +841,8 @@ progress signal on every task. This is why the real-robot venue uses the $V(s)$ 
 throughout, while the simulation study reports both formulations.
 
 \paragraph{Cross-method comparability and benchmark scope.}
-The dual-arm comparisons are matched within our evaluator, subject to the incomplete
-DSRL runs noted above. On LIBERO, however, the DSRL overlay uses its own evaluation
+The main dual-arm comparisons are matched within our evaluator. On LIBERO,
+however, the DSRL overlay uses its own evaluation
 harness, so absolute-success differences are indicative rather than strictly
 controlled. The extension covers only LIBERO-10 Task~8 and LIBERO-90 Task~57
 rather than the full LIBERO benchmark; claims about broader benchmark transfer
@@ -847,7 +858,7 @@ interfaces (C.1), the three tasks and their success
 criteria (C.2), the demonstration and rollout data (C.3), the dynamics model (C.4),
 the imagination loop the residual is trained in (C.5), the protocol used to evaluate
 the resulting residual on the physical robot (C.6), and the limitations specific to
-this venue (C.7).
+this venue (C.8).
 
 \subsection{C.1\quad Real-Robot Platform and Control}
 
@@ -855,7 +866,7 @@ this venue (C.7).
 The real-robot venue uses a full-body robot; control is over its two
 $7$-DoF arms, each terminated by a parallel gripper. Commands are joint-space targets,
 so the action space is $16$-dimensional, $(7\ \text{joints} + 1\ \text{gripper}) \times 2$.
-The low-level controller consumes one joint-space command per step at $30$\,Hz (matching
+The robot controller consumes one joint-space command per step at $30$\,Hz (matching
 the camera rate), and commands are absolute joint-position targets rather than deltas.
 
 \paragraph{Perception.}
@@ -863,13 +874,14 @@ Perception is image-only: three RGB cameras stream $848{\times}480$ video at
 $30$\,Hz, consisting of one head-mounted view (\texttt{top\_head}) and two wrist-mounted views
 (\texttt{hand\_left}, \texttt{hand\_right}). The same three views are consumed by
 every component that needs to see the scene: the base policies, the frozen
-encoder $\psi$ that supplies the value's state representation, and the dynamics
+encoder $\psi_b$ that supplies the value's state representation, and the dynamics
 model. No component receives a signal the deployed robot does not have, because there is
 no motion capture, no object pose, and no privileged state anywhere in this
 venue.
 
 \paragraph{Base policy and action chunking.}
-Each task's base policy is a served $\pi_{0.5}$-style VLA~\cite{sima2026kai0} that
+Each task's base policy is a served $\pi_{0.5}$-style
+VLA~\cite{sima2026kai0,black2025pi05} that
 emits $50$-step
 action chunks, executed open-loop within each chunk. Internally the VLA's action
 vector is zero-padded to its native width of $32$ dimensions, of which the
@@ -877,11 +889,13 @@ leading $16$ are the platform's commands; the padding is stripped before
 execution and before any residual is added.
 
 \paragraph{What runs at deployment.}
-At deployment the robot runs the task's frozen base policy plus the small
-residual and the waypoint head, both evaluated on base features. The dynamics
-model is a training-time device only and is never executed at inference time, so
-the deployed system carries no video model and no additional latency beyond the
-two small heads.
+At deployment the robot runs the task's frozen base policy, the navigator on
+the frozen base features, and the residual actor on its separate trained
+multi-view image encoder together with proprioception, the base action, and the
+waypoint. The dynamics model is a training-time device only and is never
+executed at inference time, so the deployed system carries no video dynamics
+model; its additional computation is the residual encoder and actor plus the
+navigator.
 
 \begin{figure*}[tp]
 \centering
@@ -899,44 +913,54 @@ and arranging the cups, and (c) assembling the colored blocks.}
 
 \subsection{C.2\quad Tasks and Success Criteria}
 
-We evaluate on three tabletop bimanual tasks. Episodes run $800$--$2{,}500$ steps
-at $30$\,Hz ($\approx 27$--$83$\,s). For each task we quote the language
-instruction verbatim as it appears in the dataset, because that same string is
-the caption conditioning the dynamics model (Section~C.4), and because a mismatch
-between the two would silently change what the model is conditioned on.
-Representative physical-robot executions are shown in
-Figure~\ref{fig:real-task-processes}.
-\todo{the \textsc{pick\_paper\_roll} data is recorded at $20$\,Hz (Section~C.3,
-Table~\ref{tab:realdata}), so its episode-length and duration range differ from
-the $30$\,Hz figure quoted above; reconcile this range with the per-task frame
-counts before submission.}
+We evaluate on three tabletop bimanual tasks. The robot controller and cameras
+operate at $30$\,Hz during physical evaluation. The dynamics-model training data
+uses $30$\,Hz for \textsc{build\_block} and \textsc{pick\_cup}, while the
+\textsc{pick\_paper\_roll} domain is made internally uniform at $20$\,Hz by
+resampling its frozen-base rollouts (Section~C.4.2). Episodes end when the task
+is completed or its task-specific timeout is reached.
+\todo{report the physical-evaluation timeout and resulting trial-duration range
+for each task.}
+For each task we quote the language instruction verbatim as it appears in the
+dataset, because that same string is the caption conditioning the dynamics model
+(Section~C.4), and because a mismatch between the two would silently change what
+the model is conditioned on. Representative physical-robot executions are shown
+in Figure~\ref{fig:real-task-processes}.
 
 \paragraph{\textsc{pick\_paper\_roll}} The instruction is \texttt{put the paper roll on
 the holder}. The robot grasps a paper roll from the tabletop and places it onto
 an upright holder. A key challenge is that the roll is a rolling object: a grasp
 that is not centered displaces it rather than securing it, and the resulting
-error compounds into the placement. \emph{Success}: the paper roll is seated on
-the holder and the gripper has opened and withdrawn, with the roll remaining on
-the holder. \todo{confirm whether a handover between arms is required, and the
-exact seated/inserted criterion.}
+error compounds into the placement. The representative successful sequence in
+Figure~\ref{fig:real-task-processes} starts with the roll upright and uses one
+gripper to transport it directly to the holder; no inter-arm handover occurs.
+\emph{Success}: the holder's vertical peg passes through the roll's central
+opening, the roll rests on the holder base, and the gripper has released and
+withdrawn.
 
-\paragraph{\textsc{pick\_cup}} The instruction is \texttt{pick cup}. The robot grasps
-a cup and places it at the target location. \emph{Success}: the cup is upright at
-the target and the gripper has released it, with the cup remaining upright.
-\todo{confirm whether the target is a plate, coaster, or tray; whether the cup
-starts upright or lying down; and whether reorientation is part of the task.}
+\paragraph{\textsc{pick\_cup}} The instruction is \texttt{pick cup}. This is the
+Cup Stacking task in the main paper. Ten upright paper cups start distributed
+on the tabletop; the robot rearranges them into a four-level $4$--$3$--$2$--$1$
+stack, so reorienting a fallen or sideways cup is not part of the demonstrated
+task. \emph{Success}: all ten cups form the required four-level structure and
+remain stable after the grippers release and withdraw.
 
 \paragraph{\textsc{build\_block}} The instruction is \texttt{build block}. This is an
-assembly-style task in which blocks are stacked. \emph{Success}: the blocks are
-stacked in the required configuration and the stack remains standing after the
-gripper releases. \todo{confirm the number of blocks, the required stacking
-order, and whether each arm is assigned particular blocks.}
+assembly-style task. The representative sequence starts from four loose pieces
+(two red, one cyan, and one yellow) and builds a three-piece vertical target:
+cyan base, red middle, and yellow top, leaving the second red piece unused as a
+distractor. \emph{Success}: the three target pieces form this assembly and it
+remains intact after the grippers release and withdraw. \todo{confirm whether
+this color order is fixed across the entire evaluation set and whether each arm
+is assigned particular pieces.}
 
 \paragraph{Randomization.}
-Object placements vary across episodes. \todo{confirm the randomization protocol:
-which objects are randomized, over what region, whether the robot's initial pose
-is randomized, and whether the evaluation initial-state set (Section~C.6) is drawn
-from the same distribution as the training placements or held out.}
+Object placements vary across episodes. Physical evaluation uses a fixed
+initial-state set shared across the compared conditions. \todo{confirm the
+training randomization protocol---which objects are randomized, over what
+region, and whether the robot's initial pose is randomized---and report how the
+fixed evaluation set was constructed and whether it is held out from the
+training-placement distribution.}
 
 \paragraph{Why binary success.}
 We score each trial with a single binary criterion rather than a per-stage
@@ -951,10 +975,11 @@ Two kinds of data are collected on the physical robot, and they enter the
 pipeline at different points.
 
 \paragraph{Expert demonstrations.}
-Human teleoperation, success-only, stored in LeRobot format with per-frame
-images, joint states, and actions. These train the base policies: we finetune the
-$\pi_{0.5}$ VLA \emph{separately per task}, giving one base policy per task, each
-frozen from that point on.
+For each task we collect about $1{,}000$ successful human-teleoperation
+episodes, stored in LeRobot format with per-frame images, joint states, and
+actions. These train the base policies: we finetune the $\pi_{0.5}$ VLA
+\emph{separately per task}, giving one base policy per task, each frozen from
+that point on.
 
 \paragraph{Base-policy rollouts.}
 We then deploy each frozen base on the physical robot and record its rollouts.
@@ -966,28 +991,23 @@ and a model finetuned on success-only data cannot, because it has never seen one
 
 \begin{table}[t]
 \centering\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lrrrrr@{}}
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-Task & expert & rollout & total & frames & Hz \\
+Task & successful teleoperation & base rollout & Hz \\
 \midrule
-\textsc{build\_block}      & $295$ & $50$ & $345$ & $378{,}724$ & $30$ \\
-\textsc{pick\_cup}         & $207$ & $51$ & $258$ & $233{,}589$ & $30$ \\
-\textsc{pick\_paper\_roll} & $849$ & $53$ & $902$ & $289{,}278$ & $20$ \\
-\midrule
-total                      & $1{,}351$ & $154$ & $1{,}505$ & $901{,}591$ & mixed \\
+\textsc{build\_block}      & $\sim1{,}000$ & $50$ & $30$ \\
+\textsc{pick\_cup}         & $\sim1{,}000$ & $51$ & $30$ \\
+\textsc{pick\_paper\_roll} & $\sim1{,}000$ & $53$ & $20$ \\
 \bottomrule
 \end{tabular}
-\caption{Real-robot data, per task. Each task is one dynamics-model domain
-(\texttt{block}, \texttt{cup}, \texttt{paper} respectively; Section~C.4.2).
-\emph{Expert} are success-only human
-teleoperation episodes and train that task's base policy; \emph{rollout} are
-recorded deployments of the resulting frozen base policy and enter only the
-dynamics-model finetuning (Section~C.4). Frame counts are for the merged
-per-task dataset. The \textsc{pick\_paper\_roll} data is recorded at $20$\,Hz
-rather than $30$\,Hz; Section~C.4.2 explains why this is handled within the domain
-rather than across domains. \todo{the main paper states ${\sim}300$ success-only
-episodes per task, which matches \textsc{build\_block} and \textsc{pick\_cup} but
-not \textsc{pick\_paper\_roll} ($849$); reconcile the two before submission.}}
+\caption{Real-robot data scale, per task. Each task is one dynamics-model
+domain (\texttt{block}, \texttt{cup}, and \texttt{paper}, respectively;
+Section~C.4.2). Successful human teleoperation trains the task-specific base;
+recorded frozen-base rollouts enter only dynamics-model finetuning. The main
+paper's approximately $1{,}000$ successful demonstrations per task is the
+authoritative collection count. \todo{reconcile the filtered local pipeline
+inventory with the full collection and then report exact per-task demonstration
+counts and merged frame totals.}}
 \label{tab:realdata}
 \end{table}
 
@@ -1009,19 +1029,24 @@ $3$ views $\times$ $[\,4\ \text{history} + 25\ \text{predicted}\,]$ frames at
 $256{\times}192$, downsampled from the native $848{\times}480$, paired with the
 $50$-step action chunk that spans the predicted window.
 
-Actions condition the model through a dedicated path: the chunk is normalized
-with per-domain statistics, zero-padded from $16$ to the backbone's $30$-channel
-action width, encoded by a small ViT, and \emph{added} to the caption embeddings
-that drive cross-attention. This is the pretrained checkpoint's own conditioning
-path, so no part of it is randomly initialized. It is, however, a comparatively
-weak form of conditioning, being an additive term on a text embedding rather than a
-separate control stream, which is why action controllability is something we
-test rather than assume (Section~C.4.4), and why we flag it in Section~C.7.
+During dynamics-model finetuning, actions are normalized using the statistics
+specified by the training configuration. The retained \textsc{build\_block}
+imagination launcher, however, does not provide an
+\texttt{action\_norm\_json}. Its bridge therefore uses fixed per-dimension
+bounds of $[-1,1]$, samples action indices $0,2,\ldots,48$ from each
+$50\times16$ chunk, zero-pads the $16$ channels to $30$, and sends a bf16 tensor
+of shape $1\times25\times30$. The stored step-$18{,}000$ checkpoint contains
+the action-conditioning path, but its exact initialization provenance is not
+retained locally. The action embedding is added to the caption embeddings that
+drive cross-attention, a comparatively weak form of conditioning; action
+controllability must therefore be tested rather than assumed
+(Section~C.4.4).
 
 \subsubsection{C.4.2\quad Mixed-Quality Training Data and Shortcut Controls}
 
-A \emph{single} dynamics model is jointly full-finetuned on the pooled data of
-all three tasks. The asymmetry with the base policies, which are one per task against a single
+The available finetuning configuration specifies a \emph{single} dynamics model
+and a joint full-parameter update over the pooled data of all three tasks. The
+asymmetry with the base policies, which are one per task against a single
 shared dynamics model, is deliberate: predicting how a scene responds to an
 action chunk is largely task-independent and benefits from pooling, whereas the
 policies do not.
@@ -1056,10 +1081,23 @@ text cannot serve as a success/failure indicator. This required unifying the
 \texttt{block} domain, whose expert and rollout splits had been captioned
 differently, onto the single string \texttt{build block}.
 
+\paragraph{Scope of the retained launcher.}
+The retained block imagination launcher does not finetune the dynamics model.
+It connects the learner to a model that must already be served at port 9000.
+The retained service log shows a load from \texttt{block\_infer.yaml} and the
+step-$18{,}000$ diffusion checkpoint. However, the websocket metadata contains
+only a generic model name and the camera list, and the run's
+\texttt{bridge\_run\_config.json} does not record the server configuration or
+checkpoint digest. The launch record therefore establishes the inference path
+below, but not the pooled three-domain training provenance or an immutable
+run-level binding to that checkpoint. Those require a separate
+dynamics-training record.
+
 \subsubsection{C.4.3\quad Finetuning Configuration}
 
-Finetuning is a single joint, full-parameter update over the pooled data of all
-three domains. Table~\ref{tab:wmhp} lists the configuration.
+The available finetuning configuration specifies a single joint,
+full-parameter update over the pooled data of all three domains.
+Table~\ref{tab:wmhp} lists its settings.
 
 \begin{table}[t]
 \centering\small\setlength{\tabcolsep}{4pt}
@@ -1080,39 +1118,74 @@ LR scaling by batch & none \\
 Precision           & bf16, gradient checkpointing \\
 Sharding            & DeepSpeed ZeRO-2 \\
 Batch size          & $4$ per GPU ($48$\,GB) / $8$ per GPU ($96$\,GB) \\
-Training steps      & $20{,}000$ configured (latest ckpt: $18{,}000$) \\
+Training steps      & $18{,}000$ (checkpoint used downstream) \\
 Caption dropout     & $0.06$ \\
 First-frame noise   & $0.2$ \\
 Validation          & every $1{,}000$ steps (per-domain videos) \\
 Checkpoint          & every $2{,}000$ steps \\
 \bottomrule
 \end{tabular}
-\caption{Dynamics-model finetuning configuration. \todo{P0: this is the verified
-configuration, and the pipeline has been validated end-to-end at $30$ steps
-(loss $0.107$; the pretrained checkpoint loads with no missing or unexpected
-tensors), and the latest available checkpoint is step $18{,}000$; the full
-$20{,}000$-step run must be confirmed complete, and its
-wall-clock and hardware reported, before this table is described as the
-configuration of a trained model.}}
+\caption{Available finetuning configuration associated with the
+step-$18{,}000$ artifact loaded by the retained \textsc{build\_block} service.
+The imagination launcher performs inference only and does not itself record or
+verify the served checkpoint identity or pooled-data provenance.
+\todo{report the dynamics-model finetuning hardware and wall-clock time.}}
 \label{tab:wmhp}
 \end{table}
 
-\subsubsection{C.4.4\quad Validating the Model Before Any Policy Training}
+\begin{table}[t]
+\centering\small\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Retained block inference field & Value \\
+\midrule
+Service configuration & \texttt{block\_infer.yaml} \\
+Loaded model & diffusion checkpoint, step $18{,}000$ \\
+Checkpoint SHA-256 & \texttt{9b07acec$\ldots$69f8a} \\
+Transformer parameters & $1{,}990{,}672{,}572$ \\
+Prompt & \texttt{build block} \\
+History tensor & $3\times3\times4\times192\times256$ \\
+Action-token tensor & $1\times25\times30$ (bf16) \\
+Inference steps & $10$ \\
+Returned prediction & $3\times3\times25\times192\times256$ \\
+\bottomrule
+\end{tabular}
+\caption{Code-backed inference contract for the retained block launch with
+training GPU~7 and seed~0. The service returns $29$
+frames per view including the four conditioning frames; the bridge removes
+those frames and retains the $25$ predicted frames reported here. The digest is
+the locally verified SHA-256 prefix and suffix of the loaded model artifact.}
+\label{tab:block-wm-runtime}
+\end{table}
 
-The dynamics model is the environment in this venue, so its failure modes become
-the residual's failure modes. Our validation protocol therefore uses held-out episodes
-before any policy training and covers three axes; these are the three panels of
-Figure~\ref{fig:supp-wmval}.
+\subsubsection{C.4.4\quad Qualitative Inspection and Available Monitoring}
+
+The dynamics model is the environment in this venue, so failures of the dynamics
+model become failure modes of the residual. A complete validation protocol
+should therefore cover three complementary axes before any policy training.
+Figure~\ref{fig:supp-wmval} reports the currently available qualitative evidence
+for the first axis on one successful recorded episode from each task. The
+retained launcher does \emph{not} implement a held-out dynamics-model
+validation: its scheduled evaluator instead rolls the current residual policy
+inside the same imagination environment and start-state pool used for
+training. The held-out aggregate evaluation and the remaining two axes are
+therefore left explicit below.
 
 \paragraph{(i) Imagined-rollout quality.}
 Given a real observation history and the ground-truth action chunk that follows
-it, the imagined $H$-step future is compared against the recorded future, and we check whether
-object position and grasp timing line up.
+it, the imagined $H$-step future is compared against the recorded future.
+For each task, Figure~\ref{fig:supp-wmval} shows representative, temporally
+corresponding head-camera observations from the recorded and predicted futures.
+The displayed moments are selected separately for each task, rather than using
+a shared fixed-step schedule. Agreement in object layout, manipulator motion,
+and task progression provides a direct qualitative check of rollout quality.
+The dynamics model predicts all three camera views, but only the head view is
+shown here for readability.
 
 \paragraph{(ii) Action controllability, including a negative probe.}
 The same observation history under different action chunks must yield
 \emph{diverging} futures; a model that ignores its action input is a video prior,
-not a dynamics model, and would make the residual's gradient meaningless. The
+not a dynamics model, and would make the residual gradient meaningless. The
 sharper form of this test is the negative probe: we feed deliberately perturbed
 actions, such as translating the grasp segment by a few centimeters or closing the gripper
 early. The imagined video must show the corresponding failure rather than a hallucinated
@@ -1127,141 +1200,266 @@ can be visually plausible and still be useless here if the re-encoded imagined
 frames land where the potential misreads them, so this is the axis that most
 directly predicts whether imagination training transfers.
 
-\todo{P0: run all three and report; state the held-out split size and, for (i),
-the metric used.}
+\todo{P0: report the held-out split size and a quantitative rollout metric for
+(i), then run and report the action-perturbation probe in (ii) and the
+potential-trajectory comparison in (iii).}
 
-\begin{figure*}[t]
+\paragraph{What the retained launch actually records.}
+At the first collected chunk (step $50$) and then every $50{,}000$ reported
+control steps through step $500{,}000$, the evaluator saves a checkpoint and
+generates ten two-segment imagined rollouts. Each rollout contains $50$
+predicted frames. The resulting JSONL artifact contains $110$ trajectories and
+$5{,}500$ frame scores from a \emph{separate} frozen value model. Table~
+\ref{tab:block-proxy} reports the final-frame proxy. It is a continuous
+training-time diagnostic, not a success classifier, a real-robot success rate,
+or a held-out world-model metric. The evaluator deliberately returns
+\texttt{eval/success\_rate=0.0} only as a checkpointing placeholder; that field
+must not be read as an observed $0\%$ success rate.
+
+\begin{table}[t]
+\centering\small\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}rrr@{}}
+\toprule
+Reported step & Mean final proxy & Population SD \\
+\midrule
+$50$      & $0.617$ & $0.194$ \\
+$50$k     & $0.560$ & $0.218$ \\
+$100$k    & $0.317$ & $0.571$ \\
+$150$k    & $0.473$ & $0.348$ \\
+$200$k    & $0.396$ & $0.413$ \\
+$250$k    & $0.262$ & $0.370$ \\
+$300$k    & $0.471$ & $0.288$ \\
+$350$k    & $0.329$ & $0.474$ \\
+$400$k    & $0.463$ & $0.473$ \\
+$450$k    & $0.442$ & $0.303$ \\
+$500$k    & $0.496$ & $0.354$ \\
+\bottomrule
+\end{tabular}
+\caption{Training-time imagined value-proxy record for the retained
+\textsc{build\_block}, seed-$0$ run ($10$ rollouts per checkpoint). The
+evaluator samples from the training start-state pool, records no episode/frame
+identifier or real future, and applies no calibrated success threshold.
+Accordingly, these values are monitoring diagnostics only.}
+\label{tab:block-proxy}
+\end{table}
+
+\begin{figure*}[tp]
 \centering
-\framebox[0.95\textwidth]{\rule{0pt}{4.5cm}
-\todo{P0: dynamics-model validation---(i) $H$-step rollout quality,
-(ii) action controllability including the negative probe, and
-(iii) potential-trajectory consistency}}
-\caption{Validation of the finetuned dynamics model on held-out episodes.
-The three panels report multi-step rollout quality, action controllability including
-deliberately perturbed actions, and imagined/real potential-trajectory consistency.
-\todo{P0: replace the placeholder and report the held-out split and metrics.}}
+\includegraphics[width=0.96\textwidth]{figure/fig_world_model_paper.pdf}\\[-2pt]
+{\small\textbf{(a)} \textsc{pick\_paper\_roll}}\par\vspace{3pt}
+\includegraphics[width=0.96\textwidth]{figure/fig_world_model_cup.pdf}\\[-2pt]
+{\small\textbf{(b)} \textsc{pick\_cup}}\par\vspace{3pt}
+\includegraphics[width=0.96\textwidth]{figure/fig_world_model_block_outlined.pdf}\\[-2pt]
+{\small\textbf{(c)} \textsc{build\_block}}\par
+\caption{\textbf{Qualitative action-conditioned rollout comparison.}
+One successful recorded episode is shown for each real-robot task:
+(a)~\textsc{pick\_paper\_roll}, (b)~\textsc{pick\_cup}, and
+(c)~\textsc{build\_block}. Each panel compares representative head-camera
+observations from the recorded future (top) and the dynamics-model prediction
+(bottom), conditioned on the same observation history and recorded action
+sequence. The displayed moments are selected separately for each task and do
+not follow a shared fixed-step schedule. These examples provide qualitative
+evidence for rollout correspondence only. They are not generated by the
+residual-training launcher and do not replace the pending held-out quantitative
+metric, action-perturbation probe, or potential-trajectory comparison.}
 \label{fig:supp-wmval}
 \end{figure*}
 
 \subsection{C.5\quad Residual RL in Imagination}
 
-\paragraph{Why a replay buffer rather than a step function.}
-A video-diffusion model takes seconds per generation and cannot serve as a
-per-step simulator inside an off-policy loop. We therefore decouple generation
-from updating and train from an \emph{imagination replay buffer}: every $K$
-policy updates we draw $M$ starting states from the real-robot data, roll $D$
-forward $H$ steps under the residual-perturbed actions
-$a = a_b + s_a\,a_{\text{res}}$, score the imagined frames once with the
-potential $\Phi$ and cache the result, and then let the
-TD3~\cite{fujimoto2018addressing} residual perform many
-cheap updates on a mixture of real and imagined transitions. Imagination is
-recursed at most twice from any real state, bounding how far model error can
-compound~\cite{janner2019mbpo} before the trajectory is re-anchored to real data.
-\todo{fill $K$, $M$, $H$, the demonstration/recorded/imagined mixing ratio, the
-update-to-data ratio, buffer capacities, learning-start threshold, and wall-clock per
-$10^5$ updates; define which recorded transitions receive which reward and how their
-terminal flags are constructed.}
-This loop is the imagination instantiation of Algorithm~\ref{alg:shore}, with
-$\mathcal C$ set to bounded rollouts of $D$ and $\rho$ set to the reported replay mixture.
+\paragraph{Exact scope of the retained block command.}
+The following implementation record is for
+the block launcher with training GPU~7 and seed~0. Despite the output-directory
+label containing ``shore,'' its recorded trainer configuration uses the raw
+actor and disables subgoal conditioning, stage conditioning, relabeling,
+online value finetuning, and online high-actor finetuning. Thus this exact
+artifact is a flat, non-waypoint-conditioned residual run: it contains no
+$z_t$, no online $V_{\mathrm{gc}}$ update, and no navigator $\pi_h$ update. A
+waypoint-conditioned SHORE-RL real-robot result cannot be attributed to this
+command without a separate matching launch configuration and artifact.
 
-\paragraph{The reward is the potential difference.}
-Imagined rollouts carry no environment success signal, and the hand-designed
-per-stage bonus used in the main simulated results (Section~B.3) reads simulator
-predicates that do not exist here. The per-step reward in this venue is therefore the
-potential difference alone, $\tilde r_t=\gamma\Phi_V(s_{t+1})-\Phi_V(s_t)$, with
-$\Phi_V=cV(s)$ evaluated on re-encoded imagined frames. No frame scorer and no reward
-model is introduced.
-The safety rule of the main paper applies unchanged: shaping uses only the
-single-state value, while the goal-conditioned value contributes only the waypoint
-$z$ and never the potential.
+\paragraph{Synchronous segment generation and replay.}
+A video-diffusion model is too slow to run at the robot's control frequency,
+so the implementation exposes it as a chunk-level rather than control-step
+environment. The frozen base and flat residual produce a $50\times16$ action
+chunk. After the outer wrapper accumulates all $50$ commands, $D$ consumes the
+subsampled action tokens together with four history frames and predicts $25$
+future frames for each of the three camera views. At the block dataset rate of
+$30$\,Hz, one action chunk spans $1.667$\,s and the predicted frames are at
+$15$\,Hz. The final predicted frame is re-encoded by the frozen base, scored
+once, and stored immediately as one transition in the online imagination
+replay. Generation and TD3~\cite{fujimoto2018addressing} updating therefore
+alternate synchronously; there is no periodic $K$-update refresh or separately
+generated batch of $M$ rollouts.
+
+Each seed drawn from the recorded robot data is advanced for at most two
+generated segments. At the second-segment boundary, the collector preserves the
+generated endpoint as the replay bootstrap observation, marks the boundary as an
+artificial truncation, and resets from a new recorded seed. Seeds are sampled
+uniformly over the pooled episode list containing $295$ successful
+demonstrations and $50$ frozen-base failure rollouts, followed by a uniform
+valid four-frame window within the selected episode. The recorded failure
+transitions themselves are not inserted into the training batch. This bounded
+recursion gives each imagined rollout $100$ actions and $50$ predicted frames
+($3.333$\,s at $30$\,Hz) before it is re-anchored to real data
+~\cite{janner2019mbpo}. The sampler uses an unseeded
+\texttt{numpy.random.default\_rng()} and does not record the sampled
+episode/frame identifiers, so the command's seed $0$ does not make the exact
+start-state sequence replayable.
+
+The online replay has capacity $200{,}000$ chunk transitions. A separate offline
+replay is built from the retained $295$ successful \textsc{build\_block}
+demonstrations. It contains $6{,}989$ non-overlapping $50$-step transitions
+plus a final aligned chunk where needed; no episode was skipped as too short.
+\todo{reconcile this filtered replay artifact with the full demonstration
+collection summarized in Table~\ref{tab:realdata}.}
+Every update samples $128$ imagined and $128$ demonstration
+transitions, giving batch size $256$ and an offline fraction of $0.5$. Training
+starts after $10{,}000$ reported control steps, equal to $200$ generated chunk
+transitions, and first performs $10{,}000$ critic-only warmup updates. Thereafter
+the update-to-data ratio is $4$, with a one-step target, $\gamma=0.995$, residual
+scale $s_a=0.2$, and demonstration-BC coefficient $0.1$. The reported
+$500{,}000$-control-step checkpoint corresponds to $10{,}000$ generated chunk
+transitions. The launcher assigns four single-GPU processes: the dynamics-model
+service on GPU~0, frozen-base service on GPU~1, monitoring-only advantage proxy
+on GPU~6, and seed-$0$ learner on GPU~7. The retained online W\&B run
+\texttt{eegyfzmz} (code commit
+\texttt{b22fcbda$\ldots$b9a4}) records $18{,}798$\,s
+($5.22$\,h) from W\&B initialization through step $500{,}000$; offline cache
+construction occurred before that timer. Eleven persistent checkpoints were
+saved at steps $50$, $50$k, $100$k, \ldots, $500$k, in addition to a rolling
+latest checkpoint. The final retained checkpoint is step $500{,}000$.
+\todo{report matching provenance and runtime for the other task runs.}
+This loop implements synchronous chunk-level residual TD3 with a two-segment
+imagination collector and a 50/50 demonstration--imagination replay mixture.
+
+\paragraph{No task reward; self-derived endpoint potential only.}
+The hand-designed per-stage bonus used in the main simulated results
+(Section~B.3) reads simulator predicates that do not exist here. In the bridge,
+the additive task-reward term is identically zero,
+$r_t^{\mathrm{imag}}\equiv0$, and each completed imagined chunk receives
+\[
+\tilde r_t^{\mathrm{imag}}
+=0+\gamma\Phi_V(\widehat e_{t+1})-\Phi_V(e_t),
+\]
+where $\gamma=0.995$ and $\Phi_V$ is a frozen ValueMLP evaluated on the
+concatenation of mean-pooled frozen-base prefix features and proprioception.
+The potential checkpoint has SHA-256
+\texttt{1eb54786$\ldots$40411b}.
+There is no imagined success classifier and no task-success terminal:
+\texttt{terminated} is always false, while the second-segment boundary sets
+\texttt{truncated=true}. The successful-demonstration replay uses the same
+potential-only endpoint reward; only its final recorded chunk has
+\texttt{done=true} and masks the critic bootstrap. An artificial imagination
+boundary instead stores \texttt{done=false} and bootstraps from its preserved
+generated endpoint. The trainer's \texttt{reward\_shaping=none} prevents a
+second shaping pass; the logged \texttt{potential\_source=stage} option is
+therefore inactive and does not indicate use of a stage detector. No physical
+environment transition is executed during residual training.
 
 \paragraph{What is frozen and what is trained.}
-Frozen: the base policy, the feature encoder $\psi$, the dynamics model $D$, and
-the single-state value supplying $\Phi$. Trained: the residual actor and critic
-and, as in simulation, the goal-conditioned value head and the navigator
-$\pi_h$, jointly finetuned online while $\phi$ stays frozen. The actor--critic settings are the venue-independent ones of
-Table~\ref{tab:sharedhp} (Section~A); collection and replay settings are venue-specific
-and must be reported above.
+For this command, the task-specific base policy and its feature encoder
+$\psi_b$, the dynamics model $D$, the single-state value supplying $\Phi_V$,
+and the separate advantage-proxy monitor are frozen. Only the flat residual
+actor and critic are trained. The waypoint bottleneck, goal-conditioned value,
+and navigator are not instantiated in this run.
 
 \subsection{C.6\quad Real-Robot Evaluation Protocol}
 
-The residual trained in imagination is evaluated on the physical robot. Since
-the venue changes but the algorithm does not, the comparison is the same one the
-simulated experiments make: the task's frozen base policy versus base $+$
-SHORE-RL residual. In each task the two conditions deploy the identical frozen base
-and identical controller and differ only in whether the residual is active.
+The residual trained in imagination is evaluated on the physical robot. We
+compare three conditions: the task's frozen base, base plus the flat ResFit
+residual, and base plus the waypoint-conditioned SHORE-RL residual. Within each
+task all conditions use the same frozen base, observation interface, controller,
+and fixed physical initial-state set; the two adapted conditions differ in the
+residual method.
 
 \paragraph{Trials.}
-$50$ trials per cell, drawn from a fixed initial-state set.
+$50$ trials per cell, using the fixed physical initial-state set stated in the
+main paper for all compared conditions. The available aggregate record does not
+preserve the per-trial initial-state assignment, trial order, or scorer metadata.
 
 \paragraph{Paired initial states.}
-The two conditions are evaluated from the \emph{same} physical initial configurations,
-so the comparison is paired rather than between independent samples. Tabletop
-object poses are restored from a marked template between trials; the pairing is
-what makes a $50$-trial difference interpretable at all, since initial-state
-difficulty on these tasks varies more than the effect we are trying to measure.
+The shared fixed set establishes set-level control of initial conditions, but it
+does not by itself establish a one-to-one pairing of individual trials.
+\todo{report the set's exact composition and reset procedure, and recover the
+trial-level initial-state labels needed to determine whether paired inference is
+valid.}
 
 \paragraph{Interleaving.}
-The two conditions alternate within a session rather than being run in blocks, so that
-session-level drift, such as lighting, gripper wear, or calibration, cannot be confounded
-with the condition.
+\todo{report whether conditions alternated within each session or were run in
+blocks, together with the session order needed to assess lighting, gripper-wear,
+and calibration drift.}
 
 \paragraph{Blind scoring.}
-Trials are recorded and scored offline against the Section~C.2 criteria by an
-annotator who is not told which condition produced the trial.
+\todo{report who scored the recorded trials, whether scoring was blind to the
+condition, and how disagreements or ambiguous trials were resolved.}
 
 \paragraph{Reporting.}
-We report the mean with its standard error, together with Wilson score $95\%$
-intervals for a binomial with $n=50$, which is better behaved than the normal
-approximation near the extremes where several of these cells sit. Because trials are
-paired, the primary comparison should additionally report the paired success difference,
-the two discordant-pair counts, and a paired confidence interval or exact McNemar test.
-\todo{pre-specify the paired statistical analysis and the treatment of aborted or invalid
-trials before unblinding condition labels.} We additionally report, per task, a breakdown
-of how many of the $50$ trials failed and in what
-manner (Table~\ref{tab:failmodes}), since an aggregate success rate cannot
-distinguish a residual that fixes the base's dominant failure from one that
-trades it for another.
+For each cell we report successes out of $50$, the empirical success rate, and
+its Wilson score $95\%$ interval, which is better behaved than the normal
+approximation near the extremes where several cells sit. The available result
+record preserves these marginal counts but not the trial-level pairing labels,
+so Table~\ref{tab:realresults} reports only a descriptive absolute difference.
+\todo{recover the paired trial-level outcomes and report the two discordant-pair
+counts, a paired confidence interval or exact McNemar test, and the treatment of
+aborted or invalid trials.} We retain a separate failure-analysis table below;
+its categories and counts remain unresolved because they cannot be recovered
+from marginal success rates.
 
 \subsection{C.7\quad Real-Robot Results and Failure Analysis}
 
-This subsection reports physical-robot performance only after the dynamics model passes
-all three validation axes of Section~C.4.4 and the paired protocol above is complete.
+The main paper reports learning curves at six checkpoints from step $0$ through
+$500$k. The retained aggregate physical-robot record contains $50$ trials per
+configuration and resolves the step-$0$ base and step-$500$k ResFit and SHORE-RL
+marginal success rates below; the dynamics-model validation metrics of
+Section~C.4.4 and paired inferential analysis remain to be reported.
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lccc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-Task & base & \textbf{SHORE-RL} & paired $\Delta$ \\
+Task & frozen base [95\% CI] & ResFit [95\% CI] & \textbf{SHORE-RL [95\% CI]} & SHORE-base \\
 \midrule
-\textsc{pick\_paper\_roll} & \todo{P1} & \todo{P1} & \todo{P1} \\
-\textsc{pick\_cup}         & \todo{P1} & \todo{P1} & \todo{P1} \\
-\textsc{build\_block}      & \todo{P1} & \todo{P1} & \todo{P1} \\
+\textsc{pick\_paper\_roll} & $11/50=0.22\ [0.13,0.35]$ & $14/50=0.28\ [0.17,0.42]$ & $\mathbf{21/50=0.42\ [0.29,0.56]}$ & $+0.20$ \\
+\textsc{build\_block}      & $ 5/50=0.10\ [0.04,0.21]$ & $ 0/50=0.00\ [0.00,0.07]$ & $\mathbf{14/50=0.28\ [0.17,0.42]}$ & $+0.18$ \\
+\textsc{pick\_cup}         & $ 6/50=0.12\ [0.06,0.24]$ & $ 1/50=0.02\ [0.00,0.10]$ & $\mathbf{16/50=0.32\ [0.21,0.46]}$ & $+0.20$ \\
 \bottomrule
 \end{tabular}
-\caption{Physical-robot success over paired initial states. Report successes out of $50$,
-success rate with Wilson $95\%$ interval for each configuration, paired difference with its interval,
-and the two discordant-pair counts in the text.}
+\caption{Physical-robot success for the frozen base (step $0$), ResFit (step
+$500$k), and SHORE-RL (step $500$k). Each entry reports successes out of $50$,
+success rate, and the Wilson $95\%$ interval. The final column is the
+descriptive SHORE-RL-minus-base difference between marginal rates, not a paired
+estimate.}
 \label{tab:realresults}
-\end{table}
+\end{table*}
 
-\todo{P1: fill Table~\ref{tab:realresults}; report the paired test, session count and dates,
-invalid-trial count, and whether all tasks used the same pre-registered initial-state set.}
+At step $500$k, SHORE-RL improves over the frozen base by $10$ additional
+successes on \textsc{pick\_paper\_roll}, $9$ on \textsc{build\_block}, and
+$10$ on \textsc{pick\_cup}. ResFit gains $3$ successes on
+\textsc{pick\_paper\_roll} but loses $5$ relative to the base on each of
+\textsc{build\_block} and \textsc{pick\_cup}. \todo{report the paired test, session count and
+dates, invalid-trial count, and whether each task's fixed initial-state set was
+pre-registered.}
 
 \begin{table}[t]
-\centering\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}llcc@{}}
+\centering\scriptsize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llccc@{}}
 \toprule
-Task & Failure mode & base & \textbf{SHORE-RL} \\
+Task & Failure statistic & base & ResFit & \textbf{SHORE-RL} \\
 \midrule
-\textsc{pick\_paper\_roll} & \multicolumn{3}{c}{\todo{P1}} \\
-\textsc{pick\_cup}         & \multicolumn{3}{c}{\todo{P1}} \\
-\textsc{build\_block}      & \multicolumn{3}{c}{\todo{P1}} \\
+\textsc{pick\_paper\_roll} & total failures & $39$ & $36$ & $29$ \\
+                             & mode breakdown & \multicolumn{3}{c}{\todo{P1}} \\
+\textsc{build\_block}      & total failures & $45$ & $50$ & $36$ \\
+                             & mode breakdown & \multicolumn{3}{c}{\todo{P1}} \\
+\textsc{pick\_cup}         & total failures & $44$ & $49$ & $34$ \\
+                             & mode breakdown & \multicolumn{3}{c}{\todo{P1}} \\
 \bottomrule
 \end{tabular}
-\caption{Failure-mode breakdown, counts out of $50$ trials per cell.
-\todo{P1: define the failure-mode categories per task from the recorded trials,
-with missed grasps, slips during transport, and misplacements as candidate categories, then fill. Categories
+\caption{Observed failure totals, counts out of $50$ trials per cell. Totals are
+$50$ minus the successes in Table~\ref{tab:realresults}; they do not identify
+why a trial failed. \todo{P1: define the failure-mode categories per task from
+the recorded trials, with missed grasps, slips during transport, and
+misplacements as candidate categories, then allocate the totals. Categories
 must be fixed before scoring, not after.}}
 \label{tab:failmodes}
 \end{table}
@@ -1271,17 +1469,16 @@ must be fixed before scoring, not after.}}
 \paragraph{The environment is a model.}
 The residual is optimized against $D$, not against the robot, so any systematic
 error in $D$ becomes a systematic bias in the learned residual. We bound the
-compounding with a recursion depth of two and test $D$ before use
-(Section~C.4.4), but neither eliminates the gap; the honest reading of this venue
-is that it trades an unbiased but unaffordable environment for a biased but
-cheap one.
+compounding with a recursion depth of two, but the retained command does not
+execute the held-out tests specified in Section~C.4.4. The honest reading of
+this venue is therefore that it trades an unbiased but unaffordable environment
+for a biased but cheap one whose quantitative validation remains incomplete.
 
-\paragraph{No environment reward to correct the potential.}
-In simulation the shaped reward sits alongside a real terminal success signal. In
-imagination it does not: the reward is derived entirely from changes in the learned
-potential. A
-mis-calibrated $V(s)$ therefore has nothing to correct it, which makes axis
-(iii) of Section~C.4.4 load-bearing rather than a nicety.
+\paragraph{The learned potential is not physical feedback.}
+The imagined objective contains only changes in the learned potential; there is
+no independently observed task reward or success terminal to correct it. A
+mis-calibrated $V(s)$ can therefore reinforce model bias, which makes the
+validation axes in Section~C.4.4 load-bearing rather than a nicety.
 
 \paragraph{Weak action conditioning.}
 As noted in Section~C.4.1, actions enter $D$ additively on the caption embedding.

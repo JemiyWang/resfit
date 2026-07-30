@@ -48,7 +48,7 @@
 @inproceedings{pan2022effects,
   title={The Effects of Reward Misspecification: Mapping and Mitigating Misaligned Models},
   author={Pan, Alexander and Bhatia, Kush and Steinhardt, Jacob},
-  booktitle={International Conference on Learning Representations (ICLR)},
+  booktitle={International Conference on Learning Representations},
   year={2022},
   url={https://arxiv.org/abs/2201.03544}
 }
@@ -101,7 +101,7 @@
 @inproceedings{fang2022ptp,
   title={Planning to Practice: Efficient Online Fine-Tuning by Composing Goals in Latent Space},
   author={Fang, Kuan and Yin, Patrick and Nair, Ashvin and Levine, Sergey},
-  booktitle={International Conference on Learning Representations (ICLR)},
+  booktitle={International Conference on Learning Representations},
   year={2022},
   url={https://openreview.net/forum?id=StZUCEaV1Zc}
 }
@@ -114,12 +114,21 @@
   year={2023},
   url={https://openreview.net/forum?id=cLQCCtVDuW}
 }
+@misc{peng2019awr,
+  title={Advantage-Weighted Regression: Simple and Scalable Off-Policy Reinforcement Learning},
+  author={Peng, Xue Bin and Kumar, Aviral and Zhang, Grace and Levine, Sergey},
+  year={2019},
+  eprint={1910.00177},
+  archivePrefix={arXiv},
+  url={https://arxiv.org/abs/1910.00177}
+}
+
 
 % ===== Model-based RL / learning in imagination =====
 @inproceedings{hafner2020dreamer,
   title={Dream to Control: Learning Behaviors by Latent Imagination},
   author={Hafner, Danijar and Lillicrap, Timothy and Ba, Jimmy and Norouzi, Mohammad},
-  booktitle={International Conference on Learning Representations (ICLR)},
+  booktitle={International Conference on Learning Representations},
   year={2020},
   url={https://openreview.net/forum?id=S1lOTC4tDS}
 }
@@ -134,26 +143,29 @@
 }
 
 % ===== Residual and latent-space RL =====
-@article{resfit2025residual,
+@inproceedings{resfit2025residual,
   title={Residual Off-Policy RL for Finetuning Behavior Cloning Policies},
   author={Ankile, Lars and Jiang, Zhenyu and Duan, Rocky and Shi, Guanya and Abbeel, Pieter and Nagabandi, Anusha},
-  journal={arXiv preprint arXiv:2509.19301},
-  year={2025},
-  note={ICLR 2026 Workshop on Recursive Self-Improvement},
+  booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  year={2026},
   url={https://arxiv.org/abs/2509.19301}
 }
 
 @inproceedings{wagenmaker2025dsrl,
   title={Steering Your Diffusion Policy with Latent Space Reinforcement Learning},
-  author={Wagenmaker, Andrew and Nakamoto, Mitsuhiko and Zhang, Yunchu and Park, Seohong and Yagoub, Waleed and Nagabandi, Anusha and Gupta, Abhishek and Levine, Sergey},
-  booktitle={Proceedings of the 9th Conference on Robot Learning (CoRL)},
+  author={Wagenmaker, Andrew and Zhang, Yunchu and Nakamoto, Mitsuhiko and Park, Seohong and Yagoub, Waleed and Nagabandi, Anusha and Gupta, Abhishek and Levine, Sergey},
+  booktitle={Proceedings of the 9th Conference on Robot Learning},
+  pages={258--282},
   year={2025},
-  url={https://openreview.net/forum?id=jU7AbGq3se}
+  volume={305},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v305/wagenmaker25a.html}
 }
 
 @inproceedings{yang2026rise,
-  title={{RISE}: Self-Improving Robot Policy with Compositional World Model},
-  author={Yang, Jiazhi and Lin, Kunyang and Li, Jinwei and Zhang, Wencong and Lin, Tianwei and Wu, Longyan and Su, Zhizhong and Zhao, Hao and Zhang, Ya-Qin and Chen, Li and Luo, Ping and Yue, Xiangyu and Li, Hongyang},
+  title={Self-Improving Robot Policy with Compositional World Model},
+  author={Yang, Jiazhi and Lin, Kunyang and Zhang, Wencong and Li, Jinwei and Lin, Tianwei and Wu, Longyan and Zhang, Ya-Qin and Zhao, Hao and Luo, Ping and Su, Zhizhong and Li, Hongyang and Yue, Xiangyu and Chen, Li},
   booktitle={Proceedings of Robotics: Science and Systems},
   year={2026},
   url={https://arxiv.org/abs/2602.11075}
@@ -163,7 +175,9 @@
   title={Residual Reinforcement Learning for Robot Control},
   author={Johannink, Tobias and Bahl, Shikhar and Nair, Ashvin and Luo, Jianlan and Kumar, Avinash and Loskyll, Matthias and Ojea, Juan Aparicio and Solowjow, Eugen and Levine, Sergey},
   booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  pages={6023--6029},
   year={2019},
+  doi={10.1109/ICRA.2019.8794127},
   url={https://arxiv.org/abs/1812.03201}
 }
 
@@ -182,7 +196,7 @@
 @inproceedings{kostrikov2022iql,
   title={Offline Reinforcement Learning with Implicit Q-Learning},
   author={Kostrikov, Ilya and Nair, Ashvin and Levine, Sergey},
-  booktitle={International Conference on Learning Representations (ICLR)},
+  booktitle={International Conference on Learning Representations},
   year={2022},
   url={https://openreview.net/forum?id=68n2s9ZJWF8}
 }
@@ -237,8 +251,10 @@
   title={DexMimicGen: Automated Data Generation for Bimanual Dexterous Manipulation via Imitation Learning},
   author={Jiang, Zhenyu and Xie, Yuqi and Lin, Kevin and Xu, Zhenjia and Wan, Weikang and Mandlekar, Ajay and Fan, Linxi and Zhu, Yuke},
   booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  pages={16923--16930},
   year={2025},
-  url={https://arxiv.org/abs/2410.24185}
+  doi={10.1109/ICRA55743.2025.11127809},
+  url={https://doi.org/10.1109/ICRA55743.2025.11127809}
 }
 
 @inproceedings{liu2023libero,
@@ -246,16 +262,19 @@
   author={Liu, Bo and Zhu, Yifeng and Gao, Chongkai and Feng, Yihao and Liu, Qiang and Zhu, Yuke and Stone, Peter},
   booktitle={Advances in Neural Information Processing Systems},
   volume={36},
+  pages={44776--44791},
   year={2023},
+  doi={10.52202/075280-1939},
   note={Datasets and Benchmarks Track},
   url={https://proceedings.neurips.cc/paper_files/paper/2023/hash/8c3c666820ea055a77726d66fc7d447f-Abstract-Datasets_and_Benchmarks.html}
 }
 
-@article{sima2026kai0,
+@misc{sima2026kai0,
   title={{$\chi_0$: Resource-Aware Robust Manipulation via Taming Distributional Inconsistencies}},
   author={Yu, Checheng and Sima, Chonghao and Jiang, Gangcheng and Zhang, Hai and Mai, Haoguang and Li, Hongyang and Wang, Huijie and Chen, Jin and Wu, Kaiyang and Chen, Li and Zhao, Lirui and Shi, Modi and Luo, Ping and Bu, Qingwen and Peng, Shijia and Li, Tianyu and Yuan, Yibo},
-  journal={arXiv preprint arXiv:2602.09021},
   year={2026},
+  eprint={2602.09021},
+  archivePrefix={arXiv},
   url={https://arxiv.org/abs/2602.09021}
 }
 
@@ -265,7 +284,9 @@
   author={Nakamoto, Mitsuhiko and Zhai, Simon and Singh, Anikait and Mark, Max Sobol and Ma, Yi and Finn, Chelsea and Kumar, Aviral and Levine, Sergey},
   booktitle={Advances in Neural Information Processing Systems},
   volume={36},
+  pages={62244--62269},
   year={2023},
+  doi={10.52202/075280-2719},
   url={https://proceedings.neurips.cc/paper_files/paper/2023/hash/c44a04289beaf0a7d968a94066a1d696-Abstract-Conference.html}
 }
 
@@ -350,11 +371,12 @@
 }
 
 
-@article{hacohen2025ltxvideo,
+@misc{hacohen2025ltxvideo,
   title={{LTX-Video}: Realtime Video Latent Diffusion},
   author={HaCohen, Yoav and Chiprut, Nisan and Brazowski, Benny and Shalem, Daniel and Moshe, Dudu and Richardson, Eitan and Levin, Eran and Shiran, Guy and Zabari, Nir and Gordon, Ori and Panet, Poriya and Weissbuch, Sapir and Kulikov, Victor and Bitterman, Yaki and Melumian, Zeev and Bibi, Ofir},
-  journal={arXiv preprint arXiv:2501.00103},
   year={2025},
+  eprint={2501.00103},
+  archivePrefix={arXiv},
   url={https://arxiv.org/abs/2501.00103}
 }
 
@@ -375,4 +397,143 @@
   booktitle={International Conference on Learning Representations},
   year={2023},
   url={https://openreview.net/forum?id=PqvMRDCJT9t}
+}
+
+
+@inproceedings{rajeswaran2018learning,
+  title={Learning Complex Dexterous Manipulation with Deep Reinforcement Learning and Demonstrations},
+  author={Rajeswaran, Aravind and Kumar, Vikash and Gupta, Abhishek and Vezzani, Giulia and Schulman, John and Todorov, Emanuel and Levine, Sergey},
+  booktitle={Proceedings of Robotics: Science and Systems},
+  year={2018},
+  address={Pittsburgh, Pennsylvania},
+  month={June},
+  doi={10.15607/RSS.2018.XIV.049},
+  url={https://www.roboticsproceedings.org/rss14/p49.html}
+}
+
+@inproceedings{harutyunyan2019hindsight,
+  title={Hindsight Credit Assignment},
+  author={Harutyunyan, Anna and Dabney, Will and Mesnard, Thomas and Azar, Mohammad Gheshlaghi and Piot, Bilal and Heess, Nicolas and van Hasselt, Hado P. and Wayne, Gregory and Singh, Satinder and Precup, Doina and Munos, Remi},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={32},
+  year={2019},
+  url={https://proceedings.neurips.cc/paper_files/paper/2019/hash/195f15384c2a79cedf293e4a847ce85c-Abstract.html}
+}
+
+@article{hung2019optimizing,
+  title={Optimizing Agent Behavior over Long Time Scales by Transporting Value},
+  author={Hung, Chia-Chun and Lillicrap, Timothy and Abramson, Josh and Wu, Yan and Mirza, Mehdi and Carnevale, Federico and Ahuja, Arun and Wayne, Greg},
+  journal={Nature Communications},
+  volume={10},
+  number={1},
+  pages={5223},
+  year={2019},
+  doi={10.1038/s41467-019-13073-w},
+  url={https://www.nature.com/articles/s41467-019-13073-w}
+}
+
+@article{sutton1999between,
+  title={Between {MDPs} and Semi-{MDPs}: A Framework for Temporal Abstraction in Reinforcement Learning},
+  author={Sutton, Richard S. and Precup, Doina and Singh, Satinder},
+  journal={Artificial Intelligence},
+  volume={112},
+  number={1--2},
+  pages={181--211},
+  year={1999},
+  doi={10.1016/S0004-3702(99)00052-1},
+  url={https://doi.org/10.1016/S0004-3702(99)00052-1}
+}
+
+@inproceedings{wu2023daydreamer,
+  title={DayDreamer: World Models for Physical Robot Learning},
+  author={Wu, Philipp and Escontrela, Alejandro and Hafner, Danijar and Abbeel, Pieter and Goldberg, Ken},
+  booktitle={Proceedings of the 6th Conference on Robot Learning},
+  pages={2226--2240},
+  year={2023},
+  volume={205},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v205/wu23c.html}
+}
+
+@inproceedings{buckman2018steve,
+  title={Sample-Efficient Reinforcement Learning with Stochastic Ensemble Value Expansion},
+  author={Buckman, Jacob and Hafner, Danijar and Tucker, George and Brevdo, Eugene and Lee, Honglak},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={31},
+  year={2018},
+  url={https://proceedings.neurips.cc/paper/2018/hash/f02208a057804ee16ac72ff4d3cec53b-Abstract.html}
+}
+
+@inproceedings{black2025pi05,
+  title={{${\pi}_{0.5}$}: A Vision-Language-Action Model with Open-World Generalization},
+  author={Black, Kevin and Brown, Noah and Darpinian, James and Dhabalia, Karan and Driess, Danny and Esmail, Adnan and Equi, Michael Robert and Finn, Chelsea and Fusai, Niccolo and Galliker, Manuel Y. and Ghosh, Dibya and Groom, Lachy and Hausman, Karol and Ichter, Brian and Jakubczak, Szymon and Jones, Tim and Ke, Liyiming and LeBlanc, Devin and Levine, Sergey and Li-Bell, Adrian and Mothukuri, Mohith and Nair, Suraj and Pertsch, Karl and Ren, Allen Z. and Shi, Lucy Xiaoyang and Smith, Laura and Springenberg, Jost Tobias and Stachowicz, Kyle and Tanner, James and Vuong, Quan and Walke, Homer and Walling, Anna and Wang, Haohuan and Yu, Lili and Zhilinsky, Ury},
+  booktitle={Proceedings of the 9th Conference on Robot Learning},
+  pages={17--40},
+  year={2025},
+  volume={305},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v305/black25a.html}
+}
+
+
+@inproceedings{nair2018overcoming,
+  title={Overcoming Exploration in Reinforcement Learning with Demonstrations},
+  author={Nair, Ashvin and McGrew, Bob and Andrychowicz, Marcin and Zaremba, Wojciech and Abbeel, Pieter},
+  booktitle={IEEE International Conference on Robotics and Automation (ICRA)},
+  pages={6292--6299},
+  year={2018},
+  doi={10.1109/ICRA.2018.8463162},
+  url={https://doi.org/10.1109/ICRA.2018.8463162}
+}
+
+@inproceedings{kulkarni2016hierarchical,
+  title={Hierarchical Deep Reinforcement Learning: Integrating Temporal Abstraction and Intrinsic Motivation},
+  author={Kulkarni, Tejas D. and Narasimhan, Karthik and Saeedi, Ardavan and Tenenbaum, Joshua B.},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={29},
+  year={2016},
+  url={https://proceedings.neurips.cc/paper_files/paper/2016/hash/f442d33fa06832082290ad8544a8da27-Abstract.html}
+}
+
+@inproceedings{wang2023diffusion,
+  title={Diffusion Policies as an Expressive Policy Class for Offline Reinforcement Learning},
+  author={Wang, Zhendong and Hunt, Jonathan J. and Zhou, Mingyuan},
+  booktitle={International Conference on Learning Representations},
+  year={2023},
+  url={https://iclr.cc/virtual/2023/poster/11133}
+}
+
+
+@inproceedings{andrychowicz2017hindsight,
+  title={Hindsight Experience Replay},
+  author={Andrychowicz, Marcin and Wolski, Filip and Ray, Alex and Schneider, Jonas and Fong, Rachel and Welinder, Peter and McGrew, Bob and Tobin, Josh and Abbeel, Pieter and Zaremba, Wojciech},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={30},
+  year={2017},
+  url={https://proceedings.neurips.cc/paper/2017/hash/453fadbd8a1a3af50a9df4df899537b5-Abstract.html}
+}
+
+@article{dietterich2000maxq,
+  title={Hierarchical Reinforcement Learning with the {MAXQ} Value Function Decomposition},
+  author={Dietterich, Thomas G.},
+  journal={Journal of Artificial Intelligence Research},
+  volume={13},
+  pages={227--303},
+  year={2000},
+  doi={10.1613/jair.639},
+  url={https://jair.org/index.php/jair/article/view/10266}
+}
+
+@inproceedings{pertsch2021accelerating,
+  title={Accelerating Reinforcement Learning with Learned Skill Priors},
+  author={Pertsch, Karl and Lee, Youngwoon and Lim, Joseph},
+  booktitle={Proceedings of the 2020 Conference on Robot Learning},
+  pages={188--204},
+  year={2021},
+  volume={155},
+  series={Proceedings of Machine Learning Research},
+  publisher={PMLR},
+  url={https://proceedings.mlr.press/v155/pertsch21a.html}
 }

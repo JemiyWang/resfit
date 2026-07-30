@@ -53,7 +53,7 @@ def render_curve(
         }
     )
 
-    fig, ax = plt.subplots(figsize=(4.5, 2.0), dpi=100)
+    fig, ax = plt.subplots(figsize=(4.5, 3.2), dpi=100)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
@@ -72,30 +72,30 @@ def render_curve(
     ax.set_xlim(0.0, 500.0)
     ax.set_ylim(0.0, 1.0)
     ax.set_xticks(np.arange(0.0, 501.0, 100.0))
-    ax.set_yticks([0.0, 0.25, 0.50, 0.75, 1.0])
-    ax.set_yticklabels(["0.00", "0.25", "0.50", "0.75", "1.00"])
-    ax.set_xlabel("Env steps (k)", fontsize=14, labelpad=3)
-    ax.set_ylabel("Eval success rate", fontsize=14, labelpad=4)
+    ax.set_yticks([0.0, 0.5, 1.0])
+    ax.set_yticklabels(["0.0", "0.5", "1.0"])
+    ax.set_xlabel("Env steps (k)", fontsize=24, labelpad=3)
+    ax.set_ylabel("Eval success rate", fontsize=24, labelpad=4)
 
-    ax.grid(axis="y", color="#E6E6E6", linewidth=0.8)
+    ax.grid(axis="y", color="#E6E6E6", linewidth=0.6)
     ax.set_axisbelow(True)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color("#333333")
-        ax.spines[side].set_linewidth(1.4)
+    ax.spines["top"].set_visible(True)
+    ax.spines["right"].set_visible(True)
+    for side in ("left", "bottom", "top", "right"):
+        ax.spines[side].set_color("#52514E")
+        ax.spines[side].set_linewidth(0.8)
     ax.tick_params(
         axis="both",
-        color="#333333",
-        labelcolor="#333333",
-        labelsize=12,
-        width=1.4,
-        length=4,
+        color="#52514E",
+        labelcolor="#52514E",
+        labelsize=20,
+        width=0.8,
+        length=3,
         direction="out",
         pad=2,
     )
 
-    fig.subplots_adjust(left=0.20, right=0.95, bottom=0.29, top=0.81)
+    fig.subplots_adjust(left=0.25, right=0.91, bottom=0.28, top=0.72)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_format = output_path.suffix.lstrip(".").lower()
     metadata = {"Date": None} if output_format == "svg" else None
@@ -115,13 +115,13 @@ def render_curve(
 def main() -> None:
     failure, failure_spread, success, success_spread = build_curve_data()
     render_curve(
-        OUTPUT_DIR / "framework_curve_failure.svg",
+        OUTPUT_DIR / "framework_curve_failure_readable.svg",
         failure,
         failure_spread,
         "#F6C1C8",
     )
     render_curve(
-        OUTPUT_DIR / "framework_curve_success.svg",
+        OUTPUT_DIR / "framework_curve_success_readable.svg",
         success,
         success_spread,
         "#46A253",

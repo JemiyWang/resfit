@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1080" viewBox="0 0 1800 1080">
+  <defs>
+    <style>
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 34px; font-weight: 700; fill: #1f2933; }
+      .panelTitle { font-family: Arial, Helvetica, sans-serif; font-size: 25px; font-weight: 700; fill: #1f2933; }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 21px; font-weight: 700; fill: #1f2933; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 18px; fill: #314152; }
+      .tiny { font-family: Arial, Helvetica, sans-serif; font-size: 15px; fill: #465667; }
+      .formula { font-family: "Courier New", monospace; font-size: 18px; fill: #1f2933; }
+      .box { stroke-width: 2.4; rx: 12; ry: 12; }
+      .card { stroke-width: 2.2; rx: 10; ry: 10; filter: drop-shadow(0 3px 6px rgba(31, 41, 51, 0.12)); }
+      .arrow { fill: none; stroke: #415367; stroke-width: 3; marker-end: url(#arrow); }
+      .arrowBlue { fill: none; stroke: #2463a6; stroke-width: 3.2; marker-end: url(#arrowBlue); }
+      .arrowGreen { fill: none; stroke: #237a57; stroke-width: 3.2; marker-end: url(#arrowGreen); }
+      .arrowOrange { fill: none; stroke: #b35a16; stroke-width: 3.2; marker-end: url(#arrowOrange); }
+      .arrowRed { fill: none; stroke: #b42318; stroke-width: 3.2; marker-end: url(#arrowRed); }
+      .dash { stroke-dasharray: 10 8; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#415367"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2463a6"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#237a57"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#b35a16"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#b42318"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1080" fill="#fbfcfd"/>
+  <text x="70" y="64" class="title">HiRes-RL: Making Long-Horizon Residual Finetuning Work by Short-Horizon Decomposition</text>
+
+  <rect x="55" y="110" width="765" height="815" fill="#eef6ff" stroke="#9bc1e6" class="box"/>
+  <text x="85" y="152" class="panelTitle">Long-horizon task: direct residual finetuning fails; decomposition succeeds</text>
+
+  <rect x="100" y="205" width="670" height="265" fill="#ffffff" stroke="#ef9f98" class="card"/>
+  <text x="130" y="245" class="label">Direct long-horizon residual correction</text>
+  <text x="130" y="276" class="small">one distant sparse goal gives little feedback to the residual</text>
+  <circle cx="150" cy="365" r="18" fill="#f1f3f5" stroke="#64748b" stroke-width="2"/>
+  <text x="142" y="371" class="tiny">s</text>
+  <circle cx="720" cy="365" r="18" fill="#fff1f1" stroke="#b42318" stroke-width="2"/>
+  <text x="711" y="371" class="tiny">g</text>
+  <path d="M170 365 C285 245 420 270 510 345 C585 407 640 425 700 365" class="arrowRed dash"/>
+  <rect x="315" y="330" width="200" height="64" fill="#ffe7e5" stroke="#b42318" rx="9" ry="9"/>
+  <text x="342" y="355" class="formula">a_b + a_res</text>
+  <text x="350" y="380" class="small" fill="#b42318">drift / collapse</text>
+  <path d="M395 408 L435 448" stroke="#b42318" stroke-width="4"/>
+  <path d="M435 408 L395 448" stroke="#b42318" stroke-width="4"/>
+
+  <rect x="100" y="560" width="670" height="285" fill="#ffffff" stroke="#557da3" class="card"/>
+  <text x="130" y="600" class="label">HiRes-RL reformulation</text>
+  <text x="130" y="631" class="small">convert one long task into a chain of nearby short-horizon subgoals</text>
+  <circle cx="150" cy="725" r="18" fill="#f1f3f5" stroke="#64748b" stroke-width="2"/>
+  <text x="142" y="731" class="tiny">s</text>
+  <circle cx="285" cy="675" r="21" fill="#e8f2ff" stroke="#2463a6" stroke-width="2"/>
+  <text x="273" y="682" class="tiny">z1</text>
+  <circle cx="420" cy="725" r="21" fill="#e8f2ff" stroke="#2463a6" stroke-width="2"/>
+  <text x="408" y="732" class="tiny">z2</text>
+  <circle cx="555" cy="675" r="21" fill="#e8f2ff" stroke="#2463a6" stroke-width="2"/>
+  <text x="543" y="682" class="tiny">z3</text>
+  <circle cx="720" cy="725" r="18" fill="#eaf8f1" stroke="#237a57" stroke-width="2"/>
+  <text x="711" y="731" class="tiny">g</text>
+  <path d="M168 720 C200 695 240 682 264 676" class="arrowBlue"/>
+  <path d="M306 679 C340 690 372 707 400 719" class="arrowBlue"/>
+  <path d="M441 719 C478 695 520 681 535 676" class="arrowBlue"/>
+  <path d="M576 682 C622 702 668 718 702 723" class="arrowGreen"/>
+  <rect x="250" y="775" width="365" height="48" fill="#dff0ff" stroke="#2463a6" rx="9" ry="9"/>
+  <text x="275" y="806" class="formula">each segment = short residual correction</text>
+
+  <rect x="865" y="110" width="880" height="815" fill="#fff6ec" stroke="#efb47a" class="box"/>
+  <text x="895" y="152" class="panelTitle">Online HiRes-RL with a frozen trained base model</text>
+
+  <rect x="910" y="205" width="265" height="120" fill="#f1f3f5" stroke="#6f7d8d" class="card"/>
+  <text x="940" y="242" class="label">Frozen trained base</text>
+  <text x="940" y="273" class="formula">pi_b(o_t) -&gt; a_b</text>
+  <text x="940" y="302" class="tiny">BC policy is fixed</text>
+
+  <rect x="1270" y="205" width="390" height="120" fill="#fff9ed" stroke="#b35a16" class="card"/>
+  <text x="1300" y="242" class="label">Online HiRes-RL</text>
+  <text x="1300" y="273" class="small">learns only a small residual correction</text>
+  <text x="1300" y="302" class="formula">a = a_b + s_a a_res</text>
+
+  <path d="M1175 265 L1270 265" class="arrowOrange"/>
+  <text x="1197" y="244" class="tiny" fill="#b35a16">base action a_b</text>
+
+  <rect x="910" y="400" width="790" height="455" fill="#ffffff" stroke="#d0d7df" class="card"/>
+  <text x="940" y="440" class="label">Inside online HiRes-RL</text>
+
+  <rect x="950" y="495" width="210" height="95" fill="#f1f3f5" stroke="#6f7d8d" class="card"/>
+  <text x="978" y="530" class="label">Base features</text>
+  <text x="978" y="560" class="formula">psi(o_t)</text>
+  <text x="978" y="582" class="tiny">ACT / pi0 encoder</text>
+
+  <rect x="1225" y="475" width="250" height="135" fill="#dff0ff" stroke="#2463a6" class="card"/>
+  <text x="1255" y="512" class="label">Latent planner</text>
+  <text x="1255" y="543" class="formula">learned progress model</text>
+  <text x="1255" y="573" class="formula">pi_nav(s,g) -&gt; z_t</text>
+  <text x="1255" y="596" class="tiny">trained from demos</text>
+
+  <rect x="1515" y="495" width="145" height="95" fill="#e8f2ff" stroke="#2463a6" class="card"/>
+  <text x="1544" y="531" class="label">Subgoal</text>
+  <text x="1545" y="562" class="formula">z_t</text>
+
+  <rect x="980" y="675" width="265" height="88" fill="#ffe7cc" stroke="#b35a16" class="card"/>
+  <text x="1010" y="710" class="label">Residual actor</text>
+  <text x="1010" y="740" class="formula">pi_res(o_t,a_b,z_t) -&gt; a_res</text>
+
+  <rect x="1315" y="675" width="285" height="88" fill="#fff3d8" stroke="#b35a16" class="card"/>
+  <text x="1345" y="710" class="label">Residual critic</text>
+  <text x="1345" y="740" class="formula">Q(o_t,a_b,z_t,a_res)</text>
+
+  <rect x="1280" y="790" width="355" height="58" fill="#eaf8f1" stroke="#237a57" class="card"/>
+  <text x="1310" y="814" class="label">Dense reward shaping</text>
+  <text x="1310" y="839" class="formula">r_dense = r + gamma Phi(s') - Phi(s)</text>
+
+  <path d="M1160 542 L1225 542" class="arrowBlue"/>
+  <path d="M1475 542 L1515 542" class="arrowBlue"/>
+  <path d="M1588 590 C1530 632 1438 658 1225 698" class="arrowBlue"/>
+  <path d="M1588 590 C1565 635 1538 660 1500 675" class="arrowBlue"/>
+  <path d="M1245 720 L1315 720" class="arrowOrange"/>
+  <path d="M1458 790 L1458 763" class="arrowGreen"/>
+  <path d="M1270 325 C1238 430 1115 550 1115 675" class="arrowOrange"/>
+  <text x="1130" y="646" class="tiny" fill="#b35a16">a_b</text>
+  <path d="M1458 675 C1415 635 1395 600 1390 610" class="arrowGreen"/>
+
+  <rect x="65" y="955" width="1680" height="82" fill="#ffffff" stroke="#d5dce3" class="box"/>
+  <text x="95" y="990" class="label">Main message:</text>
+  <text x="250" y="990" class="small">direct long-horizon residual finetuning is unstable; HiRes-RL decomposes the long horizon into short subgoals.</text>
+  <text x="250" y="1018" class="small">The frozen base supplies a_b, while online HiRes-RL learns residual corrections toward each nearby z_t.</text>
+</svg>

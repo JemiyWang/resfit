@@ -112,7 +112,13 @@ class FigureContractTest(unittest.TestCase):
     def test_plot_uses_single_column_physical_size(self):
         self.assertEqual(
             getattr(ablation_plot, "FIGSIZE_INCHES", None),
-            (3.35, 2.30),
+            (3.35, 1.38),
+        )
+
+    def test_compressed_plot_reserves_space_for_unchanged_text(self):
+        self.assertEqual(
+            getattr(ablation_plot, "AXES_BOTTOM_FRACTION", None),
+            0.46,
         )
 
     def test_inventory_matches_two_panel_figure_five_selection(self):
@@ -153,7 +159,8 @@ class FigureContractTest(unittest.TestCase):
             image = plt.imread(out_png)
             self.assertGreater(image.shape[1], 500)
             self.assertLess(image.shape[1], 700)
-            self.assertLess(image.shape[0], 440)
+            self.assertGreater(image.shape[0], 220)
+            self.assertLess(image.shape[0], 300)
             rgb = (image[:, :, :3] * 255).round().astype(int)
             rendered_colors = {
                 tuple(color) for color in rgb.reshape(-1, 3)

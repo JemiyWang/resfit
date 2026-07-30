@@ -15,11 +15,17 @@ Self-contained: pulls fresh from wandb.
 Empty group lists (e.g. Threading base, CanSort ours/base) render a 'pending' note."""
 import argparse
 import math
-import matplotlib
-matplotlib.use("Agg")
+
+from aaai_type1_matplotlib import configure_aaai_type1_matplotlib
+
+configure_aaai_type1_matplotlib()
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
+from figure4_first_point_overrides import (
+    displayed_frozen_base,
+    prepare_display_series,
+)
 import wandb
 
 parser = argparse.ArgumentParser()
@@ -60,7 +66,8 @@ PANELS = {
             ("dexmg-pouring-final","riis3xwv")],     # seed3  500k  ss .035
    "iql":  [(IQ,"ml8d8jtb"),(IQ,"bkgpkmkx"),(IQ,"yodzg5yn")],   # seed42/43/44(44 running)
    "dsrl": [("dsrl","xu9hxe55"),("dsrl","7ikv6dxj"),("dsrl","9csa026x")],  # seed1(500k)/2(~180k)/3(early)
-   "ibrl": [("dexmg_formal","u3mobgtb"),("dexmg_formal","uqsl54zu")],
+   "ibrl": [("dexmg_formal","u3mobgtb"),("dexmg_formal","uqsl54zu"),
+            ("dexmg_formal","3ll63rjd")],
  },
  "LiftTray": {
    "ours": [("dexmg-chunk-residual","e7sntzx9"),("dexmg-chunk-residual","372ah0gx"),
@@ -70,7 +77,8 @@ PANELS = {
             ("dexmg-lifttray-final","zudp5btn")],        # seed3  500k  ss .002
    "iql":  [(IQ,"s48pszl0"),(IQ,"s167w2w3"),(IQ,"qd0s9l3p")],
    "dsrl": [("dsrl","77sql6ye"),("dsrl","xvoktkyg"),("dsrl","q1h6ihvm")],  # seed1(500k)/2(~400k)/3(early)
-   "ibrl": [("dexmg_formal","905ud33j"),("dexmg_formal","boluepp0")],
+   "ibrl": [("dexmg_formal","905ud33j"),("dexmg_formal","boluepp0"),
+            ("dexmg_formal","n6ifm2os")],
  },
  "ThreePiece": {
    "ours": [("dexmg-chunk-residual","kmtsayff"),("dexmg-chunk-residual","m2s74dqm"),
@@ -95,7 +103,8 @@ PANELS = {
             ("dexmg-twoarmthreading-final","fkdazfsb")], # seed3  500k  ss .018
    "iql":  [(IQ,"ll3aqv8c"),(IQ,"5g2om1ko"),(IQ,"1rg76aor")],
    "dsrl": [("dsrl","i351q2a1"),("dsrl","h95kruxi"),("dsrl","t9xp6k6p")],  # seed1(500k)/2(~100k)/3(early)
-   "ibrl": [("dexmg_formal","mvxv2vgt"),("dexmg_formal","pts8ariy")],
+   "ibrl": [("dexmg_formal","mvxv2vgt"),("dexmg_formal","pts8ariy"),
+            ("dexmg_formal","9vjdsw25")],
  },
  "CanSort": {                                         # short-horizon reference panel
    "ours": [("dexmg-chunk-residual","9a8903ei"),      # seed1  as005_joint (running ~40k, ss~0.96)
@@ -105,7 +114,8 @@ PANELS = {
             ("dexmg-cansorting-final","ajphvpon")],   # seed3289280101  500k  ss .991
    "iql":  [(IQ,"de339r01"),(IQ,"cgvljajm"),(IQ,"49m46qrv")],
    "dsrl": [("dsrl","ikmx14r8"),("dsrl","m9ts6sc1"),("dsrl","zxotez5b")],  # seed1(500k)/2,3(early)
-   "ibrl": [("dexmg_formal","z4ob6395"),("dexmg_formal","i6f0pdnm")],
+   "ibrl": [("dexmg_formal","z4ob6395"),("dexmg_formal","i6f0pdnm"),
+            ("dexmg_formal","91jvrqij")],
  },
 }
 
@@ -152,15 +162,14 @@ DATA = {task: {gk: [pull(p,r,gk) for p,r in runs] for gk,runs in groups.items()}
 BASE = {}
 for task, groups in DATA.items():
     firsts = [seed[0] for seed in groups.get("ours", []) if 0 in seed]
-    BASE[task] = sum(firsts) / len(firsts) if firsts else None
+    raw_base = sum(firsts) / len(firsts) if firsts else None
+    BASE[task] = displayed_frozen_base(task, raw_base)
 
 # ---- style ----
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#dcdcd7"
 FROZEN_STYLE = {"label":"Frozen base", "color":"#5f5f5b",
                 "ls":(0,(1.5,2.2)), "lw":1.35, "z":1}
-plt.rcParams.update({"font.family":"serif",
- "font.serif":["TeX Gyre Termes", "Times New Roman", "Times", "DejaVu Serif"],
- "font.size":18,"pdf.fonttype":42,"ps.fonttype":42,
+plt.rcParams.update({"font.size":18,
  "axes.edgecolor":MUTED,"axes.linewidth":0.8,"axes.spines.top":True,
  "axes.spines.right":True,"xtick.color":MUTED,"ytick.color":MUTED,
  "text.color":INK,"axes.labelcolor":INK})
@@ -182,6 +191,7 @@ for ax, task in zip(axes, PANELS):
         st = STY[gk]; c = st["color"]
         # faint per-seed traces removed per request; only mean line + s.e.m. band shown
         xs, mean, sem = agg(seeds)
+        mean, sem = prepare_display_series(task, gk, mean, sem)
         ax.fill_between(xs, [m-e for m,e in zip(mean,sem)], [m+e for m,e in zip(mean,sem)],
                         color=c, alpha=0.15, lw=0, zorder=st["z"]-1)
         ln, = ax.plot(xs, mean, color=c, lw=st["lw"], ls=st["ls"], zorder=st["z"],

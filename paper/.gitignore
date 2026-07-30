@@ -9,10 +9,7 @@
 *.toc
 *.lof
 *.lot
-*.bbl
-*.orig
 main.pdf
-aaai2027-unified-supp.pdf
 
 # 编辑备份(沿用 resfit 仓库约定)
 *.bak_*

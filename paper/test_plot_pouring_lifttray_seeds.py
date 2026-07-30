@@ -8,10 +8,12 @@ EXPECTED_IBRL_RUNS = {
     "Pouring": [
         ("dexmg_formal", "u3mobgtb"),
         ("dexmg_formal", "uqsl54zu"),
+        ("dexmg_formal", "3ll63rjd"),
     ],
     "LiftTray": [
         ("dexmg_formal", "905ud33j"),
         ("dexmg_formal", "boluepp0"),
+        ("dexmg_formal", "n6ifm2os"),
     ],
     "ThreePiece": [
         ("dexmg_formal", "p7uomccw"),
@@ -21,10 +23,12 @@ EXPECTED_IBRL_RUNS = {
     "Threading": [
         ("dexmg_formal", "mvxv2vgt"),
         ("dexmg_formal", "pts8ariy"),
+        ("dexmg_formal", "9vjdsw25"),
     ],
     "CanSort": [
         ("dexmg_formal", "z4ob6395"),
         ("dexmg_formal", "i6f0pdnm"),
+        ("dexmg_formal", "91jvrqij"),
     ],
 }
 
@@ -55,8 +59,8 @@ class IBRLPlotContractTest(unittest.TestCase):
         actual = extract_ibrl_runs(text)
         self.assertEqual(actual, EXPECTED_IBRL_RUNS)
         flattened = [run for task_runs in actual.values() for run in task_runs]
-        self.assertEqual(len(flattened), 11)
-        self.assertEqual(len(set(flattened)), 11)
+        self.assertEqual(len(flattened), 15)
+        self.assertEqual(len(set(flattened)), 15)
         self.assertIn('"score/score"', text)
         self.assertIn('"other/step"', text)
         self.assertIn(

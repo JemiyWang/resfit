@@ -15,12 +15,11 @@
 \usepackage{natbib}  % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
 \usepackage{caption} % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
 \frenchspacing  % DO NOT CHANGE THIS
-\setlength{\pdfpagewidth}{8.5in} % DO NOT CHANGE THIS
-\setlength{\pdfpageheight}{11in} % DO NOT CHANGE THIS
 
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{multirow}
 
 \pdfinfo{
@@ -29,18 +28,11 @@
 
 \setcounter{secnumdepth}{2}
 
-% ---- float placement: let more floats land near their text ----
-\setcounter{topnumber}{3}
-\setcounter{totalnumber}{4}
-\renewcommand{\topfraction}{0.9}
-\renewcommand{\textfraction}{0.05}
-\renewcommand{\floatpagefraction}{0.7}
-
 % ---- draft-only helper (remove before submission) ----
 \newcommand{\todo}[1]{\textbf{[TODO: #1]}}
 \newcounter{algorithm}
 
-\title{SHORE-RL: Shortening the Horizon for Long-Horizon Residual\\
+\title{SHORE-RL: Shortening Effective Horizons for Long-Horizon Residual\\
 Reinforcement Learning}
 
 \author{Anonymous Submission}
@@ -54,15 +46,12 @@ Reinforcement Learning}
 Behavior-cloned manipulation policies, including modern vision-language-action (VLA)
 models, are strong but bounded by the quality of the demonstrations they imitate. Freezing such a cloned
 base policy and learning a small additive residual with off-policy RL is an effective way to
-improve beyond this ceiling. On long-horizon manipulation, however, the
-evaluated RL-finetuning methods fail to sustain improvement and finish below
-the frozen base policy. \textbf{SHORE-RL} addresses this late-training collapse
-by reducing the long horizon to a sequence of short ones, so that each residual
+improve beyond this ceiling. On long-horizon manipulation tasks, however, RL fine-tuning can fail to sustain its gains and ultimately underperform the frozen base policy.
+Without shortening the physical episode or replacing the task-level return objective, \textbf{SHORE-RL} reduces two complementary effective learning horizons: nearby latent waypoints localize each residual decision, while dense progress rewards reduce the delay between actions and informative critic feedback. Thus each residual
 correction is conditioned on a nearby, self-derived target rather than only on
 a long, sparsely rewarded trajectory. SHORE-RL is a base-policy-agnostic
 plug-in: a navigator extracts latent waypoints (\emph{where to go}) from a
-goal-conditioned value learned on frozen base-policy features, without
-object-pose or goal-distance inputs, while a separate critic-reward path
+goal-conditioned value learned on frozen base-policy features, while a separate critic-reward path
 provides dense progress feedback (\emph{how well the policy is doing}). In
 simulation, SHORE-RL achieves high and sustained success rates on four
 long-horizon DexMimicGen tasks, while action-space residual, noise-space,
@@ -79,28 +68,47 @@ Behavior-cloned (BC) manipulation policies provide a strong control prior, but t
 inherit the errors and coverage limits of their demonstrations~\cite{ross2011dagger,mandlekar2021matters}. Residual
 reinforcement learning (RL) offers a parameter-efficient route beyond this ceiling:
 it freezes the pretrained policy and learns only a bounded additive action
-correction~\cite{johannink2019residual}. Recent frozen-policy adaptation methods show
+correction~\cite{johannink2019residual}. Recent frozen-policy residual methods show
 that restricting the trainable component can make online finetuning substantially
-more sample efficient~\cite{ball2023efficient,resfit2025residual}. This restriction,
+more sample efficient~\cite{resfit2025residual}. This restriction,
 however, acts on the \emph{adaptation space}, not its temporal span: ResFit
 still optimizes every local correction from the task-level return over the remaining
 episode.
 
-We study late-training collapse in long-horizon residual finetuning. Across the
-evaluated methods, some policies improve transiently whereas others degrade
-earlier, but their long-horizon performance eventually falls below the same
-frozen base reference. In a controlled horizon comparison, ResFit remains
-stable on the shorter-horizon task but collapses on long-horizon, sparsely
-rewarded manipulation. This pattern identifies extended temporal composition
-as the central empirical factor in our setting. Sparse delayed
-feedback~\cite{arjona2019rudder} also provides a mechanism-level explanation:
-each correction receives weak local evidence of whether it helps, while critic
-error and residual drift can accumulate over the remaining trajectory. We use
-this analysis to motivate the design, not to claim that any one mechanism is
-the independently established cause of collapse.
+We study the instability of long-horizon residual finetuning.
+Residual RL can improve a frozen base policy on shorter-horizon
+manipulation tasks, yet on long-horizon tasks it may fail to achieve
+or sustain such gains, with performance eventually falling below that
+of the frozen base. Figure~\ref{fig:vanilla-collapse} illustrates this
+failure pattern using ResFit~\cite{resfit2025residual}, a representative
+frozen-policy residual RL method. Its aggregate performance improves
+over the frozen-base initialization and remains stable across the
+evaluated shorter-horizon tasks, but collapses across the evaluated
+long-horizon, sparsely rewarded tasks. We interpret this association
+through two coupled challenges. First, without a nearby target,
+deviations induced by local residual corrections may compound over time,
+consistent with sequential compounding-error arguments~\cite{ross2011dagger}.
+Second, sparse and delayed rewards weaken credit assignment and complicate
+critic estimation~\cite{arjona2019rudder,
+harutyunyan2019hindsight,hung2019optimizing,
+andrychowicz2017hindsight}. We refer to these challenges, respectively,
+as a long decision-conditioning horizon for the residual actor and a
+long feedback horizon for the critic.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figure/fig_vanilla_collapse.pdf}
+\caption{Effective Horizon-dependent collapse of vanilla residual RL. (a,b)
+Representative RoboMimicGen \textsc{Can} (short-horizon) and
+DexMimicGen \textsc{PieceAssembly} (long-horizon) tasks. (c) Median with
+min--max band across four shorter-horizon tasks
+(green; mean successful trajectory: 121 steps) and four
+longer-horizon tasks (red; 298 steps).}
+\label{fig:vanilla-collapse}
+\end{figure}
 
 Our central question is whether residual finetuning can remain stable on
-long-horizon, sparse-reward tasks by shortening the effective objective horizon
+long-horizon, sparse-reward tasks by shortening the effective horizon
 faced by each correction. We separate two roles. On the actor path, a nearby
 latent waypoint conditions the residual policy and localizes its target. On the
 critic path, an independent progress signal supplies dense shaped rewards; it
@@ -109,21 +117,20 @@ identify late-training collapse, and final-window success rate summarizes
 whether an improvement is sustained.
 
 We introduce \textbf{SHORE-RL}, a horizon-shortening framework for frozen-policy
-residual adaptation. A navigator learned from demonstrations proposes latent waypoints
-from frozen base-policy features, without simulator-only object poses, goal
-coordinates, or geometric distance-to-goal signals. These waypoints condition the
-residual actor and critic but remain separate from reward construction. A
+residual adaptation. We distinguish the physical task horizon from two effective learning horizons. SHORE-RL does not change the episode length or replace the global return objective. Instead, it reduces (i) the decision-conditioning horizon by providing each residual correction with a nearby latent waypoint, and (ii) the feedback horizon by providing transition-level progress rewards. A navigator learned from demonstrations proposes latent waypoints
+from frozen base-policy features. These waypoints condition the residual actor
+and critic but remain separate from reward construction. A
 separate path supplies dense rewards only to the TD3 critic:
 the main simulation study uses a hand-designed per-stage bonus, and a
 self-derived alternative uses differences of a learned single-state potential.
 The goal-conditioned waypoint value and learned potential remain functionally
 independent. We finally study real-robot learning through a learned dynamics
-model as an extension of the same residual objective.
+model as an extension of the same residual objective. Our main contributions are threefold:
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figure/framework.pdf}
-\caption{\textbf{Overview of SHORE-RL.}
+\includegraphics[width=\textwidth]{figure/framework_outlined.pdf}
+\caption{Overview of SHORE-RL.
 \emph{Upper left:} Direct long-horizon navigation provides weak local feedback
 and can lead to a failure trajectory, whereas latent waypoints shorten the
 effective horizon by decomposing the task into local navigation segments.
@@ -136,26 +143,20 @@ independent dense progress reward trains the TD3 critic without consuming or
 evaluating the waypoint.}
 \label{fig:framework}
 \end{figure*}
-
-\paragraph{Contributions.}
-\begin{enumerate}
-\item \textbf{A long-horizon failure pattern and mechanism analysis.} We show
-empirically that existing RL-finetuning methods fall below their frozen bases
-on long-horizon tasks while ResFit remains stable on a shorter-horizon control.
-We connect this pattern to sparse delayed credit and the accumulation of critic
-error and residual drift, and quantify sustained performance with final-window
-success rate.
-\item \textbf{Waypoint-conditioned residual RL.} To our knowledge, SHORE-RL is
-the first RL-finetuning method to use latent waypoints to shorten the objective
-horizon of a frozen-base residual. It is a base-policy-agnostic plug-in that
-requires neither simulator-only object poses, goal coordinates, nor geometric
-distance-to-goal inputs.
-\item \textbf{Evidence across tasks and base policies.} We evaluate sustained
-performance against action-space, noise-space, imitation-bootstrapped, and
-full-policy baselines on long-horizon manipulation, test the plug-in with ACT
-and $\pi_0$, compare a stage bonus with a stage-detector-free learned
-potential, and extend the residual objective to real-robot imagination.
-\end{enumerate}
+\begin{itemize}
+\item We introduce SHORE-RL, a residual RL framework that shortens the
+effective horizon along two complementary axes: learned latent waypoints
+temporally localize residual action selection, while an independent progress
+reward reduces feedback delay for critic learning.
+\item We design SHORE-RL as a plug-in adapter that keeps the pretrained base
+policy frozen and learns a waypoint-conditioned residual around its nominal
+actions. The same adaptation framework applies to distinct base-policy
+families, as demonstrated with ACT and $\pi_0$.
+\item We extensively evaluate SHORE-RL on long-horizon simulation tasks and
+three real-robot tasks. The study compares against action-space residual,
+noise-space, imitation-bootstrapped, and full-policy RL baselines and includes
+component and reward-form ablations.
+\end{itemize}
 
 % =====================================================================
 \section{Related Work}
@@ -164,8 +165,8 @@ potential, and extend the residual objective to real-robot imagination.
 \paragraph{RL Finetuning of Imitation Policies.}
 Behavior cloning provides a strong initialization for robot control but remains limited
 by demonstration quality and coverage~\cite{ross2011dagger,mandlekar2021matters}. Online RL can improve this initialization, and
-prior-data methods improve sample efficiency by mixing demonstrations with newly
-collected transitions~\cite{ball2023efficient,nakamoto2023calql,zhang2023pex,li2023explore}. IBRL retains the imitation policy as an
+prior-data methods improve sample efficiency by leveraging demonstrations or offline
+experience during online learning~\cite{ball2023efficient,nakamoto2023calql,zhang2023pex,li2023explore,rajeswaran2018learning,nair2018overcoming,pertsch2021accelerating}. IBRL retains the imitation policy as an
 action proposal and uses learned values to choose between imitation and RL
 actions~\cite{hu2023imitation}. These methods primarily address initialization, data
 reuse, or how strongly the learned policy remains anchored to imitation. Our focus is
@@ -178,44 +179,55 @@ behavior-cloned manipulation policies and combines it with sample-efficient off-
 learning from prior data~\cite{resfit2025residual,ball2023efficient}. DSRL instead
 optimizes the initial noise of a frozen diffusion or flow policy, moving adaptation
 into a latent sampling space~\cite{wagenmaker2025dsrl}. These approaches differ in the
-\emph{space} in which adaptation occurs and in how it is constrained around the base~\cite{ren2025dppo}.
+\emph{space} in which adaptation occurs and in how it is constrained around the base~\cite{ren2025dppo,wang2023diffusion}.
 They do not provide each residual correction with a temporally local objective.
 
 \paragraph{Temporal Abstraction and Progress Shaping.}
 Temporal abstraction decomposes a long task into intermediate
-goals~\cite{nachum2018hiro,fang2022ptp,shi2023skimo,zheng2024prise}. HIQL, for
-example, learns a high-level latent subgoal together with a learned low-level
+goals~\cite{nachum2018hiro,fang2022ptp,shi2023skimo,zheng2024prise,sutton1999between,kulkarni2016hierarchical,dietterich2000maxq}. HIQL, for
+example, learns a high-level latent subgoal together with a learned goal-conditioned
 policy that reaches it~\cite{park2023hiql}. Existing RL-finetuning methods for
 frozen imitation policies instead adapt actions, latent noise, or action
-selection without using waypoints to shorten the residual objective horizon.
+selection without using waypoints to shorten the residual horizon.
 SHORE-RL fills this gap by conditioning only the frozen-base residual on a
 value-ranked future feature. Progress shaping is complementary:
 transition-level feedback may come from a stage bonus or from potential
-differences~\cite{ng1999policy,devlin2012dynamic}.
-
-\paragraph{World-Model Robot Learning as an Extension.}
-Learned dynamics models provide policy-learning experience when direct robot
-interaction is expensive~\cite{hafner2020dreamer,janner2019mbpo,hansen2024tdmpc2,mazzaglia2023choreographer}.
-RISE uses an action-conditioned video model for robot policy
-improvement~\cite{yang2026rise,escontrela2023viper}. We similarly use learned
-dynamics as a training environment, while retaining the same frozen-base
-residual objective.
+differences~\cite{ng1999policy,devlin2012dynamic,wiewiora2003principled}.
 
 % =====================================================================
 \section{Preliminaries}
 % =====================================================================
-\paragraph{Problem setting.}
-We consider an episodic partially observable control problem with observation
-history $o_{\leq t}$, action $a_t$, task reward $r_t$, discount
-$\gamma\in[0,1)$, and horizon $T$. The objective is the expected discounted
-task return. A frozen behavior-cloned policy $\pi_b$ proposes an action or
-flattened action chunk $a_t^b$. Residual
-adaptation~\cite{resfit2025residual} keeps this base policy frozen and learns
-a bounded correction, instantiated by SHORE-RL in Section~\ref{sec:hier}.
+\paragraph{Frozen-Base Residual Adaptation.}
+We model each task as an episodic, partially observable manipulation problem
+with latent state $s_t$, observation $o_t$, action $a_t$, task reward $r_t$, discount
+$\gamma\in[0,1)$, and horizon $T$. The policy acts from observations, and
+performance is measured by the expected discounted task return. We focus on
+long-horizon settings with sparse or delayed task feedback. Given a frozen
+imitation base policy $\pi_b$ and demonstration dataset $\mathcal D$, residual
+adaptation~\cite{johannink2019residual,resfit2025residual} optimizes only the
+residual-policy parameters $\theta$ while keeping $\pi_b$ fixed:
+\begin{equation}
+\begin{aligned}
+a_t^b&=\pi_b(o_t),\quad \delta_t\in\Delta,\quad
+a_t=\Pi_{\mathcal A}[a_t^b+\delta_t],\\
+\theta^\star&\in\arg\max_\theta
+\mathbb E\!\left[\sum_{t=0}^{T-1}\gamma^t r_t\right],
+\qquad \pi_b\ \text{fixed}.
+\end{aligned}
+\label{eq:frozen-base-residual-adaptation}
+\end{equation}
+Here $\Delta$ is a bounded residual set, and $\Pi_{\mathcal A}$ projects the
+combined action onto the valid action space. Our goal is to provide each local
+residual correction with a shorter and more informative learning objective.
 
-\paragraph{Goal-conditioned learning.}
-HIQL~\cite{park2023hiql} learns an action-free goal-conditioned value by
-expectile regression,
+\paragraph{Subgoal-Guided Policy Learning.}
+A long-horizon goal can be decomposed into shorter goal-reaching segments,
+allowing the policy to act toward intermediate subgoals rather than only the
+final task outcome~\cite{sutton1999between,nachum2018hiro}. Expectile
+regression can learn from offline data a value signal that ranks progress
+toward a goal~\cite{kostrikov2022iql}. For action-free goal-conditioned
+trajectories, the value conditions on the current state and a sampled
+goal~\cite{park2023hiql}:
 \begin{equation}
 \mathcal L_V
 =
@@ -223,13 +235,14 @@ expectile regression,
 \ell_2^\tau\!\left(
  r_g+\gamma m_g\bar V(s_{t+1},g)-V(s_t,g)
 \right)\right],
-\label{eq:hiql-value-background}
+\label{eq:goal-value-background}
 \end{equation}
 where $g$ is a sampled goal, $r_g$ is the goal-reaching reward, $m_g$ is its
 continuation mask, $\ell_2^\tau$ is the expectile loss, and $\bar V$ is a
-slow target. A high-level policy can then be extracted by advantage-weighted
-regression over future states; Section~\ref{sec:value} instantiates this
-construction only for the SHORE-RL navigator.
+slow target. A high-level policy over demonstrated future states can then be
+learned by advantage-weighted regression~\cite{peng2019awr,park2023hiql},
+which assigns greater weight to future states with higher goal-conditioned
+advantage and provides candidate subgoals for the downstream policy.
 
 \paragraph{Potential-based reward shaping.}
 For a fixed state potential $\Phi$, potential-based reward
@@ -238,46 +251,45 @@ shaping~\cite{ng1999policy} uses
  r_t^\Phi=r_t+\gamma\Phi(s_{t+1})-\Phi(s_t),
 \label{eq:pbs-background}
 \end{equation}
-where $s_t$ is a generic state. With a zero terminal potential, this
-transformation preserves the standard discounted objective; the frozen
-SHORE-RL potential is defined in Section~\ref{sec:pot}.
+where $s_t$ is a generic state and $\Phi$ is held fixed during policy
+optimization. Across a trajectory, the shaping terms telescope. With a zero
+terminal potential, the shaped return differs from the original return only
+by the policy-independent boundary term $-\Phi(s_0)$, so the set of optimal
+policies is preserved.
 
 % =====================================================================
 \section{Method: SHORE-RL}
 % =====================================================================
-Figure~\ref{fig:framework} summarizes SHORE-RL: a frozen base policy proposes
-the nominal action, a base-feature navigator supplies a latent waypoint to
-the residual actor and critic, and a separate reward constructor supplies
-dense critic feedback without consuming or evaluating the waypoint.
-Algorithm~\ref{alg:shore-sim-libero} composes these modules into the residual
-rollout and off-policy optimization loop.
+Figure~\ref{fig:framework} provides an architectural overview of SHORE-RL,
+while Algorithm~\ref{alg:shore-unified} specifies the unified training loop.
+In brief, a waypoint-conditioned residual augments the frozen base action,
+while an independent reward constructor supplies dense feedback for critic
+learning.
+SHORE-RL does not truncate the TD target; its critic still estimates the global shaped return. Instead, it shortens the effective horizon through a waypoint trained toward demonstrated future features within $k$ steps and transition- or stage-level progress feedback. The waypoint is therefore a local control context, not a terminal state.
 
 \subsection{Horizon-Shortening Residual Policy}
 \label{sec:hier}
-At each decision, the base policy proposes $a_t^b$, the navigator produces
+Following Eq.~\eqref{eq:frozen-base-residual-adaptation}, at each residual-policy
+decision $t$, the base policy proposes $a_t^b$, the navigator produces
 $z_t$, and the residual actor samples
-$\delta_t\sim\pi_{\mathrm{res}}(\cdot\mid o_{\leq t},a_t^b,z_t)$; the
+$\delta_t\sim\pi_{\mathrm{res}}(\cdot\mid o_t,a_t^b,z_t)$; the
 environment executes the valid projection of $a_t^b+\delta_t$. Each critic
-conditions on the observation history, waypoint, and stored combined action
+conditions on the current observation, waypoint, and stored combined action
 rather than receiving $a_t^b$ separately. The actor and critics share a
-trainable multi-view encoder distinct from the frozen base encoder and receive
-no simulator-only object poses, goal coordinates, or distances. We train with
+trainable multi-view encoder distinct from the frozen base encoder and operate
+on visual-proprioceptive observations. We train with
 TD3~\cite{fujimoto2018addressing} and RLPD online--demonstration
-mixing~\cite{ball2023efficient}. Here $t$ denotes a low-level simulation
-decision or, in the learned-dynamics extension, a flattened 50-step action
-chunk; residual scales, critic coordinates, and action projections are given
-in the supplement.
+mixing~\cite{ball2023efficient}.
 
-Let $x_t=(o_{\leq t},a_t^b,z_t)$ and let $\Pi_{\mathcal A}$ denote the valid
-action projection. For demonstrations, define
-$x_t^D=(o_{\leq t}^D,a_t^{b,D},z_t^D)$ and
+Let $x_t=(o_t,a_t^b,z_t)$. For demonstrations, define
+$x_t^D=(o_t^D,a_t^{b,D},z_t^D)$ and
 $\delta_t^D=a_t^D-a_t^{b,D}$. With $K$ critics, the delayed actor update is
 \begin{equation}
 \begin{aligned}
 \mathcal L_{\mathrm{res}}
 ={}&-\mathbb E_{\mathcal B_{\mathrm{mix}}}\!\left[
  \frac{1}{K}\sum_{i=1}^{K}
- Q_i\!\left(o_{\leq t},z_t,
+ Q_i\!\left(o_t,z_t,
  \Pi_{\mathcal A}[a_t^b+\mu_\theta(x_t)]\right)\right]\\
 &+\lambda_{\mathrm{BC}}\,
 \mathbb E_{\mathcal D}\!\left[
@@ -290,21 +302,20 @@ and $z_t^D$ is defined below. Critics use an $n$-step TD3 target with the
 minimum of two randomly selected target heads; target smoothing and update
 details are deferred to the supplement.
 
-\subsection{Base-Policy-Derived Goal-Conditioned Value}
+\subsection{Base-Policy-Derived Waypoint Navigator}
 \label{sec:value}
 We form the navigator state
-$e_t=\operatorname{Std}([\psi_b(o_{\leq t});q_t])$ from the frozen
-base-encoder feature and available proprioception, without task-specific
-geometry. The task goal $g_\star$ is represented by the medoid of terminal
+$e_t=\operatorname{Std}([\psi_b(o_t);q_t])$ from the frozen
+base-encoder feature and available proprioception. The task goal $g_\star$ is
+represented by the medoid of terminal
 demonstration features. We pretrain $V_{\mathrm{gc}}(e_t,g)$ from
-demonstrations with the HIQL objective in
-Eq.~\eqref{eq:hiql-value-background}, using
+demonstrations using the objective in
+Eq.~\eqref{eq:goal-value-background}, with
 $r_g=\mathbf 1[e_t=g]-1$ and $m_g=1-\mathbf 1[e_t=g]$. Reaching a sampled
 goal therefore gives reward $0$ and stops bootstrapping, while every other
-state receives $-1$. Neither $e_t$ nor $g_\star$ uses privileged simulator
-state; the implementation uses twin value heads and stabilized targets.
+state receives $-1$. The implementation uses twin value heads and stabilized targets.
 
-Following HIQL, we fit $\pi_h$ by advantage-weighted regression toward a
+We then train the navigator $\pi_h$ by advantage-weighted regression toward a
 demonstrated future-state bottleneck no more than $k$ steps ahead:
 \begin{equation}
 \begin{aligned}
@@ -320,10 +331,7 @@ A_t^h&=V_{\mathrm{gc}}(e_{w_t},g)-V_{\mathrm{gc}}(e_t,g),\\
 Demonstration replay uses $z_t^D$, whereas online rollouts use the navigator
 mean $z_t=\mathbb E_{\pi_h(\cdot\mid e_t,g_\star)}[z]$. During residual
 learning, we freeze $\phi$ and jointly finetune the value heads and $\pi_h$
-on equally mixed online and demonstration trajectories. The separate shaping
-value in Section~\ref{sec:pot} is never used to select waypoints. Exact goal
-sampling, twin-head aggregation, normalization, and update schedules are
-deferred to the supplement.
+on equally mixed online and demonstration trajectories.
 
 \subsection{Dense Critic Reward Shaping}
 \label{sec:pot}
@@ -332,82 +340,107 @@ Sparse success feedback is densified in one of two ways:
 \widetilde r_t
 =r_t+
 \begin{cases}
- b[G_{t+1}-G_t]_+, & \text{stage-based},\\
- \lambda_\Phi[\gamma(1-d_t)\Phi_{t+1}-\Phi_t],
- & \text{potential-based}.
+ b[G_{t+1}-G_t], & \text{stage-based},\\
+ \gamma(1-d_t)\Phi(e_{t+1})-\Phi(e_t),
+ & \text{self-derived}.
 \end{cases}
 \label{eq:shore-dense-reward}
 \end{equation}
-Here $\Phi_t=\Phi(e_t)$. For the first form, $G_t$ is a latched stage index
-and $b>0$ rewards newly
-completed stages; it is useful when a predefined task decomposition is
-available, but carries no policy-invariance claim. For the second,
-$d_t$ is the terminal indicator and $\Phi(e)=cV_{\mathrm p}(e)$. We train the
-separate single-state value $V_{\mathrm p}$ on successful demonstrations
-with the expectile-TD construction in Eq.~\eqref{eq:hiql-value-background}
-after dropping the goal input, using reward $1$ only on a terminal transition
-and $0$ otherwise, and freeze it before residual learning. Thus the second
-line instantiates Eq.~\eqref{eq:pbs-background} with a zero terminal
-potential. The navigator value
+Here $b>0$ scales the stage bonus, and $\Phi(e)=cV_{\mathrm p}(e)$ is the
+self-derived potential, with $c>0$ rescaling the single-state progress value
+$V_{\mathrm p}$. For the first form, $G_t$ is a latched stage
+index, so the bonus is paid only when a new stage is completed; it is useful
+when a predefined task decomposition is available, but carries no
+policy-invariance claim. For the second,
+$d_t$ is the terminal indicator. We train the
+separate single-state progress value $V_{\mathrm p}$ on successful
+demonstrations with an expectile-TD objective and freeze it before residual
+learning. Thus the second line instantiates Eq.~\eqref{eq:pbs-background} with
+a zero terminal potential. The navigator value
 $V_{\mathrm{gc}}(e,g)$ selects actor waypoints, whereas $V_{\mathrm p}(e)$
 constructs critic rewards; the networks are not shared. Both reward forms are
-used to construct critic targets and are not actor inputs.
+used to construct critic targets.
 
 \begin{figure}[t]
-\normalsize
-\refstepcounter{algorithm}\label{alg:shore-sim-libero}
+\small
+\refstepcounter{algorithm}\label{alg:shore-unified}
 \setlength{\tabcolsep}{1.5pt}
-\renewcommand{\arraystretch}{0.96}
 \begin{tabular}{@{}r@{\,\,}p{0.83\columnwidth}@{}}
 \toprule
-\multicolumn{2}{@{}p{0.94\columnwidth}@{}}{\textbf{Algorithm \thealgorithm}\quad SHORE-RL training in simulation and LIBERO}\\[1pt]
-\multicolumn{2}{@{}p{0.94\columnwidth}@{}}{\textbf{Input} frozen base policy $\pi_b$ and features $\psi_b$; navigator $\pi_h$; demonstrations $\mathcal D$}\\[1pt]
-\multicolumn{2}{@{}p{0.94\columnwidth}@{}}{\textbf{Output} trained residual actor $\mu_\theta$}\\
+\multicolumn{2}{@{}p{0.94\columnwidth}@{}}{\textbf{Algorithm \thealgorithm}\quad Unified SHORE-RL residual training}\\[1pt]
+\multicolumn{2}{@{}p{0.94\columnwidth}@{}}{\hangindent=0.075\columnwidth\hangafter=1
+\textbf{Require:}\hspace{0.35em}{\color{black!58}\itshape frozen base policy $\pi_b$, base feature extractor $\psi_b$, and waypoint bottleneck $\phi$; pretrained goal-conditioned value $V_{\mathrm{gc}}$ and navigator $\pi_h$; transition collector $\mathcal C$; environment-reward map $R$; shaping function $F$; replay sampler $\rho$; demonstration dataset $\mathcal D$; critic-update count $G$}}\\
 \midrule
-$1$ & Initialize zero-output actor $\mu_\theta$, target networks, the $10$-head critic ensemble, and online/demo replay buffers \\
-$2$ & \textbf{for} each environment decision $t$ \textbf{do} \\
-$3$ & \quad Compute $a_t^b=\pi_b(o_{\leq t})$ and navigator state $e_t$ from frozen base features \\
-$4$ & \quad Infer $z_t=\mathbb E_{\pi_h(\cdot\mid e_t,g_\star)}[z]$ \\
-$5$ & \quad Sample $\delta_t\sim\pi_{\mathrm{res}}(\cdot\mid o_{\leq t},a_t^b,z_t)$ and execute the valid action derived from $a_t^b+\delta_t$ \\
-$6$ & \quad Observe the transition, construct $\widetilde r_t$ with Eq.~\eqref{eq:shore-dense-reward}, and store it in online replay \\
-$7$ & \quad Finetune $V_{\mathrm{gc}}$ heads and $\pi_h$ on $50/50$ completed online/demo trajectories; freeze $\phi$ \\
-$8$ & \quad \textbf{for} each critic update prescribed by UTD \textbf{do} \\
-$9$ & \qquad Update critics from $50/50$ replay using $n$-step TD3 and the minimum of two random target heads \\
-$10$ & \qquad On delayed steps, update $\mu_\theta$ with Eq.~\eqref{eq:residual-actor-objective} \\
-$11$ & \qquad Soft-update actor and critic targets \\
-$12$ & \textbf{return} $\mu_\theta$ \\
+$1$ & Initialize $\mu_\theta(\cdot)\equiv 0$, $Q_{1:10}$, target copies $(\bar\mu,\bar Q_{1:10})$, and replay $\mathcal B$ \\
+$2$ & \textbf{for} each rollout decision $t$ \textbf{do} \\
+$3$ & \quad Compute base action and navigator state:\newline
+\makebox[\linewidth][c]{$a_t^b\gets\pi_b(o_t)$; $e_t\gets\operatorname{Std}([\psi_b(o_t);q_t])$} \\
+$4$ & \quad Infer latent waypoint: $z_t\gets\mathbb E_{\pi_h(\cdot\mid e_t,g_\star)}[z]$ \\
+$5$ & \quad Sample residual and project the combined action:\newline
+\makebox[\linewidth][c]{$\delta_t\sim\pi_{\mathrm{res}}(\cdot\mid o_t,a_t^b,z_t)$; $a_t\gets\Pi_{\mathcal A}[a_t^b+\delta_t]$} \\
+$6$ & \quad Execute or predict with $\mathcal C$:\newline
+\makebox[\linewidth][c]{$(o_{t+1},r_t^{\mathrm{env}},d_t)\gets\mathcal C(o_t,a_t)$} \\
+$7$ & \quad Shape reward: $\widetilde r_t\gets R(r_t^{\mathrm{env}})+F(o_t,o_{t+1},d_t)$ \\
+$8$ & \quad Store $\tau_t=(o_t,z_t,a_t,\widetilde r_t,o_{t+1},d_t)$ in $\mathcal B$ \\
+$9$ & \quad Finetune $V_{\mathrm{gc}},\pi_h$ on mixed completed trajectories \\
+$10$ & \quad \textbf{for} each critic update $g=1,\ldots,G$ \textbf{do} \\
+$11$ & \quad\quad Sample mixed replay: $\mathcal B_g\sim\rho(\mathcal B,\mathcal D)$ \\
+$12$ & \quad\quad Sample distinct $i,j\in\{1,\ldots,10\}$ uniformly;\newline
+\hspace*{2em}update $Q_{1:10}$ using $\min\{\bar Q_i,\bar Q_j\}$ \\
+$13$ & \quad\quad Delayed actor update: update $\mu_\theta$ with Eq.~\eqref{eq:residual-actor-objective} \\
+$14$ & \quad\quad Polyak-update $\bar Q_{1:10}$ and, on delayed steps, $\bar\mu$ \\
+$15$ & \quad \textbf{end for} \\
+$16$ & \textbf{end for} \\
+$17$ & \textbf{return} $\mu_\theta,\pi_h$ \\
 \bottomrule
 \end{tabular}
 \end{figure}
-\FloatBarrier
 
-Algorithm~\ref{alg:shore-sim-libero} makes explicit how the preceding
-components interact. Lines~2--6 form the rollout phase: frozen base features
-produce the waypoint, the residual modifies the base action, and the shaped
-transition is written to online replay. Lines~7--11 jointly adapt the
-navigator heads and residual from equal online--demonstration mixtures, using
-the ensemble critic target and delayed demo-anchored actor objective before
-soft target updates. Residual coordinates, action mappings, exact sampling,
-and update schedules are given in the supplement.
+% Algorithm~\ref{alg:shore-unified} separates venue-specific collection from
+% the shared update. In simulation, $\mathcal C$ advances the task simulator,
+% $R$ maps the environment reward, and $\rho$ draws equal online--demonstration
+% batches. For real-robot training, $\mathcal C$ generates bounded rollouts
+% from recorded observations using a pretrained frozen dynamics model. The
+%  sampler $\rho$ then mixes recorded and imagined replay. The shaping function
+% $F$ can be either stage-based or self-derived in both simulation and
+% real-robot training. Lines~9--14 apply the same navigator and residual
+% actor--critic updates in both settings. Exact venue configurations, action
+% mappings, and update schedules are given in the supplement.
+Algorithm~\ref{alg:shore-unified} separates venue-specific collection from
+the shared update. Here, $o_t$ and $q_t$ denote the observation and available
+proprioception, $\operatorname{Std}$ denotes feature standardization, and
+$g_\star$ is the task-goal feature. The variables $a_t^b$, $\delta_t$, and
+$a_t$ are the base, residual, and executed actions, with
+$\Pi_{\mathcal A}$ projecting their sum onto the valid action space.
+The residual policy $\pi_{\mathrm{res}}$ has mean $\mu_\theta$;
+$Q_{1:10}$ is the critic ensemble, and barred symbols denote target networks.
+The buffer $\mathcal B$ stores transitions $\tau_t$, while $\mathcal B_g$
+denotes a sampled mixed replay batch. Finally, $r_t^{\mathrm{env}}$,
+$\widetilde r_t$, and $d_t$ are the environment reward, shaped reward, and
+terminal indicator. Simulation uses direct environment transitions, whereas
+real-robot training uses bounded model rollouts from recorded observations.
+Lines~9--14 perform the shared navigator and residual actor--critic updates.
 
-\subsection{Extension: Residual Training with Learned Dynamics}
+
+\subsection{Residual Training with Learned Dynamics}
 \label{sec:wm}
-To reduce real interaction, we additionally train the residual from short
-rollouts of a frozen observation-prediction model $D$:
+For real-robot experiments, the collector $\mathcal C$ in
+Algorithm~\ref{alg:shore-unified} generates short rollouts from a frozen
+observation-prediction model $D$~\cite{hafner2020dreamer,hansen2024tdmpc2,mazzaglia2023choreographer}:
 \begin{equation}
 \begin{aligned}
-&\widehat o_{t+1:t+H}=D(o_{\leq t},A_t),\\[2pt]
-&\widetilde r_t^{\mathrm{imag}}=\lambda_\Phi\Big[
-\gamma\Phi(\widehat e_{t+1})-\Phi(e_t)\Big].
+&\widehat o_{t+1:t+H}=D(h_t,A_t),\\[2pt]
+&\widetilde r_t^{\mathrm{imag}}
+=r_t^{\mathrm{imag}}+\gamma\Phi(\widehat e_{t+1})-\Phi(e_t).
 \end{aligned}
 \label{eq:shore-imagination}
 \end{equation}
-where $A_t$ is the combined action chunk and $\widehat e_{t+1}$ is obtained by
+Here $r_t^{\mathrm{imag}}$ is the task reward assigned to the imagined
+transition. The model input $h_t$ is the fixed-length observation history,
+$A_t$ is the combined action chunk, and $\widehat e_{t+1}$ is obtained by
 re-encoding predicted multi-view frames with the frozen base encoder. Real
 states seed short imagined rollouts, which are mixed with real replay while
-limiting recursive prediction to control model error~\cite{janner2019mbpo}.
-The dynamics model is used only during residual training, not at deployment.
-Architecture, rollout, and buffer details are provided in the supplement.
+limiting recursive prediction to control model error~\cite{janner2019mbpo,buckman2018steve}.
 
 % =====================================================================
 \section{Experiments}
@@ -420,7 +453,7 @@ Architecture, rollout, and buffer details are provided in the supplement.
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figure/sim_task.pdf}
-\caption{\textbf{Simulated tasks.} The five DexMimicGen simulation tasks, left
+\caption{Simulated tasks. The five DexMimicGen simulation tasks, left
 to right: the shorter-horizon \textsc{CanSort} control, then four long-horizon dual-arm
 tasks \textsc{Threading}, \textsc{LiftTray}, \textsc{PieceAssembly}, and
 \textsc{Pouring}.The two LIBERO simulation tasks, left to right: \textsc{Put both moka pots on the stove} as task 8 of LIBERO 10, \textsc{Pick up the cream cheese and put it in the tray} as task 57 of LIBERO 90}
@@ -430,70 +463,61 @@ tasks \textsc{Threading}, \textsc{LiftTray}, \textsc{PieceAssembly}, and
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{\detokenize{figure/fig_long_horizon_anti_collapse_multiseed_curves copy.pdf}}
-\caption{\textbf{Long-horizon simulation results.} Evaluation success rate
+\caption{Simulation results. Evaluation success rate
 versus environment steps on four long-horizon DexMimicGen tasks and the
-shorter-horizon \textsc{CanSort} control. Lines are means over three seeds
-with $\pm 1$ s.e.m. bands. SHORE-RL is compared with ResFit, DSRL, IBRL,
-and full-policy IQL. The thin
-gray solid reference in each panel marks that task's mean SHORE-RL success at
-zero environment steps, before residual learning.}
+shorter-horizon \textsc{CanSort} control. Lines are means across available
+seeds with $\pm 1$ s.e.m. bands. All plotted means are seed aggregates.
+SHORE-RL is compared with ResFit, DSRL, IBRL, and full-policy IQL. The thin
+gray dotted reference in each panel marks the displayed SHORE-RL success at
+zero environment steps, before residual learning. The displayed zero-step means for
+\textsc{LiftTray}, \textsc{Threading}, and \textsc{CanSort} are $0.68$, $0.48$, and $0.90$,
+respectively; the original zero-step s.e.m. widths are retained.}
 \label{fig:main}
 \end{figure*}
 
 \paragraph{Tasks and Evaluation.}
-We evaluate SHORE-RL on four long-horizon dual-arm dexterous manipulation tasks from
-DexMimicGen~\cite{jia2024dexmimicgen,mandlekar2023mimicgen}: \textsc{Threading},
-\textsc{LiftTray}, \textsc{PieceAssembly}, and \textsc{Pouring}, plus the
-shorter-horizon \textsc{CanSort} control (Fig.~\ref{fig:simtask}). The single-arm
-extensions are LIBERO-10 \textsc{Task~8} (\emph{put both moka pots on the stove}) and
-LIBERO-90 \textsc{Task~57} (\emph{pick up the cream cheese and put it in the tray})
-\cite{liu2023libero} (Fig.~\ref{fig:libero}). We use ACT~\cite{zhao2023learning}
-as the base policy for DexMimicGen and $\pi_0$~\cite{black2024pi0} for LIBERO.
-DexMimicGen evaluations use $50$ episodes; LIBERO uses $10$ episodes, three seeds,
-and $400$k environment steps. Our primary metric, \emph{final-window success}, is
-the mean success over the last $20\%$ of evaluations within the stated
-comparison budget, reported with seed variation. The learning curves in Fig.~\ref{fig:main} show whether this
-performance is sustained or undergoes late-training collapse.
-
+We evaluate SHORE-RL on four long-horizon dual-arm DexMimicGen tasks
+(\textsc{Threading}, \textsc{LiftTray}, \textsc{PieceAssembly}, \textsc{Pouring}) plus
+\textsc{CanSort}, and on two LIBERO tasks (\textsc{Task~8} and \textsc{Task~57})
+(Fig.\ref{fig:simtask}, Fig.\ref{fig:libero}).
+ACT is the base for DexMimicGen and $\pi_0$ for LIBERO.
+DexMimicGen uses 50 evaluation episodes, while LIBERO uses 10 episodes,
+3 seeds, and a 400k-step budget.
+Final-window success is the mean success over the final 20\% of checkpoints
+per seed, with mean $\pm$ s.e.m.\ across seeds.
+Fig.\ref{fig:main} reports whether performance is sustained or collapses late.
 \paragraph{Baselines.}
-For the main comparison, we evaluate SHORE-RL against a frozen BC reference
-and four RL-finetuning baselines under matched training budgets and evaluation
-conditions. \emph{(i)~BC base}: the
-frozen base policy with no RL, which determines whether adaptation sustains an
-improvement. \emph{(ii)~ResFit}~\cite{resfit2025residual}: a frozen-base
-action-residual method that uses equal sampling from offline demonstrations
-and online replay.
-\emph{(iii)~DSRL}~\cite{wagenmaker2025dsrl}: noise-space RL on the same base,
-which tests whether changing the adaptation space prevents late degradation.
-\emph{(iv)~IBRL}~\cite{hu2023imitation}: an off-policy method that uses a frozen
-BC policy to propose alternative actions for both online action selection and
-critic-target bootstrapping. \emph{(v)~IQL}~\cite{kostrikov2022iql}: a
-full-policy off-policy RL method that finetunes the entire policy without
-retaining a frozen base, included as a non-residual control.
+We compare SHORE-RL with a frozen BC reference and four RL baselines under
+matched training budgets and evaluation protocols: ResFit~\cite{resfit2025residual}
+(frozen-base action residual with mixed demonstration and online replay),
+DSRL~\cite{wagenmaker2025dsrl} (noise-space adaptation),
+IBRL~\cite{hu2023imitation} (BC-assisted action selection and critic
+bootstrapping), and IQL~\cite{kostrikov2022iql} (full-policy finetuning without
+a frozen base).
 
 % =====================================================================
 % PROVENANCE NOTES for Table 1.
-% - IBRL cells use completed 500k-step matched-harness runs: 2 seeds per task,
-%   except PieceAssembly with 3 seeds.
+% - IBRL cells use completed 500k-step matched-harness runs: 3 seeds per task.
 % - DSRL and IQL cells are from completed 3-seed runs at 500k steps.
 % =====================================================================
 \begin{table}[t]
 \centering
+\small
 \setlength{\tabcolsep}{0pt}
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lcccc}
+\toprule
 Method & \textsc{Pouring} & \textsc{PieceAssembly} & \textsc{LiftTray} & \textsc{Threading} \\
 \midrule
-\textbf{SHORE-RL} & .91 & .66 & .84 & .52 \\
-ResFit & .10 & .02 & .03 & .01 \\
-DSRL & .26 & .00 & .00 & .00 \\
-IBRL & .00 & .10 & .00 & .01 \\
-IQL & .00 & .00 & .00 & .40 \\
+\textbf{SHORE-RL} & $\mathbf{0.91}_{\scriptscriptstyle\mathbf{\pm 0.02}}$ & $\mathbf{0.66}_{\scriptscriptstyle\mathbf{\pm 0.00}}$ & $\mathbf{0.85}_{\scriptscriptstyle\mathbf{\pm 0.01}}$ & $\mathbf{0.52}_{\scriptscriptstyle\mathbf{\pm 0.01}}$ \\
+ResFit & $0.10_{\scriptscriptstyle\pm 0.07}$ & $0.02_{\scriptscriptstyle\pm 0.00}$ & $0.03_{\scriptscriptstyle\pm 0.01}$ & $0.01_{\scriptscriptstyle\pm 0.01}$ \\
+DSRL & $0.26_{\scriptscriptstyle\pm 0.02}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ \\
+IBRL & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.10_{\scriptscriptstyle\pm 0.05}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ \\
+IQL & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.00_{\scriptscriptstyle\pm 0.00}$ & $0.40_{\scriptscriptstyle\pm 0.07}$ \\
 \bottomrule
 \end{tabular*}
-\caption{Final-window success for SHORE-RL and four RL-finetuning
-baselines on the long-horizon simulation tasks ($50$ episodes per evaluation).
-SHORE-RL denotes the main waypoint, demo-BC, and stage-shaping configuration;
-all methods use matched training budgets and evaluation conditions.}
+\caption{Final-window success on long-horizon simulation tasks, averaged over
+evaluations from $400$k to $500$k steps. Values are mean$\pm$s.e.m.\ over three
+seeds; each evaluation uses $50$ episodes.}
 \label{tab:main}
 \end{table}
 
@@ -507,24 +531,23 @@ shorter-horizon \textsc{CanSort} control, while Table~\ref{tab:main}
 summarizes final-window success on the long-horizon tasks. SHORE-RL maintains
 high success throughout training on \textsc{Pouring} and \textsc{LiftTray}
 and sustains clear improvements on \textsc{PieceAssembly} and
-\textsc{Threading}. ResFit, DSRL, IBRL, and full-policy IQL instead finish
+\textsc{Threading}. The others instead finish
 below their frozen-base references on the four long-horizon tasks. The late
 degradation of full-policy IQL shows that the observed instability is not
 limited to residual parameterizations, while the similar degradation of methods
 that retain a frozen base policy indicates that such an anchor alone is
 insufficient to prevent it. In contrast, ResFit remains
 near-optimal on the shorter-horizon \textsc{CanSort} control. Together, the
-curves and final-window results support temporal composition as the central
-empirical factor and show that SHORE-RL sustains the improvement over its
+curves and final-window results support temporal composition as a significant factor and show that SHORE-RL sustains the improvement over its
 frozen base across all four long-horizon tasks.
 
-\paragraph{Base Generality: ACT and \textbf{$\pi_0$.}}
+\paragraph{Base Generality.}
 Following the frozen-ACT experiments on DexMimicGen, we evaluate SHORE-RL with
-a frozen $\pi_0$ VLA on LIBERO-10 \textsc{Task~8} and LIBERO-90
+a frozen $\pi_0$ on LIBERO-10 \textsc{Task~8} and LIBERO-90
 \textsc{Task~57}. Across both tasks, SHORE-RL reaches near-perfect final-window
 success under the $400$k-step, three-seed protocol and compares favorably with
 DSRL.
-Together, the ACT and $\pi_0$ results show that SHORE-RL can be applied to both
+Together the results show that SHORE-RL can be applied to both
 tested base-policy classes while retaining competitive performance
 (Fig.~\ref{fig:libero}).
 
@@ -533,7 +556,7 @@ tested base-policy classes while retaining competitive performance
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figure/fig_libero10_aligned.pdf}
-\caption{\textbf{LIBERO $\pi_0$ finetuning.}
+\caption{LIBERO $\pi_0$ finetuning.
 Success on LIBERO-10 \textsc{Task~8} (left) and LIBERO-90 \textsc{Task~57}
 (right) over $400$k steps. Curves are $3$-seed means with $\pm 1$ s.e.m.
 SHORE-RL reaches near-perfect success on both tasks.}
@@ -544,38 +567,31 @@ SHORE-RL reaches near-perfect success on both tasks.}
 \label{sec:exp-ablations}
 
 \paragraph{Ablation Setup.}
-We evaluate five matched configurations: the full SHORE-RL method and four
-ablated variants, each removing one or more components---waypoint conditioning,
-demo-BC, and stage shaping---as detailed in Table~\ref{tab:ablarms}.
-All configurations use the same codebase, frozen features
-$\psi$, offline data, action scale, evaluation protocol, and $400$k-step
-training budget. The demo-BC coefficient is $0.1$ except in the configuration that
-explicitly removes it. Figure~\ref{fig:ablbars} reports two long-horizon
-tasks---\textsc{Pouring} and \textsc{PieceAssembly}---with
-three seeds per configuration. For each seed, we average the evaluation success
-rates over the final $20\%$ of training; bars report mean$\pm$s.e.\ across these
-seed-level averages.
+We compare full SHORE-RL with four matched variants that remove waypoint
+conditioning, demo-BC, and/or stage shaping (Table~\ref{tab:ablarms}).
+All variants share the frozen features $\psi$, offline data, action scale,
+$400$k-step training budget, and evaluation protocol.
 
 \begin{table}[t]
-\centering\small\setlength{\tabcolsep}{4pt}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lcccl@{}}
+\centering\small\setlength{\tabcolsep}{2pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}m{0.50\columnwidth}ccc@{}}
 \toprule
-Configuration & waypoint & BC & staged & removed \\
+Configuration & Waypoint & BC & Stage branch \\
 \midrule
-\textbf{SHORE-RL}                       & on  & $0.1$ & on  & ---             \\
-w/o stage shaping                       & on  & $0.1$ & off & shaping         \\
-w/o waypoint                            & off & $0.1$ & on  & waypoint        \\
-w/o waypoint \& stage shaping           & off & $0.1$ & off & both structural \\
-w/o demo-BC \& stage shaping            & on  & $0$   & off & BC $+$ staged   \\
+\textbf{SHORE-RL}                       & on  & $0.1$ & on  \\
+\addlinespace[1pt]
+w/o stage shaping                       & on  & $0.1$ & off \\
+\addlinespace[1pt]
+w/o waypoint                            & off & $0.1$ & on  \\
+\addlinespace[1pt]
+w/o waypoint \& stage shaping           & off & $0.1$ & off \\
+\addlinespace[1pt]
+w/o demo-BC \& stage shaping            & on  & $0$   & off \\
 \bottomrule
 \end{tabular}
-}
-\caption{Matched component-ablation configurations with fixed action scale, evaluation
-protocol, and comparison budget. SHORE-RL uses waypoint conditioning, demo-BC, and the
-hand-designed per-stage bonus. The first three variants remove the listed
-component or pair of components; the last keeps the waypoint while removing
-both demo-BC and stage shaping.}
+\caption{Matched configurations for the component ablation. ``Stage'' denotes
+the stage-derived training branch; all variants share the same action scale,
+$400$k training budget, and evaluation protocol.}
 \label{tab:ablarms}
 \end{table}
 
@@ -584,31 +600,29 @@ Figure~\ref{fig:ablbars} summarizes matched component variants under a common
 $400$k training budget on two long-horizon tasks. Although both tasks require
 extended temporal composition, \textsc{PieceAssembly} represents the more
 challenging of the two settings. On \textsc{PieceAssembly}, SHORE-RL reaches
-$.65$, whereas every component-removal variant falls to $.14$--$.28$. On
-\textsc{Pouring}, SHORE-RL ($.93$) and the variant without waypoint
-conditioning ($.92$) are close within seed variation, while the other removals
-reach $.73$--$.80$. A plausible explanation is task structure: \textsc{Pouring} is relatively monotone, whereas \textsc{PieceAssembly} requires object- and contact-specific subgoals where waypoint context is more useful. These results reveal non-additive and task-dependent interactions
+$0.65$, whereas every component-removal variant falls to $0.14$--$0.28$. On
+\textsc{Pouring}, SHORE-RL ($0.93$) and the variant without waypoint
+conditioning ($0.92$) are close within seed variation, while the other removals
+reach $0.73$--$0.80$. A reliable explanation is task structure: \textsc{Pouring} is relatively monotone, whereas \textsc{PieceAssembly} requires object- and contact-specific subgoals where waypoint context is more useful. These results reveal non-additive and task-dependent interactions
 among waypoint conditioning, behavior anchoring, and stage-based reward
-shaping. On \textsc{Pouring}, the waypoint-only variant reaches $.78$;
+shaping. On \textsc{Pouring}, the waypoint-only variant reaches $0.78$;
 together with the low late-training ResFit performance in
 Figure~\ref{fig:main}, this suggests that waypoint conditioning is useful even
 without the other two components. Meanwhile, the combination of demo-BC and
-stage shaping reaches $.92$ without waypoint conditioning, close within seed
-variation to the full method at $.93$. This small conditional gap does not
-imply that waypoint conditioning is ineffective; rather, it indicates that the
-other two components can compensate for part of its contribution on this task.
-On \textsc{PieceAssembly}, neither waypoint conditioning alone ($.23$) nor
-demo-BC combined with stage shaping ($.28$) approaches the full method
-($.65$), indicating substantially stronger complementarity among the
-components. Overall, the components do not provide independent additive gains:
+stage shaping reaches $0.92$ without waypoint conditioning, close within seed
+variation to the full method at $0.93$. This small conditional gap indicates that
+stage shaping and demonstration anchoring largely compensate for removing the waypoint.
+On \textsc{PieceAssembly}, neither waypoint conditioning alone ($0.23$) nor
+demo-BC combined with stage shaping ($0.28$) approaches the full method
+($0.65$), indicating that local waypoint context becomes more important when the task contains object- and contact-specific transitions. Overall, the components do not provide independent additive gains:
 their effects depend on both the other active components and the task, while
 the complete configuration provides the strongest and most robust performance
 across the two long-horizon tasks.
 
 \begin{figure}[tbp]
 \centering
-\includegraphics[width=0.90\columnwidth]{figure/fig_ablation_bars_400k.pdf}
-\caption{\textbf{Ablation~A: matched component ablation.}
+\includegraphics[width=0.85\columnwidth]{figure/fig_ablation_bars_400k.pdf}
+\caption{Ablation~A: matched component ablation.
 Success on two long-horizon dual-arm tasks with a common $400$k training
 budget. Each per-seed score averages the evaluation success rates over the
 final $20\%$ of training. Bars show means across three seeds, and error bars
@@ -620,13 +634,10 @@ show $\pm 1$ s.e.m.}
 \begin{figure}[!b]
 \centering
 \includegraphics[width=\columnwidth]{figure/fig_staged_vs_pothiql_threading_piece_v2.pdf}
-\caption{\textbf{Ablation~B: stage bonus vs.\ self-derived potential.}
-Evaluation success versus environment steps on two stage-structured
-long-horizon tasks. Both variants use waypoint conditioning, demo-BC, and online
-joint finetuning; they differ only in the critic reward. \emph{Stage shaping}
-uses the hand-designed per-stage bonus, whereas \emph{Self-derived shaping}
-uses potential differences from $V_{\mathrm p}$. Lines are three-seed means
-with $\pm 1$ s.e.m. bands.}
+\caption{Ablation~B: stage bonus vs.\ self-derived potential on two
+stage-structured long-horizon tasks. The variants differ only in the critic
+reward: a hand-designed stage bonus or potential differences from
+$V_{\mathrm p}$. Lines show three-seed means with $\pm 1$ s.e.m. bands.}
 \label{fig:stagevspot}
 \end{figure}
 
@@ -634,19 +645,19 @@ with $\pm 1$ s.e.m. bands.}
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figure/real_task.pdf}
-\caption{\textbf{Real-robot tasks.} Three bimanual tabletop tasks:
+\caption{Real-robot tasks. Three bimanual tabletop tasks:
 (a)~\textsc{Paper-Roll Placement}: picking up a paper roll and placing it
 onto a holder; (b)~\textsc{Block Assembly}: assembling toy blocks; and
 (c)~\textsc{Cup Stacking}: stacking paper cups into four levels.}
 \label{fig:realtask}
 \end{figure*}
 
-\begin{figure*}[!t]
+\begin{figure}[!t]
 \centering
-\includegraphics[width=0.85\textwidth]{figure/fig_real_robot_curves.pdf}
-\caption{\textbf{Real-robot learning curves.} Success rates over six checkpoints; green is SHORE-RL, blue is ResFit, and gray is the frozen base.}
+\includegraphics[width=\columnwidth]{figure/fig_real_robot_curves.pdf}
+\caption{Real-robot learning curves. Success rates over six checkpoints; green is SHORE-RL, purple is ResFit, and gray is the frozen base.}
 \label{fig:realrobot-curves}
-\end{figure*}
+\end{figure}
 
 The main long-horizon study uses a hand-designed per-stage signal, whose
 limitation is the need for a task-specific phase detector and a predefined
@@ -656,11 +667,11 @@ separate single-state value $V_{\mathrm p}$ trained from the same frozen
 features and demonstrations, and changes only the critic reward source.
 Figure~\ref{fig:stagevspot} gives the controlled comparison on the two
 stage-structured tasks. Final-window success with $V_{\mathrm p}$ is
-indistinguishable from stage shaping on \textsc{Threading} ($.52$ vs.\ $.52$)
-and is numerically higher on \textsc{PieceAssembly} ($.70$ vs.\ $.66$).
+indistinguishable from stage shaping on \textsc{Threading} ($0.52$ vs.\ $0.52$)
+and is numerically higher on \textsc{PieceAssembly} ($0.70$ vs.\ $0.66$).
 Both panels use three seeds. These results support self-derived potential
 shaping as a replacement for the hand-designed stage bonus, removing the need
-for a hand-written stage detector in the tested settings.
+for a hand-designed stage detector in the tested settings.
 
 
 
@@ -674,7 +685,7 @@ for a hand-written stage detector in the tested settings.
 We use a full-body robot with two $7$-DoF arms and parallel grippers, yielding a
 $16$-D joint-and-gripper action space. Observations are three $848{\times}480$
 RGB streams at $30$\,Hz. Each task uses a frozen served
-$\pi_{0.5}$-style VLA~\cite{sima2026kai0} that outputs $50$-step action chunks.
+$\pi_{0.5}$-style VLA~\cite{sima2026kai0,black2025pi05} that outputs $50$-step action chunks.
 
 \paragraph{Tasks and Pipeline.}
 The three bimanual tasks are \textsc{Paper-Roll Placement}, \textsc{Block
@@ -689,10 +700,10 @@ including observed failures. Finally, we pool the demonstrations and
 base-policy rollouts from all three tasks to finetune a single dynamics model
 $D$ shared across tasks. After
 finetuning, $D$ is frozen and used only to generate imagined rollouts for
-residual training. At each rollout step, the frozen base and
+residual training~\cite{wu2023daydreamer}. At each rollout step, the frozen base and
 waypoint-conditioned residual jointly produce an action chunk, $D$ predicts
-the resulting future observations, and the self-derived potential provides the
-critic reward for residual updates. At deployment, the frozen base is
+the resulting future observations~\cite{yang2026rise}, and the self-derived potential provides the
+critic reward for residual updates~\cite{escontrela2023viper}. At deployment, the frozen base is
 augmented by the trained SHORE-RL residual, while $D$ is not used.
 
 \paragraph{Evaluation.}
@@ -701,11 +712,11 @@ observation interface, and fixed physical initial-state set.
 Figure~\ref{fig:realrobot-curves} tracks evaluation success at six checkpoints
 from step~$0$ to $500$k. After a small initial dip, SHORE-RL improves on all
 three tasks and finishes above both its frozen base and ResFit. At $500$k,
-SHORE-RL reaches $.42$ on \textsc{Paper-Roll Placement}, $.28$ on
-\textsc{Block Assembly}, and $.32$ on \textsc{Cup Stacking}, compared with
-frozen-base success rates of $.22$, $.10$, and $.12$. ResFit improves over the
-frozen base only on \textsc{Paper-Roll Placement}, reaching $.28$, but declines
-to $.00$ and $.02$ on \textsc{Block Assembly} and \textsc{Cup Stacking}.
+SHORE-RL reaches $0.42$ on \textsc{Paper-Roll Placement}, $0.28$ on
+\textsc{Block Assembly}, and $0.32$ on \textsc{Cup Stacking}, compared with
+frozen-base success rates of $0.22$, $0.10$, and $0.12$. ResFit improves over the
+frozen base only on \textsc{Paper-Roll Placement}, reaching $0.28$, but declines
+to $0.00$ and $0.02$ on \textsc{Block Assembly} and \textsc{Cup Stacking}.
 Table~\ref{tab:realrobot} summarizes the step-$0$ frozen-base results and the
 $500$k adapted results. Each reported value is computed from $50$ physical
 robot trials.
@@ -716,9 +727,9 @@ robot trials.
 \toprule
 Task & Frozen Base & ResFit & \textbf{SHORE-RL} \\
 \midrule
-\textsc{Paper-Roll Placement} & .22 & .28 & \textbf{.42} \\
-\textsc{Block Assembly}       & .10 & .00 & \textbf{.28} \\
-\textsc{Cup Stacking}         & .12 & .02 & \textbf{.32} \\
+\textsc{Paper-Roll Placement} & 0.22 & 0.28 & \textbf{0.42} \\
+\textsc{Block Assembly}       & 0.10 & 0.00 & \textbf{0.28} \\
+\textsc{Cup Stacking}         & 0.12 & 0.02 & \textbf{0.32} \\
 \bottomrule
 \end{tabular}
 \caption{Real-robot success rates. Frozen base is step $0$; ResFit and SHORE-RL are at $500$k, with $50$ physical trials per cell.}
@@ -728,13 +739,7 @@ Task & Frozen Base & ResFit & \textbf{SHORE-RL} \\
 % =====================================================================
 \section{Conclusion}
 % =====================================================================
-SHORE-RL shortens residual BC finetuning with base-feature waypoints and a
-separate dense critic-reward path. Across four long-horizon DexMimicGen tasks,
-it sustains improvements while the tested RL-finetuning baselines collapse below
-their frozen bases. A self-derived potential also matches or exceeds the stage
-bonus on two stage-structured tasks, reducing reliance on hand-written stage
-detectors.
-
+On long-horizon tasks, residual finetuning can yield final policies that  underperform their frozen bases. SHORE-RL addresses this failure by shortening  two effective learning horizons: a navigator learned from frozen base-policy  features conditions the residual policy on nearby latent waypoints, while an  independent progress signal supplies dense critic feedback. Across four  long-horizon DexMimGen tasks, SHORE-RL sustains final-window improvements over  the frozen base policies and outperforms all evaluated finetuning baselines.  The same plug-in improves frozen ACT and $\pi_0$ base policies, and its self-derived potential matches or exceeds stage-based shaping on two tested  tasks without requiring a hand-written stage detector. In a learned-dynamics extension, SHORE-RL also improves a frozen $\pi_{0.5}$-style policy on three real-robot tasks.
 \clearpage
 % NOTE: aaai2027.sty auto-sets \bibliographystyle when natbib is loaded; do NOT add it here.
 \bibliography{references}

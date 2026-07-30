@@ -9,9 +9,9 @@ import math
 from pathlib import Path
 import statistics
 
-import matplotlib
+from aaai_type1_matplotlib import configure_aaai_type1_matplotlib
 
-matplotlib.use("Agg")
+configure_aaai_type1_matplotlib()
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.ticker import MultipleLocator
@@ -21,8 +21,10 @@ ENT = "674575221-beijing-institute-of-technology"
 CR = "dexmg-chunk-residual"
 BUDGET = 400_000
 WINDOW_STEPS = tuple(range(330_000, BUDGET + 1, 10_000))
-FIGSIZE_INCHES = (3.35, 2.30)
+FIGSIZE_INCHES = (3.35, 1.52)
+AXES_BOTTOM_FRACTION = 0.40
 FONT_SIZE_PT = 7
+LEGEND_FONT_SIZE_PT = FONT_SIZE_PT * (0.90 / 0.85)
 BAR_EDGE_COLOR = "#4A4742"
 
 STY = {
@@ -197,10 +199,7 @@ def plot_summaries(summaries, out_pdf, out_png):
     grid = "#dcdcd7"
     plt.rcParams.update(
         {
-            "font.family": "DejaVu Serif",
             "font.size": FONT_SIZE_PT,
-            "pdf.fonttype": 42,
-            "ps.fonttype": 42,
             "axes.edgecolor": muted,
             "axes.linewidth": 0.55,
             "axes.spines.top": False,
@@ -297,7 +296,7 @@ def plot_summaries(summaries, out_pdf, out_png):
         loc="lower left",
         ncol=2,
         frameon=False,
-        fontsize=FONT_SIZE_PT,
+        fontsize=LEGEND_FONT_SIZE_PT,
         bbox_to_anchor=(0.05, 0.015, 0.92, 0.26),
         mode="expand",
         borderaxespad=0,
@@ -310,7 +309,7 @@ def plot_summaries(summaries, out_pdf, out_png):
         left=0.17,
         right=0.985,
         top=0.985,
-        bottom=0.34,
+        bottom=AXES_BOTTOM_FRACTION,
     )
 
     out_pdf = Path(out_pdf)

@@ -4,6 +4,8 @@ import unittest
 
 
 PAPER_DIR = Path(__file__).resolve().parent
+PLOT_SOURCE = PAPER_DIR / "plot_pouring_lifttray_seeds.py"
+MAIN_TEX = PAPER_DIR / "main.tex"
 sys.path.insert(0, str(PAPER_DIR))
 
 from figure4_first_point_overrides import (  # noqa: E402
@@ -69,6 +71,40 @@ class Figure4FirstPointOverrideTest(unittest.TestCase):
         self.assertEqual(displayed_frozen_base("Pouring", 0.79), 0.79)
         self.assertEqual(displayed_frozen_base("ThreePiece", 0.59), 0.59)
         self.assertIsNone(displayed_frozen_base("LiftTray", None))
+
+
+class Figure4IntegrationContractTest(unittest.TestCase):
+    def test_plot_applies_display_transform_after_aggregation(self):
+        text = PLOT_SOURCE.read_text()
+        aggregation = "xs, mean, sem = agg(seeds)"
+        transformation = (
+            "mean, sem = prepare_display_series(task, gk, mean, sem)"
+        )
+        self.assertIn(
+            "from figure4_first_point_overrides import",
+            text,
+        )
+        self.assertIn(transformation, text)
+        self.assertGreater(text.index(transformation), text.index(aggregation))
+
+    def test_plot_aligns_frozen_base_with_displayed_first_point(self):
+        text = PLOT_SOURCE.read_text()
+        self.assertIn(
+            "BASE[task] = displayed_frozen_base(task, raw_base)",
+            text,
+        )
+
+    def test_caption_discloses_exact_display_values_and_sem_treatment(self):
+        text = MAIN_TEX.read_text()
+        for fragment in (
+            "zero-step means for",
+            "\\textsc{LiftTray}",
+            "\\textsc{Threading}",
+            "\\textsc{CanSort}",
+            "$0.68$, $0.48$, and $0.90$",
+            "original zero-step s.e.m. widths",
+        ):
+            self.assertIn(fragment, text)
 
 
 if __name__ == "__main__":
